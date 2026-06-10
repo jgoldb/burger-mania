@@ -1,9 +1,5 @@
 'use strict';
 
-// the rider's head photo; the drawn helmet is the fallback while it loads
-const headImg = new Image();
-headImg.src = 'assets/biker.png';
-
 // deterministic pseudo-random for grass blades (stable frame to frame)
 function srand(n) {
   const x = Math.sin(n * 127.1) * 43758.5453;
@@ -380,7 +376,9 @@ function drawHead(ctx, x, y, facing, angle) {
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(angle || 0);
-  if (headImg.complete && headImg.naturalWidth > 0) {
+  // the rider's head photo; the drawn helmet is the fallback if it failed
+  const headImg = IMAGES.biker;
+  if (headImg && headImg.complete && headImg.naturalWidth > 0) {
     // facing is continuous during the turn animation, so the face
     // squashes through edge-on as the rider swings around
     ctx.scale(Math.abs(facing) < 0.04 ? 0.04 : facing, 1);
@@ -486,7 +484,7 @@ function centerMsg(ctx, W, H, title, sub) {
   ctx.restore();
 }
 
-function drawTitle(ctx, W, H) {
+function drawReady(ctx, W, H, mapLabel) {
   ctx.save();
   const pw = Math.min(W * 0.86, 720), ph = 330;
   const px = (W - pw) / 2, py = H * 0.18;
@@ -498,9 +496,15 @@ function drawTitle(ctx, W, H) {
   ctx.textBaseline = 'middle';
   ctx.fillStyle = '#5d2f17';
   ctx.font = 'bold 52px "Consolas","Courier New",monospace';
-  ctx.fillText('BURGER MANIA', W / 2 + 3, py + 58 + 3);
+  ctx.fillText('GET READY!', W / 2 + 3, py + 58 + 3);
   ctx.fillStyle = '#f9c623';
-  ctx.fillText('BURGER MANIA', W / 2, py + 58);
+  ctx.fillText('GET READY!', W / 2, py + 58);
+
+  if (mapLabel) {
+    ctx.fillStyle = '#9be08a';
+    ctx.font = 'bold 18px "Consolas","Courier New",monospace';
+    ctx.fillText(mapLabel, W / 2, py + 96);
+  }
 
   // burger icon beside the title
   ctx.save();
@@ -515,7 +519,7 @@ function drawTitle(ctx, W, H) {
     'Collect every triple cheeseburger, then ride to the popcorn.',
     '',
     'UP gas   DOWN brake   LEFT / RIGHT rotate',
-    'SPACE turn around   ENTER restart   M sound on/off',
+    'SPACE turn around   ENTER restart   ESC pause   M sound',
   ];
   lines.forEach((t, i) => ctx.fillText(t, W / 2, py + 192 + i * 26));
 
@@ -523,6 +527,317 @@ function drawTitle(ctx, W, H) {
   ctx.font = 'bold 19px "Consolas","Courier New",monospace';
   ctx.fillText('Press any key to ride', W / 2, py + ph - 24);
   ctx.restore();
+}
+
+// ---------- intro animation, game menu, pause overlay ----------
+
+// timing constants for the title fly-in; game.js uses these to cue sounds
+const TITLE_ANIM = {
+  lines: ['BURGER', 'MANIA'],
+  count: 11,     // total letters
+  delay: 0.4,    // s before the first letter launches
+  stagger: 0.14, // s between letter launches
+  fly: 0.55,     // s a letter spends in flight
+  dur: 3.0,      // s until the menu fades in
+};
+
+function easeOutBack(p) {
+  const c1 = 1.70158, c3 = c1 + 1;
+  return 1 + c3 * Math.pow(p - 1, 3) + c1 * Math.pow(p - 1, 2);
+}
+
+function titleLayout(W, H) {
+  const fs = Math.min(W / 8.5, H / 5.2);
+  const letters = [];
+  TITLE_ANIM.lines.forEach((line, li) => {
+    const cw = fs * 0.68;
+    const y = H * 0.22 + li * fs * 1.05;
+    const x0 = W / 2 - (line.length - 1) * cw / 2;
+    for (let c = 0; c < line.length; c++) {
+      letters.push({ ch: line[c], x: x0 + c * cw, y, li });
+    }
+  });
+  return { letters, fs };
+}
+
+function drawTitleLetters(ctx, W, H, t) {
+  const { letters, fs } = titleLayout(W, H);
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = `bold ${Math.round(fs)}px "Consolas","Courier New",monospace`;
+  letters.forEach((L, i) => {
+    const p = (t - TITLE_ANIM.delay - i * TITLE_ANIM.stagger) / TITLE_ANIM.fly;
+    if (p <= 0) return;
+    let x = L.x, y = L.y, rot = 0, sc = 1;
+    if (p < 1) {
+      // dive in spinning from a per-letter off-screen point, with overshoot
+      const e = easeOutBack(p);
+      const ang = srand(i * 3.1 + 7) * Math.PI * 2;
+      const sx = W / 2 + Math.cos(ang) * W * 0.75;
+      const sy = H / 2 + Math.sin(ang) * H * 0.9 - H * 0.2;
+      x = sx + (L.x - sx) * e;
+      y = sy + (L.y - sy) * e;
+      rot = (srand(i * 5.7 + 2) - 0.5) * 9 * (1 - e);
+      sc = 2.4 + (1 - 2.4) * e;
+    } else {
+      // settled: gentle bob and sway
+      y += Math.sin(t * 2.3 + i * 0.8) * fs * 0.02;
+      rot = Math.sin(t * 1.6 + i * 1.3) * 0.05;
+    }
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(rot);
+    ctx.scale(sc, sc);
+    ctx.fillStyle = 'rgba(40,16,4,0.85)';
+    ctx.fillText(L.ch, fs * 0.05, fs * 0.06);
+    ctx.fillStyle = L.li === 0 ? '#f9c623' : '#ff6038';
+    ctx.fillText(L.ch, 0, 0);
+    ctx.lineWidth = Math.max(1, fs * 0.025);
+    ctx.strokeStyle = 'rgba(60,24,6,0.9)';
+    ctx.strokeText(L.ch, 0, 0);
+    ctx.restore();
+  });
+  ctx.restore();
+}
+
+// animated scene behind the intro and menu: drifting clouds, tumbling
+// burgers, a grassy floor, and the popcorn bucket waiting on the right
+function drawMenuBackdrop(ctx, W, H, t, pat) {
+  const Z = Math.min(W / 26, H / 13.5);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.save();
+  ctx.scale(Z, Z);
+  const w = W / Z, h = H / Z;
+
+  const drift = (t * 0.4) % 7; // sky pattern repeats every 7 world units
+  ctx.save();
+  ctx.translate(-drift, 0);
+  ctx.fillStyle = pat.sky;
+  ctx.fillRect(0, 0, w + 7, h);
+  ctx.restore();
+
+  const gy = h * 0.84;
+  ctx.fillStyle = pat.ground;
+  ctx.fillRect(0, gy, w, h - gy);
+  drawGrassEdge(ctx, { ax: 0, ay: gy, bx: w, by: gy });
+
+  ctx.save();
+  ctx.translate(w * 0.86, gy - 1.05);
+  ctx.scale(1.8, 1.8);
+  drawPopcorn(ctx, 0, 0, t);
+  ctx.restore();
+
+  for (let i = 0; i < 6; i++) {
+    const sp = 1.2 + srand(i * 9.7) * 1.8;
+    const span = w + 4;
+    const x = ((t * sp + srand(i * 3.3) * span) % span) - 2;
+    const y = h * (0.12 + srand(i * 6.1) * 0.55);
+    const s = 0.5 + srand(i * 4.9) * 0.8;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(t * (0.6 + srand(i) * 1.5) * (i % 2 ? 1 : -1));
+    ctx.scale(s, s);
+    drawBurger(ctx, 0, 0, t + i);
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+// button hitboxes, shared by rendering (here) and hit-testing (game.js)
+function menuRects(W, H, n, y0) {
+  const bw = Math.min(300, W * 0.7), bh = 56, gap = 18;
+  const x = (W - bw) / 2;
+  const rects = [];
+  for (let i = 0; i < n; i++) rects.push({ x, y: y0 + i * (bh + gap), w: bw, h: bh });
+  return rects;
+}
+
+// items are strings, or objects { label, sub?, color?, disabled? }
+function drawButtons(ctx, rects, items, sel, hover, alpha) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  rects.forEach((r, i) => {
+    const it = typeof items[i] === 'string' ? { label: items[i] } : items[i];
+    const hot = !it.disabled && (i === sel || i === hover);
+    ctx.save();
+    if (it.disabled) ctx.globalAlpha = alpha * 0.45;
+    if (hot) {
+      ctx.translate(r.x + r.w / 2, r.y + r.h / 2);
+      ctx.scale(1.06, 1.06);
+      ctx.translate(-(r.x + r.w / 2), -(r.y + r.h / 2));
+    }
+    ctx.fillStyle = hot ? 'rgba(70,34,10,0.92)' : 'rgba(20,12,6,0.82)';
+    roundRectPath(ctx, r.x, r.y, r.w, r.h, 12);
+    ctx.fill();
+    ctx.lineWidth = hot ? 3 : 2;
+    ctx.strokeStyle = hot ? '#f9c623' : 'rgba(249,198,35,0.45)';
+    ctx.stroke();
+    const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+    ctx.fillStyle = hot ? '#ffe27a' : (it.color || '#f0e8da');
+    if (it.sub) {
+      ctx.font = 'bold 22px "Consolas","Courier New",monospace';
+      ctx.fillText(it.label, cx, cy - 8);
+      ctx.fillStyle = hot ? '#f0e8da' : 'rgba(240,232,218,0.7)';
+      ctx.font = '13px "Consolas","Courier New",monospace';
+      ctx.fillText(it.sub, cx, cy + 15);
+    } else {
+      ctx.font = 'bold 24px "Consolas","Courier New",monospace';
+      ctx.fillText(it.label, cx, cy + 1);
+    }
+    ctx.restore();
+  });
+  ctx.restore();
+}
+
+function drawMenu(ctx, W, H, alpha, items, sel, hover) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  const rects = menuRects(W, H, items.length, H * 0.58);
+  drawButtons(ctx, rects, items, sel, hover, alpha);
+  const last = rects[rects.length - 1];
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = 'rgba(40,20,8,0.85)';
+  ctx.font = '15px "Consolas","Courier New",monospace';
+  ctx.fillText('Arrow keys + Enter, or click', W / 2, last.y + last.h + 34);
+  ctx.restore();
+}
+
+function drawDifficulty(ctx, W, H, alpha, tracks, sel, hover) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = 'bold 44px "Consolas","Courier New",monospace';
+  ctx.fillStyle = 'rgba(40,16,4,0.85)';
+  ctx.fillText('CHOOSE DIFFICULTY', W / 2 + 3, H * 0.20 + 3);
+  ctx.fillStyle = '#f9c623';
+  ctx.fillText('CHOOSE DIFFICULTY', W / 2, H * 0.20);
+  ctx.restore();
+
+  const items = tracks.map(t => ({
+    label: t.label,
+    sub: t.levels.length ? t.length + ' maps' : 'Coming soon',
+    color: t.color,
+    disabled: !t.levels.length,
+  }));
+  const rects = menuRects(W, H, tracks.length, H * 0.34);
+  drawButtons(ctx, rects, items, sel, hover, alpha);
+
+  const last = rects[rects.length - 1];
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = 'rgba(40,20,8,0.85)';
+  ctx.font = '15px "Consolas","Courier New",monospace';
+  ctx.fillText('Esc to go back', W / 2, last.y + last.h + 34);
+  ctx.restore();
+}
+
+// the rider slumped over his bike, head hanging low — shown on the
+// Continue? screen. (x, y) is where the wheels meet the ground.
+function drawDejectedBiker(ctx, x, y, scale, t) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(scale, scale);
+  ctx.translate(0, -PHYS.wheelR);
+
+  const wheels = [
+    { pos: { x: -0.62, y: 0 }, rot: 0.4 },
+    { pos: { x: 0.62, y: 0 }, rot: 1.3 },
+  ];
+  for (const w of wheels) drawWheel(ctx, w);
+
+  const br = Math.sin(t * 1.7) * 0.015; // slow, heavy breathing
+  const P = (lx, ly) => ({ x: lx, y: ly - 0.40 });
+  const pedal = P(0.02, 0.06), seatB = P(-0.45, -0.45), seatF = P(-0.02, -0.43);
+  const handle = P(0.46, -0.44), engine = P(0.06, -0.12);
+
+  ctx.lineCap = 'round';
+  strokeSeg(ctx, pedal, wheels[0].pos, 0.09, '#b9b9b9');
+  strokeSeg(ctx, handle, wheels[1].pos, 0.07, '#b9b9b9');
+  strokeSeg(ctx, pedal, seatF, 0.07, '#b9b9b9');
+  strokeSeg(ctx, pedal, handle, 0.06, '#a5a5a5');
+  strokeSeg(ctx, seatB, seatF, 0.13, '#d9d9d9');
+  ctx.fillStyle = '#8d8d8d';
+  ctx.beginPath();
+  ctx.arc(engine.x, engine.y, 0.14, 0, Math.PI * 2);
+  ctx.fill();
+
+  // slumped rider: hunched back, shoulders dropped over the bars
+  const hip = P(-0.32, -0.42 + br);
+  const shoulder = P(-0.04, -0.64 + br * 1.6);
+  const knee = P(0.14, -0.28);
+  const foot = P(0.03, 0.02);
+  strokeSeg(ctx, hip, knee, 0.11, '#15151a');
+  strokeSeg(ctx, knee, foot, 0.09, '#15151a');
+  strokeSeg(ctx, hip, shoulder, 0.14, '#15151a');
+  strokeSeg(ctx, shoulder, handle, 0.08, '#15151a');
+
+  // head hanging below the shoulders, almost on the bars, swaying
+  // with a slow, sorry little shake
+  const head = P(0.20, -0.8 + br * 1.6);
+  drawHead(ctx, head.x, head.y, 1, 1.05 + Math.sin(t * 0.9) * 0.07);
+  ctx.restore();
+}
+
+function drawContinue(ctx, W, H, alpha, t, continuesLeft, sel, hover) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  // somber dimming over the backdrop
+  ctx.fillStyle = 'rgba(12,8,20,0.45)';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const heading = continuesLeft > 0 ? 'CONTINUE?' : 'YOU LOSE!';
+  ctx.font = 'bold 52px "Consolas","Courier New",monospace';
+  ctx.fillStyle = 'rgba(40,16,4,0.85)';
+  ctx.fillText(heading, W / 2 + 3, H * 0.09 + 3);
+  ctx.fillStyle = '#f9c623';
+  ctx.fillText(heading, W / 2, H * 0.09);
+
+  drawDejectedBiker(ctx, W / 2, H * 0.55, Math.min(W, H) / 5, t);
+  ctx.restore();
+
+  const items = [
+    {
+      label: 'Continue',
+      sub: continuesLeft > 0 ? continuesLeft + ' left' : 'none left',
+      disabled: !continuesLeft,
+    },
+    { label: 'Back to Menu' },
+  ];
+  drawButtons(ctx, menuRects(W, H, 2, H * 0.62), items, sel, hover, alpha);
+}
+
+function drawPause(ctx, W, H, items, sel, hover) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = 'rgba(8,5,2,0.55)';
+  ctx.fillRect(0, 0, W, H);
+
+  const rects = menuRects(W, H, items.length, H * 0.46);
+  const last = rects[rects.length - 1];
+  const pw = Math.min(W * 0.7, 460);
+  const py = H * 0.32, ph = last.y + last.h + 30 - py;
+  ctx.fillStyle = 'rgba(20,12,6,0.85)';
+  roundRectPath(ctx, (W - pw) / 2, py, pw, ph, 16);
+  ctx.fill();
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#f9c623';
+  ctx.font = 'bold 36px "Consolas","Courier New",monospace';
+  ctx.fillText('PAUSED', W / 2, py + 44);
+  drawButtons(ctx, rects, items, sel, hover, 1);
 }
 
 function drawHUD(ctx, W, H, o) {
@@ -535,13 +850,70 @@ function drawHUD(ctx, W, H, o) {
   ctx.fillText(`time    ${fmt(o.time)}`, 14, 12);
   ctx.fillText(`best    ${o.best != null ? fmt(o.best) : '--:--,--'}`, 14, 12 + fs * 1.3);
   ctx.fillText(`burgers ${o.got}/${o.total}`, 14, 12 + fs * 2.6);
+  if (o.lives != null) {
+    // one biker head per remaining life
+    const img = IMAGES.biker;
+    const ih = fs * 1.5, iy = 12 + fs * 3.9;
+    for (let i = 0; i < o.lives; i++) {
+      if (img && img.complete && img.naturalWidth > 0) {
+        const iw = ih * img.naturalWidth / img.naturalHeight;
+        ctx.drawImage(img, 14 + i * (iw + 8), iy, iw, ih);
+      } else {
+        ctx.beginPath();
+        ctx.arc(14 + i * (ih * 0.8 + 8) + ih * 0.4, iy + ih / 2, ih * 0.4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
 
   if (o.state === 'dead') {
-    centerMsg(ctx, W, H, 'You crashed!', 'Press Enter to try again');
+    const sub = o.lives > 0
+      ? `Press Enter to try again - ${o.lives} ${o.lives === 1 ? 'life' : 'lives'} left`
+      : 'Out of lives... press Enter';
+    centerMsg(ctx, W, H, 'You crashed!', sub);
   } else if (o.state === 'finished') {
     centerMsg(ctx, W, H, 'Course completed!',
-      `Time ${fmt(o.time)} - press Enter to ride again`);
-  } else if (o.state === 'title') {
-    drawTitle(ctx, W, H);
+      `Time ${fmt(o.time)} - press Enter for ${o.hasNext ? 'the next map' : 'the menu'}`);
+  } else if (o.state === 'ready') {
+    drawReady(ctx, W, H, o.mapLabel);
   }
+}
+
+// boot screen: progress bar while assets stream in; once ready it becomes
+// the "press to start" gate (the gesture also unlocks the audio context)
+function drawLoading(ctx, W, H, frac, t, ready) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = '#1a0f06';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.save();
+  ctx.translate(W / 2, H * 0.40);
+  ctx.scale(60, 60);
+  drawBurger(ctx, 0, 0, t * 3);
+  ctx.restore();
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  if (ready) {
+    ctx.globalAlpha = 0.65 + Math.sin(t * 4) * 0.35;
+    ctx.fillStyle = '#9be08a';
+    ctx.font = 'bold 24px "Consolas","Courier New",monospace';
+    ctx.fillText('Press any key or click to start', W / 2, H * 0.62);
+    ctx.globalAlpha = 1;
+    return;
+  }
+
+  ctx.fillStyle = '#f0e8da';
+  ctx.font = 'bold 22px "Consolas","Courier New",monospace';
+  ctx.fillText('LOADING' + '.'.repeat(1 + Math.floor(t * 2.5) % 3), W / 2, H * 0.60);
+
+  const bw = Math.min(W * 0.5, 360), bh = 14;
+  const bx = (W - bw) / 2, by = H * 0.66;
+  ctx.strokeStyle = 'rgba(249,198,35,0.5)';
+  ctx.lineWidth = 2;
+  roundRectPath(ctx, bx, by, bw, bh, 7);
+  ctx.stroke();
+  ctx.fillStyle = '#f9c623';
+  roundRectPath(ctx, bx + 2, by + 2, Math.max(8, (bw - 4) * frac), bh - 4, 5);
+  ctx.fill();
 }

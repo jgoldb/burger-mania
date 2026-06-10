@@ -11,25 +11,55 @@
   window.addEventListener('resize', resize);
   resize();
 
-  const level = prepareLevel(LEVELS[0]);
   const patterns = makePatterns(ctx);
-  const BEST_KEY = 'burger-mania-best-' + level.name;
 
-  let state = 'title';
+  // loading -> intro -> menu -> difficulty -> ready -> playing ->
+  // dead | finished (dead -> continue once lives run out), with paused
+  // overlaying any in-game state
+  let state = 'loading';
   let bike = null, time = 0, burgers = [], headBody = null;
-  let best = parseFloat(localStorage.getItem(BEST_KEY) || '');
+  let currentTrack = null, levelIndex = 0;
+  let lives = 3, continues = 3, checkpointIndex = 0;
+  let level = prepareLevel(LEVELS[0]);
+  let bestKey = 'burger-mania-best-' + level.name;
+  let best = parseFloat(localStorage.getItem(bestKey) || '');
   if (!isFinite(best)) best = null;
   let cam = { x: level.start.x, y: level.start.y };
   let flipQueued = false;
   const keys = { up: false, down: false, left: false, right: false };
+
+  // ---------- screens ----------
+  let loadFrac = 0, loadDone = false;
+  let introT = 0, menuT = 0, diffT = 0, contT = 0;
+  let introLaunched = 0, introLanded = 0, fanfared = false;
+  const menuItems = ['Play'];
+  let menuSel = 0, diffSel = 0, contSel = 0;
+  const pauseItems = ['Continue', 'Return to Menu'];
+  let pauseSel = 0, pausedFrom = 'playing';
+  let hoverIdx = -1;
+  const mouse = { x: -1, y: -1 };
+
+  loadAssets((done, total) => { loadFrac = total ? done / total : 1; })
+    .then(() => { loadDone = true; });
 
   function reset() {
     bike = new Bike(level.start.x, level.start.y);
     time = 0;
     burgers = level.burgers.map(b => ({ x: b[0], y: b[1], got: false }));
     headBody = null;
+    cam.x = level.start.x;
+    cam.y = level.start.y;
   }
   reset();
+
+  // swaps in a raw level (from a track) along with its best-time record
+  function loadLevel(raw) {
+    level = prepareLevel(raw);
+    bestKey = 'burger-mania-best-' + level.name;
+    best = parseFloat(localStorage.getItem(bestKey) || '');
+    if (!isFinite(best)) best = null;
+    reset();
+  }
 
   // ---------- sound ----------
   let AC = null, engineSnd = null, muted = false;
@@ -78,32 +108,276 @@
     o.stop(AC.currentTime + dur);
   }
 
+  // filtered noise burst for the title letters whipping past
+  function whoosh(dur, freq) {
+    if (!AC || muted) return;
+    const n = Math.floor(AC.sampleRate * dur);
+    const buf = AC.createBuffer(1, n, AC.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
+    const src = AC.createBufferSource();
+    src.buffer = buf;
+    const f = AC.createBiquadFilter();
+    f.type = 'bandpass';
+    f.frequency.value = freq;
+    f.Q.value = 1.4;
+    const g = AC.createGain();
+    g.gain.value = 0.35;
+    src.connect(f);
+    f.connect(g);
+    g.connect(AC.destination);
+    src.start();
+  }
+
+  // fires whoosh / thud / fanfare cues as title letters launch and land
+  function introSounds() {
+    const launched = Math.max(0, Math.min(TITLE_ANIM.count,
+      Math.floor((introT - TITLE_ANIM.delay) / TITLE_ANIM.stagger) + 1));
+    while (introLaunched < launched) {
+      whoosh(0.22, 500 + introLaunched * 90);
+      introLaunched++;
+    }
+    const landed = Math.max(0, Math.min(TITLE_ANIM.count,
+      Math.floor((introT - TITLE_ANIM.delay - TITLE_ANIM.fly) / TITLE_ANIM.stagger) + 1));
+    while (introLanded < landed) {
+      blip(220 + introLanded * 55, 0.10);
+      introLanded++;
+    }
+    if (!fanfared && introLanded >= TITLE_ANIM.count) {
+      fanfared = true;
+      blip(660, 0.12);
+      setTimeout(() => blip(880, 0.12), 130);
+      setTimeout(() => blip(1320, 0.22), 260);
+    }
+  }
+
+  // ---------- screen flow ----------
+  // enters track level i, recording a checkpoint at every 5th map; the
+  // next-map advance will call this too once tracks are stranded together
+  function enterLevel(i) {
+    levelIndex = i;
+    if (i % 5 === 0) checkpointIndex = i;
+    loadLevel(currentTrack.levels[i]);
+  }
+
+  function startGame(track) {
+    currentTrack = track;
+    lives = 3;
+    continues = 3;
+    checkpointIndex = 0;
+    enterLevel(0);
+    state = 'ready';
+  }
+
+  function hasNextLevel() {
+    return !!currentTrack && levelIndex + 1 < currentTrack.levels.length;
+  }
+
+  function mapLabel() {
+    if (!currentTrack) return level.name;
+    return `${currentTrack.label} ${levelIndex + 1}/${currentTrack.length} - ${level.name}`;
+  }
+
+  function goContinue() {
+    state = 'continue';
+    contT = 0;
+    contSel = continues > 0 ? 0 : 1; // land on Back to Menu when tapped out
+    hoverIdx = -1;
+    blip(392, 0.14); // sad descending tones
+    setTimeout(() => blip(311, 0.14), 170);
+    setTimeout(() => blip(233, 0.30), 340);
+  }
+
+  function useContinue() {
+    continues--;
+    lives = 3;
+    enterLevel(checkpointIndex);
+    state = 'ready';
+  }
+
+  function goMenu() {
+    state = 'menu';
+    menuT = 0;
+    menuSel = 0;
+    hoverIdx = -1;
+  }
+
+  function goDifficulty() {
+    state = 'difficulty';
+    diffT = 0;
+    diffSel = 0;
+    hoverIdx = -1;
+  }
+
+  function openPause() {
+    pausedFrom = state;
+    state = 'paused';
+    pauseSel = 0;
+    keys.up = keys.down = keys.left = keys.right = false;
+  }
+
+  function skipIntro() {
+    introT = TITLE_ANIM.dur;
+    introLaunched = introLanded = TITLE_ANIM.count;
+    fanfared = true;
+    goMenu();
+  }
+
+  function activateMenu(i) {
+    if (menuItems[i] === 'Play') {
+      blip(880, 0.08);
+      goDifficulty();
+    }
+  }
+
+  function activateDifficulty(i) {
+    const track = TRACKS[i];
+    if (!track.levels.length) {
+      blip(180, 0.12); // not available yet
+      return;
+    }
+    blip(880, 0.08);
+    startGame(track);
+  }
+
+  function activateContinue(i) {
+    if (i === 0) {
+      if (continues <= 0) {
+        blip(180, 0.12);
+        return;
+      }
+      blip(880, 0.08);
+      useContinue();
+    } else {
+      goMenu();
+    }
+  }
+
+  function activatePause(i) {
+    if (pauseItems[i] === 'Continue') state = pausedFrom;
+    else goMenu();
+  }
+
   // ---------- input ----------
+  function currentRects() {
+    if (state === 'menu' && menuT > 0.15) {
+      return menuRects(W, H, menuItems.length, H * 0.58);
+    }
+    if (state === 'difficulty' && diffT > 0.15) {
+      return menuRects(W, H, TRACKS.length, H * 0.34);
+    }
+    if (state === 'continue' && contT > 0.15) {
+      return menuRects(W, H, 2, H * 0.62);
+    }
+    if (state === 'paused') {
+      return menuRects(W, H, pauseItems.length, H * 0.46);
+    }
+    return null;
+  }
+
+  function updateHover() {
+    const rects = currentRects();
+    hoverIdx = -1;
+    if (rects) {
+      rects.forEach((r, i) => {
+        if (mouse.x >= r.x && mouse.x <= r.x + r.w &&
+            mouse.y >= r.y && mouse.y <= r.y + r.h) hoverIdx = i;
+      });
+    }
+    canvas.style.cursor = hoverIdx >= 0 ? 'pointer' : 'default';
+  }
+
   window.addEventListener('keydown', e => {
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) {
       e.preventDefault();
     }
     ensureAudio();
     if (AC && AC.state === 'suspended') AC.resume();
-    if (state === 'title' && e.key.toLowerCase() !== 'm') {
-      reset();
-      state = 'playing';
+    if (e.key === 'm' || e.key === 'M') {
+      muted = !muted;
+      return;
     }
+
+    switch (state) {
+      case 'loading':
+        if (loadDone) { state = 'intro'; introT = 0; }
+        return;
+      case 'intro':
+        skipIntro();
+        return;
+      case 'menu':
+        if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+          const d = e.key === 'ArrowUp' ? -1 : 1;
+          menuSel = (menuSel + d + menuItems.length) % menuItems.length;
+          blip(520, 0.05);
+        } else if (e.key === 'Enter' || e.key === ' ') {
+          activateMenu(menuSel);
+        }
+        return;
+      case 'difficulty':
+        if (e.key === 'Escape') { goMenu(); return; }
+        if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+          const d = e.key === 'ArrowUp' ? -1 : 1;
+          diffSel = (diffSel + d + TRACKS.length) % TRACKS.length;
+          blip(520, 0.05);
+        } else if (e.key === 'Enter' || e.key === ' ') {
+          activateDifficulty(diffSel);
+        }
+        return;
+      case 'paused':
+        if (e.key === 'Escape') { state = pausedFrom; return; }
+        if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+          const d = e.key === 'ArrowUp' ? -1 : 1;
+          pauseSel = (pauseSel + d + pauseItems.length) % pauseItems.length;
+          blip(520, 0.05);
+        } else if (e.key === 'Enter' || e.key === ' ') {
+          blip(880, 0.08);
+          activatePause(pauseSel);
+        }
+        return;
+      case 'finished':
+        if (e.key === 'Enter') {
+          if (hasNextLevel()) {
+            enterLevel(levelIndex + 1);
+            state = 'ready';
+          } else {
+            goMenu(); // track complete (as far as it exists, anyway)
+          }
+        } else if (e.key === 'Escape') openPause();
+        return;
+      case 'dead':
+        if (e.key === 'Enter') {
+          if (lives > 0) { reset(); state = 'playing'; }
+          else goContinue();
+        } else if (e.key === 'Escape') openPause();
+        return;
+      case 'continue':
+        if (e.key === 'Escape') { goMenu(); return; }
+        if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+          if (continues > 0) {
+            contSel = 1 - contSel;
+            blip(520, 0.05);
+          }
+        } else if (e.key === 'Enter' || e.key === ' ') {
+          activateContinue(contSel);
+        }
+        return;
+      case 'ready':
+        if (e.key === 'Escape') { goMenu(); return; }
+        state = 'playing'; // any other key starts riding, and still applies below
+        break;
+      case 'playing':
+        if (e.key === 'Escape') { openPause(); return; }
+        if (e.key === 'Enter') { reset(); return; }
+        break;
+    }
+
     switch (e.key) {
       case 'ArrowUp': keys.up = true; break;
       case 'ArrowDown': keys.down = true; break;
       case 'ArrowLeft': keys.left = true; break;
       case 'ArrowRight': keys.right = true; break;
       case ' ': if (!e.repeat) flipQueued = true; break;
-      case 'Enter':
-      case 'Escape':
-        reset();
-        state = 'playing';
-        break;
-      case 'm':
-      case 'M':
-        muted = !muted;
-        break;
     }
   });
   window.addEventListener('keyup', e => {
@@ -116,6 +390,39 @@
   });
   window.addEventListener('blur', () => {
     keys.up = keys.down = keys.left = keys.right = false;
+    if (state === 'playing') openPause();
+  });
+
+  canvas.addEventListener('mousemove', e => {
+    mouse.x = e.clientX;
+    mouse.y = e.clientY;
+    updateHover();
+  });
+  canvas.addEventListener('click', e => {
+    ensureAudio();
+    if (AC && AC.state === 'suspended') AC.resume();
+    mouse.x = e.clientX;
+    mouse.y = e.clientY;
+    updateHover();
+    if (state === 'loading') {
+      if (loadDone) { state = 'intro'; introT = 0; }
+      return;
+    }
+    if (state === 'intro') { skipIntro(); return; }
+    if (hoverIdx < 0) return;
+    if (state === 'menu') {
+      menuSel = hoverIdx;
+      activateMenu(hoverIdx);
+    } else if (state === 'difficulty') {
+      diffSel = hoverIdx;
+      activateDifficulty(hoverIdx);
+    } else if (state === 'continue') {
+      contSel = hoverIdx;
+      activateContinue(hoverIdx);
+    } else if (state === 'paused') {
+      pauseSel = hoverIdx;
+      activatePause(hoverIdx);
+    }
   });
 
   // ---------- gameplay ----------
@@ -152,7 +459,7 @@
     state = 'finished';
     if (best === null || time < best) {
       best = time;
-      localStorage.setItem(BEST_KEY, String(best));
+      localStorage.setItem(bestKey, String(best));
     }
     blip(660, 0.12);
     setTimeout(() => blip(880, 0.12), 130);
@@ -161,6 +468,7 @@
 
   function onDeath() {
     state = 'dead';
+    lives = Math.max(0, lives - 1);
     const h = bike.headPos();
     headBody = {
       x: h.x, y: h.y,
@@ -213,7 +521,18 @@
     last = now;
     while (acc >= FDT) {
       acc -= FDT;
-      if (state === 'playing') {
+      if (state === 'intro') {
+        introT += FDT;
+        introSounds();
+        if (introT >= TITLE_ANIM.dur) { state = 'menu'; menuT = 0; }
+      } else if (state === 'menu') {
+        introT += FDT; // keeps the settled title bobbing
+        menuT += FDT;
+      } else if (state === 'difficulty') {
+        diffT += FDT;
+      } else if (state === 'continue') {
+        contT += FDT;
+      } else if (state === 'playing') {
         if (flipQueued) bike.flip();
         const input = {
           throttle: keys.up, brake: keys.down,
@@ -233,14 +552,42 @@
         for (let i = 0; i < SUB; i++) stepHead(FDT / SUB);
       }
       flipQueued = false;
-      updateCamera(FDT);
+      if (state !== 'loading' && state !== 'intro' && state !== 'menu' &&
+          state !== 'difficulty' && state !== 'continue') {
+        updateCamera(FDT);
+      }
     }
+    updateHover();
     draw();
     updateEngineSound();
     requestAnimationFrame(frame);
   }
 
   function draw() {
+    const rt = performance.now() / 1000;
+    if (state === 'loading') {
+      drawLoading(ctx, W, H, loadFrac, rt, loadDone);
+      return;
+    }
+    if (state === 'intro' || state === 'menu') {
+      drawMenuBackdrop(ctx, W, H, rt, patterns);
+      drawTitleLetters(ctx, W, H, introT);
+      if (state === 'menu') {
+        drawMenu(ctx, W, H, Math.min(1, menuT / 0.6), menuItems, menuSel, hoverIdx);
+      }
+      return;
+    }
+    if (state === 'difficulty') {
+      drawMenuBackdrop(ctx, W, H, rt, patterns);
+      drawDifficulty(ctx, W, H, Math.min(1, diffT / 0.4), TRACKS, diffSel, hoverIdx);
+      return;
+    }
+    if (state === 'continue') {
+      drawMenuBackdrop(ctx, W, H, rt, patterns);
+      drawContinue(ctx, W, H, Math.min(1, contT / 0.4), rt, continues, contSel, hoverIdx);
+      return;
+    }
+
     const Z = Math.min(W / 26, H / 13.5);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = '#000';
@@ -253,7 +600,6 @@
     const hw = W / 2 / Z + 1, hh = H / 2 / Z + 1;
     drawWorld(ctx, level, patterns,
       { x0: cam.x - hw, y0: cam.y - hh, x1: cam.x + hw, y1: cam.y + hh });
-    const rt = performance.now() / 1000;
     for (const b of burgers) if (!b.got) drawBurger(ctx, b.x, b.y, rt);
     drawPopcorn(ctx, level.goal[0], level.goal[1], rt);
     drawBike(ctx, bike, !!headBody);
@@ -266,7 +612,14 @@
       total: burgers.length,
       best,
       state,
+      lives,
+      hasNext: hasNextLevel(),
+      mapLabel: mapLabel(),
     });
+
+    if (state === 'paused') {
+      drawPause(ctx, W, H, pauseItems, pauseSel, hoverIdx);
+    }
   }
 
   requestAnimationFrame(frame);

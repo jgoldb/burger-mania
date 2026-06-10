@@ -59,6 +59,10 @@ function pointInPoly(px, py, poly) {
 function prepareLevel(L) {
   const segments = [], grass = [];
   for (const poly of L.polygons) {
+    // a polygon nested inside another is a solid island in the playable
+    // area (evenodd fill), so its playable side is the inverse
+    const island = L.polygons.some(p =>
+      p !== poly && pointInPoly(poly[0][0], poly[0][1], p));
     for (let i = 0; i < poly.length; i++) {
       const a = poly[i], b = poly[(i + 1) % poly.length];
       const s = { ax: a[0], ay: a[1], bx: b[0], by: b[1] };
@@ -66,9 +70,10 @@ function prepareLevel(L) {
       const mx = (s.ax + s.bx) / 2, my = (s.ay + s.by) / 2;
       const dx = s.bx - s.ax, dy = s.by - s.ay;
       // grass grows on edges that are not too steep and face the playable side upward
-      if (Math.abs(dx) > 0.001 && Math.abs(dy / dx) < 2.0 &&
-          pointInPoly(mx, my - 0.3, poly) && !pointInPoly(mx, my + 0.3, poly)) {
-        grass.push(s);
+      if (Math.abs(dx) > 0.001 && Math.abs(dy / dx) < 2.0) {
+        const up = pointInPoly(mx, my - 0.3, poly);
+        const down = pointInPoly(mx, my + 0.3, poly);
+        if (island ? (down && !up) : (up && !down)) grass.push(s);
       }
     }
   }
