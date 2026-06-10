@@ -1,5 +1,9 @@
 'use strict';
 
+// the rider's head photo; the drawn helmet is the fallback while it loads
+const headImg = new Image();
+headImg.src = 'assets/biker.png';
+
 // deterministic pseudo-random for grass blades (stable frame to frame)
 function srand(n) {
   const x = Math.sin(n * 127.1) * 43758.5453;
@@ -116,87 +120,218 @@ function roundRectPath(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-function drawBurger(ctx, x, y) {
+function drawBurger(ctx, x, y, t) {
+  t = t || 0;
+  const phase = x * 1.7;
+  const spin = t * 1.1 + phase;
   ctx.save();
-  ctx.translate(x, y);
+  // hover-bob and a gentle rocking sway
+  ctx.translate(x, y + Math.sin(t * 2 + phase) * 0.045);
+  ctx.rotate(Math.sin(t * 1.4 + phase) * 0.05);
   ctx.scale(0.55, 0.55);
-  ctx.lineWidth = 0.05;
   ctx.lineJoin = 'round';
 
-  // bottom bun
-  ctx.fillStyle = '#e3a14f';
-  ctx.strokeStyle = '#8a5a22';
-  roundRectPath(ctx, -0.72, 0.32, 1.44, 0.34, 0.15);
+  // bottom bun: horizontal gradient gives it a cylindrical body
+  let g = ctx.createLinearGradient(-0.78, 0, 0.78, 0);
+  g.addColorStop(0, '#a9742f');
+  g.addColorStop(0.42, '#f0bd6b');
+  g.addColorStop(1, '#8e5f24');
+  ctx.fillStyle = g;
+  roundRectPath(ctx, -0.72, 0.32, 1.44, 0.34, 0.16);
   ctx.fill();
-  ctx.stroke();
+  ctx.fillStyle = 'rgba(255,235,190,0.35)';
+  ctx.beginPath();
+  ctx.ellipse(0, 0.33, 0.70, 0.05, 0, 0, Math.PI * 2);
+  ctx.fill();
 
-  // three patties, each with a slice of cheese draped over it
+  // three patties, each draped with melting cheese
   for (let i = 0; i < 3; i++) {
     const base = 0.32 - (i + 1) * 0.30;
-    ctx.fillStyle = '#5d2f17';
-    ctx.strokeStyle = '#3c1d0c';
-    roundRectPath(ctx, -0.78, base + 0.06, 1.56, 0.20, 0.10);
+    g = ctx.createLinearGradient(-0.78, 0, 0.78, 0);
+    g.addColorStop(0, '#3a1d0c');
+    g.addColorStop(0.42, '#7a4423');
+    g.addColorStop(1, '#33180a');
+    ctx.fillStyle = g;
+    roundRectPath(ctx, -0.78, base + 0.04, 1.56, 0.26, 0.10);
     ctx.fill();
-    ctx.stroke();
-    ctx.fillStyle = '#f9c623';
+    ctx.fillStyle = 'rgba(255,255,255,0.10)';
+    ctx.beginPath();
+    ctx.ellipse(0, base + 0.06, 0.74, 0.045, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    g = ctx.createLinearGradient(-0.78, 0, 0.78, 0);
+    g.addColorStop(0, '#c79212');
+    g.addColorStop(0.42, '#ffd84d');
+    g.addColorStop(1, '#b8860d');
+    ctx.fillStyle = g;
     ctx.fillRect(-0.76, base, 1.52, 0.09);
-    ctx.beginPath();
-    ctx.moveTo(-0.76, base + 0.09);
-    ctx.lineTo(-0.58, base + 0.09);
-    ctx.lineTo(-0.69, base + 0.24);
-    ctx.closePath();
-    ctx.fill();
-    ctx.beginPath();
-    ctx.moveTo(0.76, base + 0.09);
-    ctx.lineTo(0.58, base + 0.09);
-    ctx.lineTo(0.69, base + 0.24);
-    ctx.closePath();
-    ctx.fill();
+    // cheese drips slowly stretch and relax
+    const drip = 0.24 + Math.sin(t * 1.8 + i * 2.1 + phase) * 0.04;
+    for (const side of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(side * 0.76, base + 0.09);
+      ctx.lineTo(side * 0.58, base + 0.09);
+      ctx.lineTo(side * 0.69, base + drip);
+      ctx.closePath();
+      ctx.fill();
+    }
   }
 
-  // top bun
-  ctx.fillStyle = '#eab157';
-  ctx.strokeStyle = '#8a5a22';
+  // top bun: radial gradient dome lit from the upper left
+  g = ctx.createRadialGradient(-0.22, -0.64, 0.06, 0, -0.5, 0.95);
+  g.addColorStop(0, '#ffd98f');
+  g.addColorStop(0.5, '#e8a953');
+  g.addColorStop(1, '#9a6526');
+  ctx.fillStyle = g;
   ctx.beginPath();
   ctx.ellipse(0, -0.46, 0.74, 0.40, 0, Math.PI, Math.PI * 2);
   ctx.closePath();
   ctx.fill();
-  ctx.stroke();
+  ctx.fillRect(-0.70, -0.50, 1.40, 0.05);
 
-  // sesame seeds
-  ctx.fillStyle = '#fdf0cf';
-  for (const [sx, sy, sa] of [[-0.42, -0.60, 0.5], [-0.14, -0.74, 0.1],
-                              [0.18, -0.70, -0.3], [0.44, -0.56, -0.6],
-                              [0.02, -0.55, 0.3]]) {
+  // sesame seeds orbit the dome (fake-3D spin: foreshorten and fade
+  // as they swing around the back)
+  const rows = [[-0.57, 0.62], [-0.66, 0.50], [-0.74, 0.30]];
+  for (let sI = 0; sI < 7; sI++) {
+    const a = sI * (Math.PI * 2 / 7) + spin;
+    const c = Math.cos(a);
+    if (c < 0.12) continue;
+    const row = rows[sI % rows.length];
+    ctx.globalAlpha = 0.45 + 0.55 * c;
+    ctx.fillStyle = '#fdf3d3';
     ctx.beginPath();
-    ctx.ellipse(sx, sy, 0.055, 0.030, sa, 0, Math.PI * 2);
+    ctx.ellipse(Math.sin(a) * row[1], row[0], 0.055 * (0.5 + 0.5 * c), 0.032,
+      Math.sin(a) * 0.5, 0, Math.PI * 2);
     ctx.fill();
   }
+  ctx.globalAlpha = 1;
+
+  // sweeping glint on the dome
+  ctx.fillStyle = 'rgba(255,255,255,0.30)';
+  ctx.beginPath();
+  ctx.ellipse(Math.sin(spin * 0.9) * 0.3 - 0.1, -0.67, 0.09, 0.045, -0.5, 0, Math.PI * 2);
+  ctx.fill();
+
   ctx.restore();
 }
 
-function drawFlower(ctx, x, y) {
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.fillStyle = '#f4f4f4';
-  ctx.strokeStyle = '#b9b9c2';
-  ctx.lineWidth = 0.03;
-  for (let k = 0; k < 7; k++) {
-    ctx.save();
-    ctx.rotate(k * Math.PI * 2 / 7);
-    ctx.translate(0.27, 0);
-    ctx.beginPath();
-    ctx.ellipse(0, 0, 0.22, 0.11, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-    ctx.restore();
-  }
+// a single puff of popcorn: three overlapping lobes with buttery shading
+function drawKernel(ctx, cx, cy, s, seed) {
+  const g = ctx.createRadialGradient(cx - s * 0.4, cy - s * 0.5, s * 0.1,
+    cx, cy, s * 1.5);
+  g.addColorStop(0, '#fffdf0');
+  g.addColorStop(0.5, '#f8e3a0');
+  g.addColorStop(1, '#cf9f3e');
+  ctx.fillStyle = g;
   ctx.beginPath();
-  ctx.arc(0, 0, 0.16, 0, Math.PI * 2);
-  ctx.fillStyle = '#f0c93c';
+  for (let l = 0; l < 3; l++) {
+    const a = seed * 2.3 + l * (Math.PI * 2 / 3);
+    const lx = cx + Math.cos(a) * s * 0.45, ly = cy + Math.sin(a) * s * 0.4;
+    ctx.moveTo(lx + s * 0.6, ly);
+    ctx.arc(lx, ly, s * 0.6, 0, Math.PI * 2);
+  }
+  ctx.moveTo(cx + s * 0.75, cy);
+  ctx.arc(cx, cy, s * 0.75, 0, Math.PI * 2);
   ctx.fill();
-  ctx.strokeStyle = '#a8881f';
+}
+
+// the goal: a striped bucket of buttery popcorn (fake-3D, animated)
+function drawPopcorn(ctx, x, y, t) {
+  t = t || 0;
+  ctx.save();
+  ctx.translate(x, y + Math.sin(t * 1.6) * 0.03);
+  ctx.rotate(Math.sin(t * 1.1) * 0.04);
+
+  const topW = 0.40, botW = 0.28, topY = -0.02, botY = 0.55;
+  const body = () => {
+    ctx.beginPath();
+    ctx.moveTo(-topW, topY);
+    ctx.lineTo(topW, topY);
+    ctx.lineTo(botW, botY);
+    ctx.lineTo(-botW, botY);
+    ctx.closePath();
+  };
+
+  // ground-contact shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.22)';
+  ctx.beginPath();
+  ctx.ellipse(0, botY + 0.04, botW * 1.15, 0.06, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  body();
+  ctx.fillStyle = '#f6f2ea';
+  ctx.fill();
+
+  // red stripes orbit the bucket (fake-3D cylinder rotation)
+  ctx.save();
+  body();
+  ctx.clip();
+  for (let k = 0; k < 7; k++) {
+    const ph = k * (Math.PI * 2 / 7) + t * 0.9;
+    const c = Math.cos(ph);
+    if (c <= 0.05) continue; // back side of the bucket
+    const sx = Math.sin(ph), w = 0.16 * c;
+    ctx.fillStyle = '#c8202a';
+    ctx.beginPath();
+    ctx.moveTo(sx * topW - w, topY);
+    ctx.lineTo(sx * topW + w, topY);
+    ctx.lineTo(sx * botW + w * 0.7, botY);
+    ctx.lineTo(sx * botW - w * 0.7, botY);
+    ctx.closePath();
+    ctx.fill();
+  }
+  // cylindrical shading over the stripes
+  const sh = ctx.createLinearGradient(-topW, 0, topW, 0);
+  sh.addColorStop(0, 'rgba(0,0,0,0.30)');
+  sh.addColorStop(0.25, 'rgba(0,0,0,0)');
+  sh.addColorStop(0.45, 'rgba(255,255,255,0.25)');
+  sh.addColorStop(0.7, 'rgba(0,0,0,0)');
+  sh.addColorStop(1, 'rgba(0,0,0,0.35)');
+  ctx.fillStyle = sh;
+  ctx.fillRect(-topW, topY, topW * 2, botY - topY);
+  ctx.restore();
+  body();
+  ctx.strokeStyle = 'rgba(60,20,10,0.35)';
+  ctx.lineWidth = 0.025;
   ctx.stroke();
+
+  // mound of popcorn, back rows first, every puff gently jiggling
+  const K = [
+    [-0.07, -0.42, 0.10], [0.12, -0.38, 0.09],
+    [-0.20, -0.26, 0.10], [0.02, -0.30, 0.115], [0.22, -0.24, 0.095],
+    [-0.30, -0.10, 0.10], [-0.10, -0.16, 0.115], [0.12, -0.13, 0.105],
+    [0.30, -0.08, 0.095],
+  ];
+  for (let i = 0; i < K.length; i++) {
+    const j = Math.sin(t * 2.8 + i * 1.9) * 0.012;
+    drawKernel(ctx, K[i][0], K[i][1] + j, K[i][2], i);
+  }
+
+  // every few seconds one kernel pops up out of the bucket
+  const cyc = (t % 2.8) / 0.8;
+  if (cyc < 1) {
+    const h = 4 * cyc * (1 - cyc);
+    drawKernel(ctx, 0.05 + cyc * 0.15, -0.45 - h * 0.45, 0.07, 3.3);
+  }
+
+  // front rim overlaps the base of the mound
+  ctx.strokeStyle = '#f3eee2';
+  ctx.lineWidth = 0.07;
+  ctx.beginPath();
+  ctx.ellipse(0, topY, topW, 0.09, 0, 0, Math.PI);
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+  ctx.lineWidth = 0.02;
+  ctx.beginPath();
+  ctx.ellipse(0, topY + 0.05, topW, 0.09, 0, 0, Math.PI);
+  ctx.stroke();
+
+  // butter glint sweeping across the mound
+  ctx.fillStyle = 'rgba(255,255,255,0.30)';
+  ctx.beginPath();
+  ctx.ellipse(Math.sin(t * 0.8) * 0.22, -0.27, 0.10, 0.05, -0.4, 0, Math.PI * 2);
+  ctx.fill();
+
   ctx.restore();
 }
 
@@ -245,24 +380,45 @@ function drawHead(ctx, x, y, facing, angle) {
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(angle || 0);
-  ctx.beginPath();
-  ctx.arc(0, 0, PHYS.headR, 0, Math.PI * 2);
-  ctx.fillStyle = '#e9e9e9';
-  ctx.fill();
-  ctx.strokeStyle = '#7a7a7a';
-  ctx.lineWidth = 0.03;
-  ctx.stroke();
-  // visor
-  ctx.beginPath();
-  ctx.arc(0.13 * facing, -0.02, 0.075, 0, Math.PI * 2);
-  ctx.fillStyle = '#23232a';
-  ctx.fill();
+  if (headImg.complete && headImg.naturalWidth > 0) {
+    // facing is continuous during the turn animation, so the face
+    // squashes through edge-on as the rider swings around
+    ctx.scale(Math.abs(facing) < 0.04 ? 0.04 : facing, 1);
+    const h = 0.62;
+    const w = h * headImg.naturalWidth / headImg.naturalHeight;
+    ctx.drawImage(headImg, -w / 2, -h / 2, w, h);
+  } else {
+    ctx.beginPath();
+    ctx.arc(0, 0, PHYS.headR, 0, Math.PI * 2);
+    ctx.fillStyle = '#e9e9e9';
+    ctx.fill();
+    ctx.strokeStyle = '#7a7a7a';
+    ctx.lineWidth = 0.03;
+    ctx.stroke();
+    // visor
+    ctx.beginPath();
+    ctx.arc(0.13 * facing, -0.02, 0.075, 0, Math.PI * 2);
+    ctx.fillStyle = '#23232a';
+    ctx.fill();
+  }
   ctx.restore();
 }
 
 function drawBike(ctx, bike, headless) {
-  const f = bike.facing;
-  const L = (x, y) => bike.l2w(x, y, true);
+  // turn-around animation: the rider and frame mirror smoothly through a
+  // flat squash (with a little hop) over the 0.28 s after a flip
+  const p = Math.min(1, (bike.turnT == null ? 1 : bike.turnT) / 0.28);
+  const m = bike.facing * Math.sin((p - 0.5) * Math.PI);
+  const hop = Math.sin(p * Math.PI) * 0.14;
+  const cos = Math.cos(bike.angle), sin = Math.sin(bike.angle);
+  const L = (lx, ly) => {
+    lx *= m;
+    ly -= hop;
+    return {
+      x: bike.pos.x + lx * cos - ly * sin,
+      y: bike.pos.y + lx * sin + ly * cos,
+    };
+  };
   const rw = bike.wheels[bike.rearIndex];
   const fw = bike.wheels[1 - bike.rearIndex];
 
@@ -297,8 +453,8 @@ function drawBike(ctx, bike, headless) {
   strokeSeg(ctx, shoulder, handle, 0.08, '#15151a');
 
   if (!headless) {
-    const head = bike.headPos();
-    drawHead(ctx, head.x, head.y, f, bike.angle);
+    const head = L(PHYS.headX, PHYS.headY);
+    drawHead(ctx, head.x, head.y, m, bike.angle);
   }
 }
 
@@ -350,13 +506,13 @@ function drawTitle(ctx, W, H) {
   ctx.save();
   ctx.translate(W / 2, py + 130);
   ctx.scale(42, 42);
-  drawBurger(ctx, 0, 0.4);
+  drawBurger(ctx, 0, 0.4, performance.now() / 1000);
   ctx.restore();
 
   ctx.fillStyle = '#f0e8da';
   ctx.font = '17px "Consolas","Courier New",monospace';
   const lines = [
-    'Collect every triple cheeseburger, then ride to the flower.',
+    'Collect every triple cheeseburger, then ride to the popcorn.',
     '',
     'UP gas   DOWN brake   LEFT / RIGHT rotate',
     'SPACE turn around   ENTER restart   M sound on/off',

@@ -8,8 +8,15 @@ const level = prepareLevel(LEVELS[0]);
 const dt = 1 / 480;
 let b = new Bike(level.start.x, level.start.y);
 let reached = null;
+// simple rider: full gas, but counter-lean to keep the wheelie in check,
+// the way a player modulates pitch
 for (let i = 0; i < 480 * 25; i++) {
-  b.step(dt, { throttle: true }, level.segments);
+  const input = {
+    throttle: b.angle > -0.45,
+    right: b.angle < -0.25,
+    left: b.angle > 0.3,
+  };
+  b.step(dt, input, level.segments);
   if (b.dead) { console.log('died t=' + (i * dt).toFixed(2) + ' x=' + b.pos.x.toFixed(2)); break; }
   if (reached === null && b.pos.x >= 90) reached = i * dt;
 }

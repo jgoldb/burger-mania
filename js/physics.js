@@ -2,7 +2,7 @@
 
 // Tuning constants for the bike. Units: meters, seconds, radians.
 const PHYS = {
-  g: 10,
+  g: 8,
 
   wheelR: 0.4,
   wheelM: 0.22,
@@ -15,13 +15,18 @@ const PHYS = {
   springC: 6.0,
   maxStretch: 0.4,
 
-  engineT: 0.75,   // torque applied to the driven (rear) wheel
+  engineT: 1.2,    // torque applied to the driven (rear) wheel
+  engineR: 7.0,    // reaction torque on the frame while the engine spins up
+  wheelieRate: 0.5, // rad/s pitch-back rate the engine reaction saturates at
   maxSpin: 55,     // rad/s cap on driven wheel spin
   brakeRate: 20,   // exponential lock rate for both wheels
+  brakeR: 0.32,    // fraction of brake torque reacted onto the frame
+  brakeSkid: 2.0,  // skid friction torque multiplier passed to the frame
 
-  leanT: 3.2,      // "volt" torque applied to the frame
+  leanT: 5.5,      // "volt" torque applied to the frame
 
-  mu: 1.1,         // tire friction coefficient
+  mu: 0.95,        // tire friction coefficient
+  rollRes: 9,      // rolling resistance (spin decel, rad/s^2, on contact)
 
   headR: 0.24,
   headX: -0.18,    // head offset in frame space (x is mirrored by facing)
@@ -77,6 +82,7 @@ class Bike {
     this.angle = 0;
     this.avel = 0;
     this.facing = 1; // 1 = right, -1 = left
+    this.turnT = 9;  // seconds since last turn-around (drives the flip animation)
     this.dead = false;
     this.wheels = [];
     for (const sx of [-1, 1]) {
@@ -101,10 +107,14 @@ class Bike {
 
   headPos() { return this.l2w(PHYS.headX, PHYS.headY, true); }
 
-  flip() { this.facing *= -1; }
+  flip() {
+    this.facing *= -1;
+    this.turnT = 0;
+  }
 
   step(dt, input, segs) {
     if (this.dead) return;
+    this.turnT += dt;
     const P = PHYS;
     const c = Math.cos(this.angle), s = Math.sin(this.angle);
 
@@ -134,12 +144,33 @@ class Bike {
       torque += rx * (-Fy) - ry * (-Fx);
 
       if (i === this.rearIndex && input.throttle) {
+        const before = w.spin;
         w.spin += (P.engineT / P.wheelI) * dt * this.facing;
         if (w.spin > P.maxSpin) w.spin = P.maxSpin;
         if (w.spin < -P.maxSpin) w.spin = -P.maxSpin;
+        // engine reaction torque pitches the frame backward (wheelies,
+        // and mid-air attitude adjustment) until the wheel maxes out;
+        // weaker in the air so gas doesn't overpower the lean controls.
+        // the reaction fades as pitch-back rotation builds, so a held
+        // wheelie climbs slowly instead of snapping over — until gravity
+        // takes it past the balance point
+        if (w.spin !== before) {
+          const back = this.avel * -this.facing; // current pitch-back rate
+          const fade = Math.min(1, Math.max(0, 1 - back / P.wheelieRate));
+          torque -= P.engineR * this.facing * (w.onGround ? 1 : 0.4) * fade;
+        }
       }
       if (input.brake) {
-        w.spin *= Math.max(0, 1 - P.brakeRate * dt);
+        const newSpin = w.spin * Math.max(0, 1 - P.brakeRate * dt);
+        // the brake is a clutch between wheel and frame: its reaction
+        // tips the bike toward the direction of travel, in proportion
+        // to how hard the wheel is being slowed; faded near the pitch
+        // cap so a stoppie stays controlled
+        const tip = P.wheelI * (w.spin - newSpin) / dt;
+        const sgn = tip > 0 ? 1 : -1;
+        const pred = sgn * (this.angle + this.avel * 0.3);
+        torque += P.brakeR * tip * Math.min(1, Math.max(0, 1 - pred / 0.4));
+        w.spin = newSpin;
       }
     }
 
@@ -176,7 +207,16 @@ class Bike {
       }
     }
 
-    for (const w of this.wheels) this.wheelContacts(w, segs, dt);
+    for (const w of this.wheels) this.wheelContacts(w, segs, dt, input.brake);
+
+    // rolling resistance: grounded wheels slowly shed spin, which bleeds
+    // bike speed through tire friction and lets it coast to a full stop
+    for (const w of this.wheels) {
+      if (!w.onGround) continue;
+      const dec = (P.rollRes + 0.15 * Math.abs(w.spin)) * dt;
+      if (Math.abs(w.spin) <= dec) w.spin = 0;
+      else w.spin -= Math.sign(w.spin) * dec;
+    }
 
     // the head is the only fatal collider
     const h = this.headPos();
@@ -189,13 +229,15 @@ class Bike {
     }
   }
 
-  wheelContacts(w, segs, dt) {
+  wheelContacts(w, segs, dt, braking) {
     const P = PHYS;
+    w.onGround = false;
     for (const seg of segs) {
       const cp = closestOnSeg(w.pos.x, w.pos.y, seg);
       let nx = w.pos.x - cp.x, ny = w.pos.y - cp.y;
       const d = Math.hypot(nx, ny);
       if (d >= P.wheelR || d === 0) continue;
+      w.onGround = true;
       nx /= d; ny /= d;
 
       // positional correction
@@ -218,12 +260,26 @@ class Bike {
       const vt = w.vel.x * tx + w.vel.y * ty - P.wheelR * w.spin;
       const meff = 1 / (1 / P.wheelM + P.wheelR * P.wheelR / P.wheelI);
       let jt = -vt * meff;
-      const maxF = P.mu * Math.max(jn, P.wheelM * P.g * dt * 1.5);
+      const maxF = P.mu * jn;
       if (jt > maxF) jt = maxF;
       if (jt < -maxF) jt = -maxF;
       w.vel.x += tx * jt / P.wheelM;
       w.vel.y += ty * jt / P.wheelM;
       w.spin += (-P.wheelR * jt) / P.wheelI;
+      // with the wheel locked, skid friction torque can't spin it up;
+      // the brake clutch passes it to the frame instead, pitching the
+      // bike toward the direction of travel in proportion to the decel.
+      // the torque fades as pitch builds, so a hard stop gives a
+      // controlled stoppie instead of throwing the rider over the bars
+      if (braking) {
+        const tip = -P.wheelR * jt;
+        const sgn = tip > 0 ? 1 : -1;
+        // fade on predicted pitch (angle + lookahead on spin rate) so the
+        // built-up rotation can't ballistically carry past the cap
+        const pred = sgn * (this.angle + this.avel * 0.3);
+        const fade = Math.min(1, Math.max(0, 1 - pred / 0.4));
+        this.avel += tip * P.brakeSkid * fade / P.frameI;
+      }
     }
   }
 }

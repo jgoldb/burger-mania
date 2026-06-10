@@ -29,6 +29,6 @@ const LEVELS = [
       [55, 4.6],
       [70, 9.6],
     ],
-    flower: [90, 4.75],
+    goal: [90, 4.75], // the popcorn bucket
   },
 ];

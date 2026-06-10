@@ -140,7 +140,7 @@
     }
     if (burgers.every(b => b.got)) {
       for (const o of pts) {
-        if (Math.hypot(o.p.x - level.flower[0], o.p.y - level.flower[1]) < o.r + 0.5) {
+        if (Math.hypot(o.p.x - level.goal[0], o.p.y - level.goal[1]) < o.r + 0.5) {
           finish();
           break;
         }
@@ -162,7 +162,11 @@
   function onDeath() {
     state = 'dead';
     const h = bike.headPos();
-    headBody = { x: h.x, y: h.y, vx: bike.vel.x, vy: bike.vel.y - 1.5 };
+    headBody = {
+      x: h.x, y: h.y,
+      vx: bike.vel.x, vy: bike.vel.y - 1.5,
+      rot: bike.angle, // tumbles as it rolls away
+    };
     blip(95, 0.4);
   }
 
@@ -172,6 +176,7 @@
     headBody.vy += PHYS.g * dt;
     headBody.x += headBody.vx * dt;
     headBody.y += headBody.vy * dt;
+    headBody.rot += (headBody.vx / PHYS.headR) * 0.5 * dt;
     for (const s of level.segments) {
       const cp = closestOnSeg(headBody.x, headBody.y, s);
       let nx = headBody.x - cp.x, ny = headBody.y - cp.y;
@@ -248,10 +253,11 @@
     const hw = W / 2 / Z + 1, hh = H / 2 / Z + 1;
     drawWorld(ctx, level, patterns,
       { x0: cam.x - hw, y0: cam.y - hh, x1: cam.x + hw, y1: cam.y + hh });
-    for (const b of burgers) if (!b.got) drawBurger(ctx, b.x, b.y);
-    drawFlower(ctx, level.flower[0], level.flower[1]);
+    const rt = performance.now() / 1000;
+    for (const b of burgers) if (!b.got) drawBurger(ctx, b.x, b.y, rt);
+    drawPopcorn(ctx, level.goal[0], level.goal[1], rt);
     drawBike(ctx, bike, !!headBody);
-    if (headBody) drawHead(ctx, headBody.x, headBody.y, bike.facing, 0);
+    if (headBody) drawHead(ctx, headBody.x, headBody.y, bike.facing, headBody.rot);
     ctx.restore();
 
     drawHUD(ctx, W, H, {
