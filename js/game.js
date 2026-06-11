@@ -620,7 +620,9 @@
       return;
     }
     if (state === 'continue') {
-      drawMenuBackdrop(ctx, W, H, rt, patterns.meadow);
+      // the rider slumps in the world he just lost in (the checkpoint
+      // map a continue would restart shares the same world)
+      drawMenuBackdrop(ctx, W, H, rt, patterns[level.theme] || patterns.meadow);
       drawContinue(ctx, W, H, Math.min(1, contT / 0.4), rt, continues, contSel, hoverIdx);
       return;
     }
