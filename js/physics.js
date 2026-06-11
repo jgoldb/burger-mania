@@ -380,6 +380,13 @@ class Bike {
         if (jp < -cap) jp = -cap;
         w.vel.x += tx * jp / P.wheelM;
         w.vel.y += ty * jp / P.wheelM;
+        // contacts run after this frame's integration, so the creep the
+        // velocity clamp cancels has already landed in the position —
+        // back it out too (by the velocity actually removed, so a capped
+        // clamp on a too-steep grade still slides), else the bike inches
+        // downhill one a*dt^2 step per frame forever
+        w.pos.x += tx * (jp / P.wheelM) * dt;
+        w.pos.y += ty * (jp / P.wheelM) * dt;
         w.spin = 0;
         continue;
       }
