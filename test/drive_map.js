@@ -37,6 +37,8 @@ for (let i = 0; i < 480 * 40; i++) {
       pts.some(o => Math.hypot(o.p.x - level.goal[0], o.p.y - level.goal[1]) < o.r + 0.5)) {
     reachedGoal = i * dt;
   }
+  // the game ends the run here, so the bot should stop riding too
+  if (reachedGoal !== null && burgers.every(g => g.got)) break;
 }
 console.log('level "' + level.name + '"' +
   ' final x=' + b.pos.x.toFixed(2) + ' y=' + b.pos.y.toFixed(2) +

@@ -64,6 +64,48 @@ const LEVELS = [
     ],
     goal: [100, 5.75],
   },
+  {
+    // Easy #3: introduces the ceiling as a hazard — a low tunnel bored
+    // through a cliff. Stay low and keep the front wheel down; a wheelie
+    // (or a bounced landing) puts your head into the rock. The hills
+    // after the tunnel are a notch steeper than Cheddar Canyon's.
+    name: 'Onion Underpass',
+    polygons: [
+      [
+        // ceiling, left to right
+        [-5, -8], [13, -8],
+        // tunnel roof through the cliff (clearance ~2.4 over the floor)
+        [16, 5.9], [20, 6.2], [25, 6.2],
+        [29, 6.9], [33, 6.9], [37, 6.1], [40, 6.0],
+        [44, -8], [110, -8],
+        // right wall
+        [110, 6.5],
+        // floor, right to left
+        [105, 6.5], [92, 6.5],            // goal shelf
+        [88, 6.1], [84, 6.5], [82, 6.5],  // roller bump before the shelf
+        [76, 8.9], [71, 8.9],             // last valley
+        [66, 6.5], [61, 6.5],             // crest plateau
+        [55, 9.6], [50, 9.6],             // deep valley
+        [45, 7.2],                        // launch crest after the tunnel
+        [40, 8.4], [37, 8.5],             // tunnel exit
+        [33, 9.3], [29, 9.3],             // tunnel dip
+        [25, 8.6], [21, 8.6], [17, 8.6],  // tunnel floor
+        [13, 8.4], [9, 8], [0, 8],
+        // left wall
+        [-5, 8],
+      ],
+    ],
+    start: { x: 2.5, y: 7.25 },
+    burgers: [
+      [10, 7.3],
+      [23, 7.85],  // inside the tunnel, kept low
+      [31, 8.55],  // in the tunnel dip
+      [45, 6.45],  // on the launch crest
+      [63.5, 5.75],
+      [73.5, 8.15],
+    ],
+    goal: [100, 5.75],
+  },
 ];
 
 // Difficulty tracks, Super-Monkey-Ball style: each difficulty is a fixed
@@ -71,7 +113,7 @@ const LEVELS = [
 // series; `levels` holds the maps that exist so far. A track with no
 // levels yet shows up disabled on the difficulty screen.
 const TRACKS = [
-  { id: 'easy',   label: 'Easy',   color: '#9be08a', length: 10, levels: [LEVELS[0], LEVELS[1]] },
+  { id: 'easy',   label: 'Easy',   color: '#9be08a', length: 10, levels: [LEVELS[0], LEVELS[1], LEVELS[2]] },
   { id: 'medium', label: 'Medium', color: '#f9c623', length: 20, levels: [] },
   { id: 'hard',   label: 'Hard',   color: '#ff6038', length: 30, levels: [] },
 ];
