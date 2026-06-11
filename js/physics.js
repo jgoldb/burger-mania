@@ -13,27 +13,51 @@ const PHYS = {
 
   springK: 100,
   springC: 5.0,
+  springCFade: 5,  // relative speed (m/s) where damper force fades to half:
+                   // slow squat stays controlled, hard hits stay elastic
   maxStretch: 0.4,
+  frameR: 0.45,    // body collider radius: on a slammed landing the faded
+                   // damper lets the frame dive between the planted wheels,
+                   // and without a belly hit it would carry the head into
+                   // the ground and drag the wheels through the floor via
+                   // the stretch clamp. Inactive in normal riding (rest
+                   // clearance ~0.67)
   spinExt: 0.022,   // anchor extension (m) per (rad/s)^2 of frame spin
   spinExtMax: 0.28, // cap on the spin-driven extension
 
   engineT: 1.4,    // torque applied to the driven (rear) wheel
+  engineLow: 0.25, // extra low-end torque fraction: full extra at zero
+                   // wheel spin, gone by engineKnee. Steep-hill starts get
+                   // the grunt without raising cruise acceleration
+  engineKnee: 12,  // wheel spin (rad/s, ~4.8 m/s) where the extra runs out
   engineR: 8.5,    // reaction torque on the frame while the engine spins up
   wheelieRate: 0.5, // rad/s pitch-back rate the engine reaction saturates at
   maxSpin: 55,     // rad/s cap on driven wheel spin
-  brakeRate: 20,   // exponential lock rate for both wheels
+  brakeRate: 30,   // exponential lock rate for both wheels
   brakeR: 0.32,    // fraction of brake torque reacted onto the frame
   brakeSkid: 2.0,  // skid friction torque multiplier passed to the frame
+  brakeCap: 0.4,   // stoppie pitch (rad) the brake torque fades out at;
+                   // braking decel is endo-limited, so this IS the brake
+                   // strength on flat ground
+  parkMu: 1.9,     // static friction once the brake has fully clamped a
+                   // stopped wheel: a held brake parks the bike on a hill
+                   // instead of creeping, until the grade gets very steep
+  parkVt: 0.7,     // contact speed (m/s) below which the clamp grabs; also
+                   // sets the break-away grade (~45deg): on steeper slopes
+                   // the braked slow-roll never gets slow enough to clamp
 
-  voltT: 14,      // peak torque of one rider thrust ("volt")
+  voltT: 28,      // peak torque of one rider thrust ("volt")
   voltDur: 0.2,   // thrust duration: torque follows a half-sine burst
   voltEvery: 0.85, // interval between thrusts while a lean key is held
   voltRate: 4.0,  // rad/s spin rate a thrust saturates toward
   voltStack: 1.0,  // strength gain per consecutive same-direction air volt
   voltStackMax: 3, // air volts stop compounding past this many stacks
 
-  mu: 0.95,        // tire friction coefficient
+  mu: 1.1,         // tire friction coefficient
   rollRes: 9,      // rolling resistance (spin decel, rad/s^2, on contact)
+  bounce: 0.3,     // restitution of a wheel impact (elastic bar rebound)
+  bounceMin: 0.8,  // impact speed (m/s) below which contact is inelastic,
+                   // so rolling contact stays planted instead of jittering
 
   headR: 0.24,
   headX: -0.18,    // head offset in frame space (x is mirrored by facing)
@@ -183,11 +207,16 @@ class Bike {
       const avx = this.vel.x - this.avel * ry;
       const avy = this.vel.y + this.avel * rx;
 
-      // spring + damper between wheel and anchor
+      // spring + damper between wheel and anchor. The damper is digressive:
+      // it fades with relative speed, so slow motion (launch squat, weight
+      // shifts) is firmly damped while fast motion (landing impacts) keeps
+      // its energy in the spring and bounces back out
       const dx = w.pos.x - ax, dy = w.pos.y - ay;
       const rvx = w.vel.x - avx, rvy = w.vel.y - avy;
-      const Fx = -P.springK * dx - P.springC * rvx;
-      const Fy = -P.springK * dy - P.springC * rvy;
+      const cf = P.springC /
+        (1 + (rvx * rvx + rvy * rvy) / (P.springCFade * P.springCFade));
+      const Fx = -P.springK * dx - cf * rvx;
+      const Fy = -P.springK * dy - cf * rvy;
       w.vel.x += (Fx / P.wheelM) * dt;
       w.vel.y += (Fy / P.wheelM + P.g) * dt;
       fx -= Fx;
@@ -196,7 +225,9 @@ class Bike {
 
       if (i === this.rearIndex && input.throttle) {
         const before = w.spin;
-        w.spin += (P.engineT / P.wheelI) * dt * this.facing;
+        const eT = P.engineT * (1 + P.engineLow *
+          Math.max(0, 1 - Math.abs(w.spin) / P.engineKnee));
+        w.spin += (eT / P.wheelI) * dt * this.facing;
         if (w.spin > P.maxSpin) w.spin = P.maxSpin;
         if (w.spin < -P.maxSpin) w.spin = -P.maxSpin;
         // engine reaction torque pitches the frame backward (wheelies,
@@ -219,8 +250,12 @@ class Bike {
         // cap so a stoppie stays controlled
         const tip = P.wheelI * (w.spin - newSpin) / dt;
         const sgn = tip > 0 ? 1 : -1;
-        const pred = sgn * (this.angle + this.avel * 0.3);
-        torque += P.brakeR * tip * Math.min(1, Math.max(0, 1 - pred / 0.4));
+        // longer rate lookahead than the static cap needs: the springy
+        // front end stores pitch energy the fade can't see, so fast
+        // rotation has to be cut well before the cap
+        const pred = sgn * (this.angle + this.avel * 0.45);
+        torque += P.brakeR * tip *
+          Math.min(1, Math.max(0, 1 - pred / P.brakeCap));
         w.spin = newSpin;
       }
     }
@@ -260,6 +295,27 @@ class Bike {
 
     for (const w of this.wheels) this.wheelContacts(w, segs, dt, input.brake);
 
+    // the frame body collides with the ground too: on a slammed landing
+    // the wheels splay sideways and the frame dives between them, so the
+    // belly is what actually meets the ground — and it bounces off (the
+    // elastic bars fire the whole bike back up) instead of letting the
+    // head carry on through
+    for (const seg of segs) {
+      const cp = closestOnSeg(this.pos.x, this.pos.y, seg);
+      let nx = this.pos.x - cp.x, ny = this.pos.y - cp.y;
+      const d = Math.hypot(nx, ny);
+      if (d >= P.frameR || d === 0) continue;
+      nx /= d; ny /= d;
+      this.pos.x += nx * (P.frameR - d);
+      this.pos.y += ny * (P.frameR - d);
+      const vn = this.vel.x * nx + this.vel.y * ny;
+      if (vn < 0) {
+        const e = -vn > P.bounceMin ? P.bounce : 0;
+        this.vel.x -= nx * vn * (1 + e);
+        this.vel.y -= ny * vn * (1 + e);
+      }
+    }
+
     // rolling resistance: grounded wheels slowly shed spin, which bleeds
     // bike speed through tire friction and lets it coast to a full stop
     for (const w of this.wheels) {
@@ -296,19 +352,40 @@ class Bike {
       w.pos.x += nx * pen;
       w.pos.y += ny * pen;
 
-      // inelastic normal impulse
+      // normal impulse: elastic above bounceMin impact speed (the bars
+      // store the hit and fire it back), inelastic below it so rolling
+      // contact stays planted
       const vn = w.vel.x * nx + w.vel.y * ny;
       let jn = 0;
       if (vn < 0) {
-        jn = -vn * P.wheelM;
+        const e = vn < -P.bounceMin ? P.bounce : 0;
+        jn = -(1 + e) * vn * P.wheelM;
         w.vel.x += nx * jn / P.wheelM;
         w.vel.y += ny * jn / P.wheelM;
       }
 
+      const tx = -ny, ty = nx;
+      const vg = w.vel.x * tx + w.vel.y * ty; // contact tangential velocity
+      // a held brake on a nearly stopped wheel is a parking clamp: the
+      // wheel is rigid with the frame, so ANY contact motion is slip —
+      // ordinary friction would let the wheel slow-roll down the hill
+      // forever (the brake decays spin, friction re-spins it to match
+      // the creep). Static grip is also far stronger than sliding grip,
+      // so the bike holds until the grade gets very steep
+      if (braking && Math.abs(w.spin) * P.wheelR < P.parkVt &&
+          Math.abs(vg) < P.parkVt) {
+        let jp = -vg * P.wheelM;
+        const cap = P.parkMu * jn;
+        if (jp > cap) jp = cap;
+        if (jp < -cap) jp = -cap;
+        w.vel.x += tx * jp / P.wheelM;
+        w.vel.y += ty * jp / P.wheelM;
+        w.spin = 0;
+        continue;
+      }
       // tire friction: drive contact-point tangential slip toward zero,
       // clamped by the Coulomb limit
-      const tx = -ny, ty = nx;
-      const vt = w.vel.x * tx + w.vel.y * ty - P.wheelR * w.spin;
+      const vt = vg - P.wheelR * w.spin;
       const meff = 1 / (1 / P.wheelM + P.wheelR * P.wheelR / P.wheelI);
       let jt = -vt * meff;
       const maxF = P.mu * jn;
@@ -326,9 +403,10 @@ class Bike {
         const tip = -P.wheelR * jt;
         const sgn = tip > 0 ? 1 : -1;
         // fade on predicted pitch (angle + lookahead on spin rate) so the
-        // built-up rotation can't ballistically carry past the cap
-        const pred = sgn * (this.angle + this.avel * 0.3);
-        const fade = Math.min(1, Math.max(0, 1 - pred / 0.4));
+        // built-up rotation can't ballistically carry past the cap; the
+        // lookahead matches the brake clutch above
+        const pred = sgn * (this.angle + this.avel * 0.45);
+        const fade = Math.min(1, Math.max(0, 1 - pred / P.brakeCap));
         this.avel += tip * P.brakeSkid * fade / P.frameI;
       }
     }

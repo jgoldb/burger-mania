@@ -19,14 +19,26 @@ console.log('SETTLE  x=%s y=%s angle=%s dead=%s',
 //    travel far without dying (blind full throttle loops out on purpose)
 b = new Bike(level.start.x, level.start.y);
 let maxX = 0, diedAt = null;
+{
+let airT = 0, settle = 0;
 for (let i = 0; i < 480 * 14; i++) {
+  const grounded = b.wheels[0].onGround || b.wheels[1].onGround;
+  const sp = Math.hypot(b.vel.x, b.vel.y);
+  let travel = b.vel.x > 1 ? Math.atan2(b.vel.y, b.vel.x) : 0;
+  travel = Math.max(-0.6, Math.min(0.2, travel));
+  const pred = b.angle - travel + 0.3 * b.avel;
+  if (!grounded) airT += dt;
+  else { if (airT > 0.3) settle = 0.12; airT = 0; }
+  if (settle > 0) settle -= dt;
   b.step(dt, {
-    throttle: b.angle > -0.45,
-    right: b.angle < -0.25,
-    left: b.angle > 0.3,
+    throttle: (pred > -0.45 || (sp < 3.5 && grounded && pred > -0.85)) &&
+      settle <= 0 && sp < 9,
+    right: pred < (grounded ? -0.6 : -1.3),
+    left: pred > 1.15,
   }, level.segments);
   if (b.pos.x > maxX) maxX = b.pos.x;
   if (b.dead) { diedAt = i * dt; break; }
+}
 }
 console.log('DRIVE   x=%s maxX=%s dead=%s diedAt=%s',
   b.pos.x.toFixed(2), maxX.toFixed(2), b.dead, diedAt && diedAt.toFixed(2));

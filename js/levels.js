@@ -135,7 +135,7 @@ const LEVELS = [
         [32.4, 9.4],                      // runout slope catches slow droppers
         [33, 7.2],                        // launch lip, undercut like a ski
                                           // jump so fallers tumble clear of it
-        [28, 9.5], [20, 9.5],             // run-up flat
+        [28, 8.7], [20, 8.7],             // run-up flat
         [16, 7], [12, 7],                 // warmup hill plateau
         [8, 8], [0, 8],
         // left wall
@@ -153,7 +153,7 @@ const LEVELS = [
     start: { x: 2.5, y: 7.25 },
     burgers: [
       [14, 6.3],
-      [25, 8.8],
+      [25, 8.0],
       [33, 6.45],  // on the launch lip, in the jump path
       [42, 6.75],  // on top of the patty
       [66, 4.8],

@@ -28,6 +28,8 @@ let reachedGoal = null;
 // direction of travel (clamped, so steep falls don't read as slopes):
 // on a steep climb the slope itself pitches the bike back, and that is
 // not a wheelie. Below walking pace the throttle always stays on.
+let airT = 0, settle = 0;
+let lastX = -1e9, stuckT = 0, crawl = false;
 for (let i = 0; i < 480 * 40; i++) {
   const sp = Math.hypot(b.vel.x, b.vel.y);
   let travel = b.vel.x > 1 ? Math.atan2(b.vel.y, b.vel.x) : 0;
@@ -41,22 +43,42 @@ for (let i = 0; i < 480 * 40; i++) {
   // mid-air pitches the bike backward (engine reaction) with no volt
   // available to counter it until the cooldown runs out
   const grounded = b.wheels[0].onGround || b.wheels[1].onGround;
+  // gassing through a hard landing snaps the bike into a wheelie (grip
+  // spike plus spring rebound), so stay off the throttle for a beat
+  // after touching down from real airtime, like a player rolling off
+  // the gas to let the suspension settle
+  if (!grounded) airT += dt;
+  else { if (airT > 0.3) settle = 0.12; airT = 0; }
+  if (settle > 0) settle -= dt;
+  // the springy bike bounces off steep kinks instead of absorbing into
+  // them: when progress stalls (bounced back off a wall), switch to a
+  // slow crawl until it grinds over — wheel slip friction climbs grades
+  // that a fast bounce never will
+  if (b.pos.x > lastX + 0.5) { lastX = b.pos.x; stuckT = 0; crawl = false; }
+  else stuckT += dt;
+  if (stuckT > 3) crawl = true;
   // coast when an uncollected burger sits below the line just ahead, so a
   // fast approach doesn't sail clean over a dip pickup
   const dipAhead = burgers.some(bg => !bg.got &&
     bg.x - b.pos.x > 0 && bg.x - b.pos.x < 8 && bg.y - b.pos.y > 0.5);
   const input = {
     // the low-speed override never gasses past a deep wheelie: with volts
-    // a second apart, engine reaction past the balance point is fatal
+    // a second apart, engine reaction past the balance point is fatal.
+    // The cruise cap reflects that a player doesn't hold flat-out into
+    // terrain they can't see landing on
     throttle: (pred > -0.45 || (sp < 3.5 && grounded && pred > -0.85)) &&
-      (!dipAhead || sp < 2.5),
+      (!dipAhead || sp < 2.5) && settle <= 0 && sp < (crawl ? 2.5 : 9),
     // in the air only volt nose-down for severe pitch: rear-first landings
     // are safe, and a strong volt at mild pitch over-rotates into a
     // momentum-killing nose-dive
-    right: pred < (grounded ? -0.55 : -1.1),
+    right: pred < (grounded ? -0.6 : -1.45),
     // be reluctant to volt the nose up: suspension absorbs nose-down
     // landings, while an over-rotated nose-up landing is head-first
-    left: pred > 1.0,
+    left: pred > 1.15,
+    // shed speed on the ground before a dip pickup, the way a player
+    // brakes into a drop, so the arc falls onto the burger instead of
+    // sailing past it
+    brake: dipAhead && grounded && sp > 2.5,
   };
   b.step(dt, input, level.segments);
   if (b.dead) { console.log('died t=' + (i * dt).toFixed(2) + ' x=' + b.pos.x.toFixed(2)); break; }
