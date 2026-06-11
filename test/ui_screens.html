@@ -59,6 +59,24 @@
     const bike = new Bike(level.start.x, level.start.y);
     drawBike(ctx, bike, false);
     ctx.restore();
+  } else if (ui === 'sprites') {
+    // burger and popcorn close-ups at several animation times
+    ctx.fillStyle = '#9ad0ee';
+    ctx.fillRect(0, 0, W, H);
+    const ts = [0.0, 0.7, 1.4, 2.1];
+    const cw = W / ts.length;
+    for (let i = 0; i < ts.length; i++) {
+      ctx.save();
+      ctx.translate(cw * (i + 0.5), H * 0.27);
+      ctx.scale(cw / 2.4, cw / 2.4);
+      drawBurger(ctx, 0, 0, ts[i]);
+      ctx.restore();
+      ctx.save();
+      ctx.translate(cw * (i + 0.5), H * 0.75);
+      ctx.scale(cw / 2.4, cw / 2.4);
+      drawPopcorn(ctx, 0, -0.1, ts[i]);
+      ctx.restore();
+    }
   } else if (ui === 'ready') {
     const level = prepareLevel(LEVELS[1]);
     ctx.fillStyle = '#000';

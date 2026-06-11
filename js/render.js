@@ -374,22 +374,52 @@ function drawBurger(ctx, x, y, t) {
     ctx.ellipse(0, base + 0.06, 0.74, 0.045, 0, 0, Math.PI * 2);
     ctx.fill();
 
+    // charred flecks ride the patty around (same fake-3D spin as the seeds)
+    for (let f = 0; f < 5; f++) {
+      const a = f * (Math.PI * 2 / 5) + spin + i * 1.7;
+      const c = Math.cos(a);
+      if (c < 0.12) continue;
+      ctx.fillStyle = f % 2 ? 'rgba(25,10,3,0.45)' : 'rgba(255,205,140,0.16)';
+      ctx.beginPath();
+      ctx.ellipse(Math.sin(a) * 0.70, base + 0.13 + (f % 3) * 0.05,
+        0.05 * (0.4 + 0.6 * c), 0.02, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
     g = ctx.createLinearGradient(-0.78, 0, 0.78, 0);
     g.addColorStop(0, '#c79212');
     g.addColorStop(0.42, '#ffd84d');
     g.addColorStop(1, '#b8860d');
     ctx.fillStyle = g;
     ctx.fillRect(-0.76, base, 1.52, 0.09);
-    // cheese drips slowly stretch and relax
-    const drip = 0.24 + Math.sin(t * 1.8 + i * 2.1 + phase) * 0.04;
-    for (const side of [-1, 1]) {
+    // cheese drips orbit with the burger, foreshortening at the edges,
+    // while each one slowly stretches and relaxes
+    for (let d = 0; d < 4; d++) {
+      const a = d * (Math.PI / 2) + spin + i * 0.9;
+      const c = Math.cos(a);
+      if (c < 0.12) continue;
+      const dx = Math.sin(a) * 0.66;
+      const hw = 0.09 * (0.35 + 0.65 * c);
+      const drip = 0.20 + Math.sin(t * 1.8 + d * 2.0 + i * 2.1 + phase) * 0.05;
       ctx.beginPath();
-      ctx.moveTo(side * 0.76, base + 0.09);
-      ctx.lineTo(side * 0.58, base + 0.09);
-      ctx.lineTo(side * 0.69, base + drip);
+      ctx.moveTo(dx - hw, base + 0.09);
+      ctx.lineTo(dx + hw, base + 0.09);
+      ctx.lineTo(dx, base + drip);
       ctx.closePath();
       ctx.fill();
     }
+  }
+
+  // crust flecks carry the spin across the bottom bun too
+  for (let f = 0; f < 4; f++) {
+    const a = f * (Math.PI / 2) + spin + 0.7;
+    const c = Math.cos(a);
+    if (c < 0.12) continue;
+    ctx.fillStyle = 'rgba(255,235,190,0.30)';
+    ctx.beginPath();
+    ctx.ellipse(Math.sin(a) * 0.62, 0.46 + (f % 2) * 0.07,
+      0.04 * (0.4 + 0.6 * c), 0.018, 0, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   // top bun: radial gradient dome lit from the upper left
@@ -510,10 +540,21 @@ function drawPopcorn(ctx, x, y, t) {
   ctx.lineWidth = 0.025;
   ctx.stroke();
 
-  // mound of popcorn, back rows first, every puff gently jiggling
+  // butter pooling on the ground where it has run down the side
+  ctx.fillStyle = 'rgba(247,191,49,0.85)';
+  ctx.beginPath();
+  ctx.ellipse(0.20, botY + 0.035, 0.11 + Math.sin(t * 0.5) * 0.01, 0.028,
+    0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // heaping mound of popcorn, back rows first, every puff gently jiggling
   const K = [
+    [0.02, -0.50, 0.085],
+    [-0.16, -0.44, 0.09], [0.18, -0.45, 0.085],
     [-0.07, -0.42, 0.10], [0.12, -0.38, 0.09],
+    [-0.28, -0.31, 0.09], [0.30, -0.33, 0.085],
     [-0.20, -0.26, 0.10], [0.02, -0.30, 0.115], [0.22, -0.24, 0.095],
+    [-0.36, -0.12, 0.085], [0.36, -0.10, 0.08],
     [-0.30, -0.10, 0.10], [-0.10, -0.16, 0.115], [0.12, -0.13, 0.105],
     [0.30, -0.08, 0.095],
   ];
@@ -526,26 +567,73 @@ function drawPopcorn(ctx, x, y, t) {
   const cyc = (t % 2.8) / 0.8;
   if (cyc < 1) {
     const h = 4 * cyc * (1 - cyc);
-    drawKernel(ctx, 0.05 + cyc * 0.15, -0.45 - h * 0.45, 0.07, 3.3);
+    drawKernel(ctx, 0.05 + cyc * 0.15, -0.55 - h * 0.45, 0.07, 3.3);
   }
 
-  // front rim overlaps the base of the mound
+  // front rim overlaps the base of the mound; a shallow arc so it traces
+  // the true near edge of the bucket opening
   ctx.strokeStyle = '#f3eee2';
   ctx.lineWidth = 0.07;
   ctx.beginPath();
-  ctx.ellipse(0, topY, topW, 0.09, 0, 0, Math.PI);
+  ctx.ellipse(0, topY, topW, 0.045, 0, 0, Math.PI);
   ctx.stroke();
   ctx.strokeStyle = 'rgba(0,0,0,0.15)';
   ctx.lineWidth = 0.02;
   ctx.beginPath();
-  ctx.ellipse(0, topY + 0.05, topW, 0.09, 0, 0, Math.PI);
+  ctx.ellipse(0, topY + 0.03, topW, 0.045, 0, 0, Math.PI);
   ctx.stroke();
+
+  // butter leaking over the rim, the streaks orbiting with the stripes
+  for (let b = 0; b < 3; b++) {
+    const ph = b * (Math.PI * 2 / 3) + t * 0.9 + 0.8;
+    const c = Math.cos(ph);
+    if (c <= 0.05) continue;
+    const len = 0.24 + b * 0.05 + Math.sin(t * 0.6 + b * 2.1) * 0.05;
+    const bw = 0.034 * (0.4 + 0.6 * c);
+    // streaks slant inward with the bucket wall as they run down
+    const bx = Math.sin(ph) * topW;
+    const tipX = Math.sin(ph) * (topW + (botW - topW) * len / (botY - topY));
+    ctx.fillStyle = '#f0b428';
+    ctx.beginPath();
+    ctx.moveTo(bx - bw, topY - 0.02);
+    ctx.quadraticCurveTo((bx + tipX) / 2 - bw, topY + len * 0.55,
+      tipX - bw * 0.7, topY + len);
+    ctx.arc(tipX, topY + len, bw * 1.25, Math.PI, 0, true);
+    ctx.quadraticCurveTo((bx + tipX) / 2 + bw, topY + len * 0.55,
+      bx + bw, topY - 0.02);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255,240,170,0.55)';
+    ctx.beginPath();
+    ctx.ellipse(tipX, topY + len, bw * 0.5, bw * 0.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // a couple of dropped puffs beside the bucket
+  drawKernel(ctx, -0.36, 0.52, 0.06, 7.1);
+  drawKernel(ctx, 0.30, 0.53, 0.055, 8.4);
 
   // butter glint sweeping across the mound
   ctx.fillStyle = 'rgba(255,255,255,0.30)';
   ctx.beginPath();
-  ctx.ellipse(Math.sin(t * 0.8) * 0.22, -0.27, 0.10, 0.05, -0.4, 0, Math.PI * 2);
+  ctx.ellipse(Math.sin(t * 0.8) * 0.22, -0.32, 0.10, 0.05, -0.4, 0, Math.PI * 2);
   ctx.fill();
+
+  // steam curling off the top, each wisp rising, swaying, and thinning out
+  ctx.lineCap = 'round';
+  for (let s = 0; s < 3; s++) {
+    const cycle = (t * 0.35 + s * 0.37) % 1;
+    const fade = 0.32 * (1 - cycle) * Math.min(1, cycle * 4);
+    const sx = -0.16 + s * 0.16 + Math.sin(t * 1.3 + s * 2.6) * 0.03;
+    const sy = -0.56 - cycle * 0.36;
+    ctx.strokeStyle = `rgba(255,255,255,${fade.toFixed(3)})`;
+    ctx.lineWidth = 0.035 + cycle * 0.03;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.bezierCurveTo(sx + 0.06, sy - 0.07, sx - 0.06, sy - 0.13,
+      sx + 0.02, sy - 0.20);
+    ctx.stroke();
+  }
 
   ctx.restore();
 }
