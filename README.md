@@ -20,8 +20,20 @@ Open `index.html` in any modern browser (no build step, no server needed).
 | Space       | Turn around (rear and front wheel swap) |
 | Enter / Esc | Restart the course                      |
 | M           | Toggle sound                            |
+| S           | Save a replay (on the crash/finish screen) |
 
 Your best time is saved locally per level.
+
+## Replays
+
+When a run ends — crash or course complete — press **S** to save a replay
+to disk as a `.bmr` file (JSON). Pick **Replays** on the main menu to watch
+them: Chromium browsers point the screen at a folder once (remembered
+between visits) and it lists every replay in it; other browsers open one
+file at a time. Playback feeds the recorded per-frame inputs back through
+the deterministic sim, so it reproduces the run exactly. The level data is
+embedded in the file, so later level edits can't bend an old replay — but
+physics changes can; a desynced tape just stops where its inputs run out.
 
 ## How it works
 
@@ -39,9 +51,14 @@ Your best time is saved locally per level.
   strings played on the shared AudioContext. One looping song per visual
   world, plus a title theme (menu + difficulty screens) and a continue-screen
   theme; screen changes crossfade.
+- `js/replay.js` — replay recording and playback: a run-length-encoded
+  per-frame input tape plus the raw level data, saved as `.bmr` JSON via
+  the File System Access API (download/open dialogs where unsupported);
+  the replays folder handle persists in IndexedDB.
 - `js/game.js` — game loop, input, camera, WebAudio engine sound + effects,
-  state machine (title / playing / dead / finished), picks the soundtrack
-  for the current screen.
+  state machine (title / playing / dead / finished, plus the replay
+  browser and playback screens), picks the soundtrack for the current
+  screen.
 
 ## Tests
 
@@ -51,6 +68,7 @@ node test/drive_long.js     # verifies the course is completable
 node test/music_check.js    # soundtrack data: pitches, loops, theme coverage
 node test/music_engine_check.js  # every scheduled note/envelope is valid
 node test/game_smoke.js     # full stack under a stub DOM: right song per screen
+node test/replay_check.js   # tape encoding + record/save/playback determinism
 ```
 
 ## Adding levels

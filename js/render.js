@@ -777,9 +777,9 @@ function fmt(t) {
          String(h).padStart(2, '0');
 }
 
-function centerMsg(ctx, W, H, title, sub) {
+function centerMsg(ctx, W, H, title, sub, sub2) {
   ctx.save();
-  const pw = Math.min(W * 0.8, 640), ph = 110;
+  const pw = Math.min(W * 0.8, 640), ph = sub2 ? 142 : 110;
   const px = (W - pw) / 2, py = H * 0.36;
   ctx.fillStyle = 'rgba(20,12,6,0.78)';
   roundRectPath(ctx, px, py, pw, ph, 12);
@@ -792,6 +792,11 @@ function centerMsg(ctx, W, H, title, sub) {
   ctx.fillStyle = '#f0e8da';
   ctx.font = '17px "Consolas","Courier New",monospace';
   ctx.fillText(sub, W / 2, py + 76);
+  if (sub2) {
+    ctx.fillStyle = '#9be08a';
+    ctx.font = 'bold 15px "Consolas","Courier New",monospace';
+    ctx.fillText(sub2, W / 2, py + 112);
+  }
   ctx.restore();
 }
 
@@ -1264,6 +1269,60 @@ function drawPause(ctx, W, H, items, sel, hover) {
   drawButtons(ctx, rects, items, sel, hover, 1);
 }
 
+// ---------- replays screen ----------
+
+const REPLAY_VIS = 6; // list rows visible at once
+
+function replayRects(W, H, n, y0) {
+  const bw = Math.min(560, W * 0.86), bh = 52, gap = 12;
+  const x = (W - bw) / 2;
+  const rects = [];
+  for (let i = 0; i < n; i++) rects.push({ x, y: y0 + i * (bh + gap), w: bw, h: bh });
+  return rects;
+}
+
+// items render through drawButtons; the list shows a REPLAY_VIS-row
+// window and `scroll` is the index of the first visible item
+function drawReplays(ctx, W, H, alpha, items, sel, scroll, hover, note) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = 'bold 44px "Consolas","Courier New",monospace';
+  ctx.fillStyle = 'rgba(40,16,4,0.85)';
+  ctx.fillText('REPLAYS', W / 2 + 3, H * 0.13 + 3);
+  ctx.fillStyle = '#f9c623';
+  ctx.fillText('REPLAYS', W / 2, H * 0.13);
+  ctx.restore();
+
+  const y0 = H * 0.22;
+  const vis = items.slice(scroll, scroll + REPLAY_VIS);
+  const rects = replayRects(W, H, vis.length, y0);
+  drawButtons(ctx, rects, vis, sel - scroll, hover, alpha);
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = 'rgba(249,198,35,0.8)';
+  ctx.font = 'bold 16px "Consolas","Courier New",monospace';
+  if (scroll > 0) ctx.fillText('- more -', W / 2, y0 - 16);
+  if (scroll + REPLAY_VIS < items.length && rects.length) {
+    const last = rects[rects.length - 1];
+    ctx.fillText('- more -', W / 2, last.y + last.h + 18);
+  }
+  if (note) {
+    ctx.fillStyle = '#f0e8da';
+    ctx.font = '15px "Consolas","Courier New",monospace';
+    ctx.fillText(note, W / 2, H * 0.90);
+  }
+  ctx.fillStyle = 'rgba(40,20,8,0.85)';
+  ctx.font = '15px "Consolas","Courier New",monospace';
+  ctx.fillText('Esc to go back', W / 2, H * 0.95);
+  ctx.restore();
+}
+
 // ---------- minimap ----------
 
 function levelBounds(level) {
@@ -1382,14 +1441,40 @@ function drawHUD(ctx, W, H, o) {
     }
   }
 
-  if (o.state === 'dead') {
+  if (o.replay) {
+    // banner so a playback can't be mistaken for live riding
+    const bf = Math.max(13, Math.round(fs * 0.8));
+    ctx.textAlign = 'center';
+    ctx.font = `bold ${bf}px "Consolas","Courier New",monospace`;
+    const text = 'REPLAY - ' + o.replay.label;
+    const tw = ctx.measureText(text).width;
+    ctx.fillStyle = 'rgba(20,12,6,0.78)';
+    roundRectPath(ctx, W / 2 - tw / 2 - 14, 10, tw + 28, bf * 1.9, 9);
+    ctx.fill();
+    ctx.fillStyle = '#f9c623';
+    ctx.fillText(text, W / 2, 10 + bf * 0.45);
+    ctx.textAlign = 'left';
+    if (o.replay.done) {
+      if (o.replay.outcome === 'finished') {
+        centerMsg(ctx, W, H, 'Course completed!',
+          `Time ${fmt(o.time)} - press Enter to go back`);
+      } else if (o.replay.outcome === 'crashed') {
+        centerMsg(ctx, W, H, 'The rider crashed!', 'Press Enter to go back');
+      } else {
+        // the inputs ran out before the recorded ending (the game has
+        // changed since this was saved): stop the tape gracefully
+        centerMsg(ctx, W, H, 'End of the tape!', 'Press Enter to go back');
+      }
+    }
+  } else if (o.state === 'dead') {
     const sub = o.lives > 0
       ? `Press Enter to try again - ${o.lives} ${o.lives === 1 ? 'life' : 'lives'} left`
       : 'Out of lives... press Enter';
-    centerMsg(ctx, W, H, 'You crashed!', sub);
+    centerMsg(ctx, W, H, 'You crashed!', sub, o.saveNote);
   } else if (o.state === 'finished') {
     centerMsg(ctx, W, H, 'Course completed!',
-      `Time ${fmt(o.time)} - press Enter for ${o.hasNext ? 'the next map' : 'the menu'}`);
+      `Time ${fmt(o.time)} - press Enter for ${o.hasNext ? 'the next map' : 'the menu'}`,
+      o.saveNote);
   } else if (o.state === 'ready') {
     drawReady(ctx, W, H, o.mapLabel);
   }
