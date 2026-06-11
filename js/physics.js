@@ -59,9 +59,14 @@ const PHYS = {
 
   mu: 1.1,         // tire friction coefficient
   rollRes: 9,      // rolling resistance (spin decel, rad/s^2, on contact)
-  bounce: 0.3,     // restitution of a wheel impact (elastic bar rebound)
+  bounce: 0.3,     // restitution of a belly impact (elastic bar rebound)
   bounceMin: 0.8,  // impact speed (m/s) below which contact is inelastic,
                    // so rolling contact stays planted instead of jittering
+  wheelBounce: 0.3,    // tire restitution at full slam speed
+  wheelBounceLo: 1.5,  // impact speed (m/s) where tire rebound starts...
+  wheelBounceHi: 4.0,  // ...and where it reaches full strength: mild hits
+                       // and post-slam chatter land dead, real slams keep
+                       // the whole elastic-bar kick
 
   headR: 0.24,
   headX: -0.18,    // head offset in frame space (x is mirrored by facing)
@@ -356,13 +361,15 @@ class Bike {
       w.pos.x += nx * pen;
       w.pos.y += ny * pen;
 
-      // normal impulse: elastic above bounceMin impact speed (the bars
-      // store the hit and fire it back), inelastic below it so rolling
-      // contact stays planted
+      // normal impulse: tire rebound ramps in with impact speed instead
+      // of switching on — a real slam keeps the whole elastic-bar kick,
+      // while mild hits (and the once-rebounded remnants of a slam) land
+      // dead, so touchdowns plant instead of chattering
       const vn = w.vel.x * nx + w.vel.y * ny;
       let jn = 0;
       if (vn < 0) {
-        const e = vn < -P.bounceMin ? P.bounce : 0;
+        const ramp = (-vn - P.wheelBounceLo) / (P.wheelBounceHi - P.wheelBounceLo);
+        const e = P.wheelBounce * Math.min(1, Math.max(0, ramp));
         jn = -(1 + e) * vn * P.wheelM;
         w.vel.x += nx * jn / P.wheelM;
         w.vel.y += ny * jn / P.wheelM;
