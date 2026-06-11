@@ -7,41 +7,50 @@ function srand(n) {
 }
 
 // Visual worlds: every 5-map (checkpoint-to-checkpoint) block of a track
-// gets its own ground/sky tiles, turf colors, and minimap palette. Levels
-// pick one via their `theme` field. Tile layers are blob passes over the
-// base color: n blobs, radius in [rMin, rMax], cycling through `colors`.
+// gets its own world — ground tile, gradient sky with drifting haze,
+// parallax background silhouettes, surface decoration (grass, flames,
+// ...), outline and minimap palette. Levels pick one via their `theme`
+// field. Tile layers are blob passes: n blobs, radius in [rMin, rMax],
+// cycling through `colors`; sky tiles have no base so they overlay the
+// gradient.
 const THEMES = {
-  // sunny meadow: dirt, blue sky, green grass (Easy 1-5)
+  // sunny meadow: dirt, blue sky over rolling green hills, grass
+  // (Easy 1-5)
   meadow: {
     ground: { base: '#8c5e35', layers: [
       { n: 240, rMin: 2, rMax: 9, colors: ['rgba(60,38,18,0.25)',
         'rgba(140,100,55,0.30)', 'rgba(172,126,70,0.22)', 'rgba(80,50,25,0.28)'] },
     ] },
-    sky: { base: '#aecbe6', layers: [
-      { n: 26, rMin: 8, rMax: 26, colors: ['rgba(150,185,220,0.18)',
-        'rgba(255,255,255,0.10)', 'rgba(255,255,255,0.10)'] },
+    skyStops: [[0, '#8fc0e8'], [1, '#ddeff8']],
+    skyTile: { layers: [
+      { n: 22, rMin: 8, rMax: 26, colors: ['rgba(150,185,220,0.16)',
+        'rgba(255,255,255,0.13)', 'rgba(255,255,255,0.10)'] },
     ] },
+    background: drawMeadowBack,
+    edge: drawGrassEdge,
     turfFill: '#3f8d27', turfBlade: '#2f7a1d',
     outline: 'rgba(40,20,5,0.5)',
     miniGround: '#6b4a24', miniSky: '#a7c4de',
   },
-  // charcoal grill: glowing coals under a smoky dusk, flame tufts for
-  // grass (Easy 6-10)
-  charcoal: {
-    ground: { base: '#37312d', layers: [
-      { n: 240, rMin: 2, rMax: 9, colors: ['rgba(12,10,9,0.35)',
-        'rgba(74,64,57,0.30)', 'rgba(20,16,14,0.30)', 'rgba(96,84,73,0.20)'] },
-      // embers glowing between the coals
-      { n: 60, rMin: 0.8, rMax: 2.6, colors: ['rgba(255,122,28,0.55)',
-        'rgba(255,186,64,0.40)', 'rgba(232,72,20,0.45)'] },
+  // volcano: basalt flecked with embers, a lava-lit sky over erupting
+  // cones, molten crust with fire instead of grass (Easy 6-10)
+  volcano: {
+    ground: { base: '#3a3034', layers: [
+      { n: 240, rMin: 2, rMax: 9, colors: ['rgba(16,10,14,0.35)',
+        'rgba(86,68,74,0.28)', 'rgba(24,14,18,0.30)', 'rgba(110,92,96,0.18)'] },
+      // embers glowing in the rock
+      { n: 50, rMin: 0.8, rMax: 2.4, colors: ['rgba(255,120,30,0.50)',
+        'rgba(255,190,70,0.38)', 'rgba(235,70,20,0.45)'] },
     ] },
-    sky: { base: '#b85c35', layers: [
-      { n: 26, rMin: 8, rMax: 26, colors: ['rgba(58,38,40,0.20)',
-        'rgba(255,196,120,0.12)', 'rgba(58,38,40,0.16)'] },
+    skyStops: [[0, '#241318'], [0.55, '#7e3122'], [1, '#e8823a']],
+    skyTile: { layers: [
+      { n: 20, rMin: 10, rMax: 26, colors: ['rgba(30,16,18,0.22)',
+        'rgba(255,160,80,0.08)', 'rgba(30,16,18,0.16)'] },
     ] },
-    turfFill: '#c2491b', turfBlade: '#ffb02e',
-    outline: 'rgba(255,120,30,0.35)',
-    miniGround: '#3a3330', miniSky: '#d9885a',
+    background: drawVolcanoBack,
+    edge: drawLavaEdge,
+    outline: 'rgba(255,120,40,0.45)',
+    miniGround: '#352529', miniSky: '#c75a2a',
   },
 };
 
@@ -51,8 +60,10 @@ function makeTile(spec) {
   const c = document.createElement('canvas');
   c.width = c.height = 128;
   const cc = c.getContext('2d');
-  cc.fillStyle = spec.base;
-  cc.fillRect(0, 0, 128, 128);
+  if (spec.base) {
+    cc.fillStyle = spec.base;
+    cc.fillRect(0, 0, 128, 128);
+  }
   for (const layer of spec.layers) {
     for (let i = 0; i < layer.n; i++) {
       const x = Math.random() * 128, y = Math.random() * 128;
@@ -75,16 +86,135 @@ function makePatterns(ctx) {
     const t = THEMES[name];
     const ground = ctx.createPattern(makeTile(t.ground), 'repeat');
     ground.setTransform(new DOMMatrix([3.6 / 128, 0, 0, 3.6 / 128, 0, 0]));
-    const sky = ctx.createPattern(makeTile(t.sky), 'repeat');
+    const sky = ctx.createPattern(makeTile(t.skyTile), 'repeat');
     sky.setTransform(new DOMMatrix([7 / 128, 0, 0, 7 / 128, 0, 0]));
     out[name] = Object.assign({}, t, { ground, sky });
   }
   return out;
 }
 
-function drawWorld(ctx, level, pat, view) {
+// vertical sky gradient between world heights y0 (zenith) and y1 (horizon)
+function skyGradient(ctx, theme, y0, y1) {
+  const g = ctx.createLinearGradient(0, y0, 0, y1);
+  for (const [p, c] of theme.skyStops) g.addColorStop(p, c);
+  return g;
+}
+
+// one smooth parallax layer of background hills: p is how slowly it
+// tracks the camera (smaller = farther away), baseY the world height of
+// its foot, the silhouette a sum of two sines sampled across the view
+function hillLayer(ctx, view, p, baseY, amp, k, color) {
+  const u = (view.x0 + view.x1) / 2 * (1 - p);
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(view.x0 - 1, view.y1);
+  for (let x = view.x0 - 1; x <= view.x1 + 1; x += 0.8) {
+    const s = (x - u) * k;
+    const y = baseY - amp * (0.52 + 0.34 * Math.sin(s) + 0.14 * Math.sin(s * 2.6 + 1.7));
+    ctx.lineTo(x, y);
+  }
+  ctx.lineTo(view.x1 + 1, view.y1);
+  ctx.closePath();
+  ctx.fill();
+}
+
+// jagged parallax ridge: two triangle waves stacked into sawtooth peaks
+function ridgeLayer(ctx, view, p, baseY, amp, period, color) {
+  const u = (view.x0 + view.x1) / 2 * (1 - p);
+  const tri = (s, per) => Math.abs((((s / per) % 1) + 1) % 1 - 0.5) * 2;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(view.x0 - 1, view.y1);
+  for (let x = view.x0 - 1; x <= view.x1 + 1; x += 0.8) {
+    const s = x - u;
+    const h = 0.62 * tri(s, period) + 0.38 * tri(s, period * 0.43);
+    ctx.lineTo(x, baseY - amp * h);
+  }
+  ctx.lineTo(view.x1 + 1, view.y1);
+  ctx.closePath();
+  ctx.fill();
+}
+
+// meadow backdrop: a soft sun and two ranks of rolling hills
+function drawMeadowBack(ctx, view, t) {
+  const w = view.x1 - view.x0;
+  const sx = view.x0 + w * 0.78, sy = view.y0 + 2.6;
+  const g = ctx.createRadialGradient(sx, sy, 0.2, sx, sy, 3.4);
+  g.addColorStop(0, 'rgba(255,246,200,0.95)');
+  g.addColorStop(0.25, 'rgba(255,240,180,0.55)');
+  g.addColorStop(1, 'rgba(255,240,180,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(sx, sy, 3.4, 0, Math.PI * 2);
+  ctx.fill();
+  hillLayer(ctx, view, 0.22, 10.0, 3.0, 0.42, 'rgba(158,196,164,0.65)');
+  hillLayer(ctx, view, 0.42, 10.9, 2.0, 0.66, 'rgba(118,168,116,0.72)');
+}
+
+// volcano backdrop: a far jagged ridge, then a rank of cones with
+// pulsing crater glows and lava streaks down their flanks
+function drawVolcanoBack(ctx, view, t) {
+  ridgeLayer(ctx, view, 0.16, 11.0, 5.2, 21, 'rgba(54,26,30,0.60)');
+  const p = 0.36, spacing = 30;
+  const u = (view.x0 + view.x1) / 2 * (1 - p);
+  const first = Math.floor((view.x0 - u - 9) / spacing) * spacing;
+  for (let s = first; s <= view.x1 - u + 9; s += spacing) {
+    const x = s + u;
+    const r = srand(s * 0.013 + 3.7);
+    const h = 5.5 + r * 2.5, half = 4.6 + r * 1.8;
+    const capW = 0.9 + r * 0.5;
+    const baseY = 11.8, py = baseY - h;
+    ctx.fillStyle = 'rgba(46,22,26,0.88)';
+    ctx.beginPath();
+    ctx.moveTo(x - half, baseY);
+    ctx.lineTo(x - capW, py);
+    ctx.lineTo(x + capW, py);
+    ctx.lineTo(x + half, baseY);
+    ctx.closePath();
+    ctx.fill();
+    // crater glow breathes slowly; a lava streak runs down the flank
+    const pulse = 0.6 + 0.25 * Math.sin(t * 1.7 + s);
+    const g = ctx.createRadialGradient(x, py, 0.1, x, py, capW * 2.6);
+    g.addColorStop(0, 'rgba(255,170,70,' + 0.8 * pulse + ')');
+    g.addColorStop(0.4, 'rgba(255,100,30,' + 0.38 * pulse + ')');
+    g.addColorStop(1, 'rgba(255,90,30,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(x, py, capW * 2.6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,130,45,' + 0.55 * pulse + ')';
+    ctx.lineWidth = 0.16;
+    ctx.beginPath();
+    ctx.moveTo(x + capW * 0.35, py + 0.1);
+    ctx.lineTo(x + capW * 0.35 + (half - capW) * 0.5, py + h * 0.58);
+    ctx.stroke();
+  }
+}
+
+function drawWorld(ctx, level, pat, view, t) {
+  t = t || 0;
+  const vw = view.x1 - view.x0, vh = view.y1 - view.y0;
   ctx.fillStyle = pat.ground;
-  ctx.fillRect(view.x0, view.y0, view.x1 - view.x0, view.y1 - view.y0);
+  ctx.fillRect(view.x0, view.y0, vw, vh);
+
+  // the playable inside: gradient sky, distant silhouettes behind the
+  // terrain, then a slowly drifting haze/cloud layer over both
+  ctx.save();
+  ctx.beginPath();
+  for (const poly of level.polygons) {
+    ctx.moveTo(poly[0][0], poly[0][1]);
+    for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i][0], poly[i][1]);
+    ctx.closePath();
+  }
+  ctx.clip('evenodd');
+  ctx.fillStyle = skyGradient(ctx, pat, -8, 12);
+  ctx.fillRect(view.x0, view.y0, vw, vh);
+  pat.background(ctx, view, t);
+  const drift = (t * 0.4) % 7; // haze tile repeats every 7 world units
+  ctx.translate(-drift, 0);
+  ctx.fillStyle = pat.sky;
+  ctx.fillRect(view.x0, view.y0, vw + 7, vh);
+  ctx.restore();
 
   ctx.beginPath();
   for (const poly of level.polygons) {
@@ -92,16 +222,14 @@ function drawWorld(ctx, level, pat, view) {
     for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i][0], poly[i][1]);
     ctx.closePath();
   }
-  ctx.fillStyle = pat.sky;
-  ctx.fill('evenodd');
   ctx.strokeStyle = pat.outline;
   ctx.lineWidth = 0.07;
   ctx.stroke();
 
-  for (const e of level.grass) drawGrassEdge(ctx, e, pat);
+  for (const e of level.grass) pat.edge(ctx, e, pat, t);
 }
 
-function drawGrassEdge(ctx, s, theme) {
+function drawGrassEdge(ctx, s, theme, t) {
   const dx = s.bx - s.ax, dy = s.by - s.ay;
   const len = Math.hypot(dx, dy);
   const ux = dx / len, uy = dy / len;
@@ -122,15 +250,75 @@ function drawGrassEdge(ctx, s, theme) {
   ctx.beginPath();
   const n = Math.max(1, Math.floor(len / 0.22));
   for (let i = 0; i <= n; i++) {
-    const t = i / n;
+    const f = i / n;
     const r1 = srand(s.ax * 7.13 + s.ay * 2.1 + i * 3.7);
     const r2 = srand(s.ay * 5.7 + s.ax * 1.9 + i * 1.3);
-    const bx = s.ax + dx * t, by = s.ay + dy * t;
+    const bx = s.ax + dx * f, by = s.ay + dy * f;
     const h = 0.14 + r1 * 0.20, lean = (r2 - 0.5) * 0.16;
     ctx.moveTo(bx + nx * 0.10, by + ny * 0.10);
     ctx.lineTo(bx + nx * (0.10 + h) + ux * lean, by + ny * (0.10 + h) + uy * lean);
   }
   ctx.stroke();
+}
+
+// molten crust along the surface: a glowing seam with flickering flame
+// licks where the meadow would grow grass
+function drawLavaEdge(ctx, s, theme, t) {
+  t = t || 0;
+  const dx = s.bx - s.ax, dy = s.by - s.ay;
+  const len = Math.hypot(dx, dy);
+  const ux = dx / len, uy = dy / len;
+  let nx = uy, ny = -ux;            // normal pointing up into the playable area
+  if (ny > 0) { nx = -nx; ny = -ny; }
+
+  // cooled crust band with a bright molten seam on top
+  ctx.fillStyle = '#8e2408';
+  ctx.beginPath();
+  ctx.moveTo(s.ax - nx * 0.02, s.ay - ny * 0.02);
+  ctx.lineTo(s.bx - nx * 0.02, s.by - ny * 0.02);
+  ctx.lineTo(s.bx + nx * 0.15, s.by + ny * 0.15);
+  ctx.lineTo(s.ax + nx * 0.15, s.ay + ny * 0.15);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = '#ff8c2c';
+  ctx.beginPath();
+  ctx.moveTo(s.ax + nx * 0.09, s.ay + ny * 0.09);
+  ctx.lineTo(s.bx + nx * 0.09, s.by + ny * 0.09);
+  ctx.lineTo(s.bx + nx * 0.15, s.by + ny * 0.15);
+  ctx.lineTo(s.ax + nx * 0.15, s.ay + ny * 0.15);
+  ctx.closePath();
+  ctx.fill();
+
+  // flame licks, flickering and leaning, with gaps in the fire line
+  const n = Math.max(1, Math.floor(len / 0.5));
+  for (let i = 0; i <= n; i++) {
+    const f = i / n;
+    const r1 = srand(s.ax * 5.1 + s.ay * 3.3 + i * 7.7);
+    const r2 = srand(s.ay * 2.9 + s.ax * 1.7 + i * 4.1);
+    if (r1 < 0.25) continue;
+    const bx = s.ax + dx * f, by = s.ay + dy * f;
+    const flick = 0.78 + 0.30 * Math.sin(t * 6 + r2 * 31.4);
+    const h = (0.16 + r1 * 0.34) * flick;
+    const wHalf = 0.06 + r2 * 0.05;
+    const lean = (r2 - 0.5) * 0.22;
+    const tipX = bx + nx * (0.12 + h) + ux * lean;
+    const tipY = by + ny * (0.12 + h) + uy * lean;
+    ctx.fillStyle = 'rgba(255,116,28,0.85)';
+    ctx.beginPath();
+    ctx.moveTo(bx - ux * wHalf + nx * 0.10, by - uy * wHalf + ny * 0.10);
+    ctx.lineTo(bx + ux * wHalf + nx * 0.10, by + uy * wHalf + ny * 0.10);
+    ctx.lineTo(tipX, tipY);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255,210,61,0.9)';
+    ctx.beginPath();
+    ctx.moveTo(bx - ux * wHalf * 0.5 + nx * 0.10, by - uy * wHalf * 0.5 + ny * 0.10);
+    ctx.lineTo(bx + ux * wHalf * 0.5 + nx * 0.10, by + uy * wHalf * 0.5 + ny * 0.10);
+    ctx.lineTo(bx + nx * (0.11 + h * 0.55) + ux * lean * 0.6,
+               by + ny * (0.11 + h * 0.55) + uy * lean * 0.6);
+    ctx.closePath();
+    ctx.fill();
+  }
 }
 
 function roundRectPath(ctx, x, y, w, h, r) {
@@ -642,6 +830,16 @@ function drawMenuBackdrop(ctx, W, H, t, pat) {
   ctx.scale(Z, Z);
   const w = W / Z, h = H / Z;
 
+  const gy = h * 0.84;
+  ctx.fillStyle = skyGradient(ctx, pat, 0, gy);
+  ctx.fillRect(0, 0, w, h);
+
+  // distant hills panning slowly past, then the drifting cloud layer
+  const pan = t * 1.2;
+  ctx.save();
+  ctx.translate(-pan, 0);
+  pat.background(ctx, { x0: pan, x1: pan + w, y0: 0, y1: gy }, t);
+  ctx.restore();
   const drift = (t * 0.4) % 7; // sky pattern repeats every 7 world units
   ctx.save();
   ctx.translate(-drift, 0);
@@ -649,10 +847,9 @@ function drawMenuBackdrop(ctx, W, H, t, pat) {
   ctx.fillRect(0, 0, w + 7, h);
   ctx.restore();
 
-  const gy = h * 0.84;
   ctx.fillStyle = pat.ground;
   ctx.fillRect(0, gy, w, h - gy);
-  drawGrassEdge(ctx, { ax: 0, ay: gy, bx: w, by: gy }, pat);
+  pat.edge(ctx, { ax: 0, ay: gy, bx: w, by: gy }, pat, t);
 
   ctx.save();
   ctx.translate(w * 0.86, gy - 1.05);

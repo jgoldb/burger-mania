@@ -234,9 +234,9 @@
     }
     const target = track.levels.length - 1;
     // skipping counts as having beaten everything before the target, so a
-    // continue restarts from the latest checkpoint map (every 5th) cleared
-    // along the way, exactly as if the player had ridden there
-    checkpointIndex = Math.max(0, Math.floor(target / 5) * 5 - 1);
+    // continue restarts from the checkpoint the player would hold having
+    // ridden there: the map right after the last cleared 5th map
+    checkpointIndex = Math.floor(target / 5) * 5;
     enterLevel(target);
     state = 'ready';
     blip(1320, 0.15);
@@ -485,9 +485,12 @@
 
   function finish() {
     state = 'finished';
-    // completing every 5th map of a track (1-5, 1-10, ...) makes it the
-    // checkpoint: a continue used later restarts from that map
-    if (currentTrack && (levelIndex + 1) % 5 === 0) checkpointIndex = levelIndex;
+    // completing every 5th map of a track (1-5, 1-10, ...) banks a
+    // checkpoint: a continue used later restarts from the NEXT map, so a
+    // cleared checkpoint map never has to be re-beaten
+    if (currentTrack && (levelIndex + 1) % 5 === 0) {
+      checkpointIndex = Math.min(levelIndex + 1, currentTrack.levels.length - 1);
+    }
     if (best === null || time < best) {
       best = time;
       localStorage.setItem(bestKey, String(best));
@@ -634,7 +637,7 @@
     ctx.translate(-cam.x, -cam.y);
     const hw = W / 2 / Z + 1, hh = H / 2 / Z + 1;
     drawWorld(ctx, level, theme,
-      { x0: cam.x - hw, y0: cam.y - hh, x1: cam.x + hw, y1: cam.y + hh });
+      { x0: cam.x - hw, y0: cam.y - hh, x1: cam.x + hw, y1: cam.y + hh }, rt);
     for (const b of burgers) if (!b.got) drawBurger(ctx, b.x, b.y, rt);
     drawPopcorn(ctx, level.goal[0], level.goal[1], rt);
     drawBike(ctx, bike, !!headBody);

@@ -214,47 +214,68 @@ const LEVELS = [
     goal: [98, 5.65],
   },
   {
-    // Easy #6, the first map of the charcoal world: introduces the
-    // momentum climb — dive through the coal pit to bank speed for the
-    // longest, steepest slope yet (30 degrees, twice the length of Skewer
-    // Gorge's). Stalling mid-slope just slides you back down for another
-    // run; nothing here is fatal, the test is throttle and wheelie
-    // control on the way up.
-    name: 'Charcoal Climb',
-    theme: 'charcoal',
+    // Easy #6, the volcano world opener and the biggest difficulty spike
+    // yet — a three-act gauntlet:
+    //  1. dive through the cinder pit to bank speed, then hammer up the
+    //     lava tube: a 28-degree momentum climb under a basalt roof
+    //     (~2.7 clearance), where a full-gas wheelie puts your head into
+    //     the rock — feather the throttle to keep the nose down;
+    //  2. the tube exit ramps straight into a jump over the magma gorge
+    //     onto a small floating platform, with a lava fang hanging over
+    //     the landing: too hot and the ballooning arc spikes your head
+    //     on it, too slow and you drop short into the gorge;
+    //  3. hop down the two basalt slabs and momentum-climb out to the
+    //     goal shelf.
+    // The gorge floor is rideable under everything and out the far
+    // climb, so fallers can ride on (and Enter-restart for any missed
+    // platform burgers, as on Patty Bridge).
+    name: 'Habanero Heights',
+    theme: 'volcano',
     polygons: [
       [
         // ceiling, left to right
-        [-5, -8], [88, -8],
+        [-5, -8], [33, -8],
+        [34.5, 8.4],                      // lava tube mouth
+        [44, 3.5],                        // tube roof tracking the climb
+        [46.8, 3.9],                      // ...juts out into a fang over the
+        [47.5, -8],                       // gorge: a ballooning arc spikes it
+        [84, -8],
         // right wall
-        [88, 6.6],
+        [84, 8.4],
         // floor, right to left
-        [83, 6.6], [74, 6.6],             // goal shelf
-        [71, 7.4], [68, 7.4],             // ember dip
-        [65.5, 6.5], [62.5, 6.5],         // second crest
-        [57, 8.8], [54, 8.8],             // valley
-        [48.5, 6.4], [43.5, 6.4],         // summit plateau
-        [36, 10.4],                       // THE climb, 28 deg and 8.5 long
+        [79, 8.4], [70.5, 8.4],           // goal shelf
+        [63, 12.2],                       // climb out of the gorge, 27 deg
+        [48.2, 12.2],                     // magma gorge floor
+        [42.8, 8.0],                      // runout slope catches fallers
+        [43.5, 6.4],                      // the tube crest IS the launch lip
+        [36, 10.4],                       // the tube climb, 28 deg
         [33, 11.4],                       // gentler lead-in onto the slope
-        [27, 11.4],                       // coal pit floor
+        [27, 11.4],                       // cinder pit floor
         [20, 7.6], [17, 7.6],             // rim before the dive
         [14, 6.8], [11, 6.8],             // warmup roller
         [8, 8], [0, 8],
         // left wall
         [-5, 8],
       ],
+      // gorge landing platform: receding left face deflects undershooters
+      // wheels-first down into the gorge, which is rideable out the right
+      [
+        [47.4, 8.2], [51.9, 8.2],
+        [52.5, 9.2], [46.6, 9.2],
+      ],
     ],
     start: { x: 2.5, y: 7.25 },
     burgers: [
       [12.5, 6.1],
       [30, 10.7],   // on the pit floor
-      [39.5, 7.85], // halfway up the climb
-      [46, 5.7],    // on the summit plateau
-      [55.5, 8.1],  // in the valley
-      [63.5, 5.8],  // on the second crest
-      [69.5, 6.7],  // in the ember dip
+      [39.5, 7.85], // inside the lava tube, mid-climb
+      [45, 5.0],    // floating in the jump arc, under the fang
+      [47.8, 6.3],  // in the descent onto the platform
+      [56, 11.5],   // on the gorge floor past the platform drop
+      [66.5, 9.7],  // halfway up the climb-out
+      [73, 7.7],    // on the goal shelf
     ],
-    goal: [79, 5.85],
+    goal: [76.5, 7.65],
   },
 ];
 

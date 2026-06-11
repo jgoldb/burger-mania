@@ -50,7 +50,7 @@
     ctx.save();
     ctx.scale(Z, Z);
     ctx.translate(-x0, -y0);
-    drawWorld(ctx, level, patterns[level.theme] || patterns.meadow, { x0, y0, x1, y1 });
+    drawWorld(ctx, level, patterns[level.theme] || patterns.meadow, { x0, y0, x1, y1 }, 2.0);
     for (const b of level.burgers) drawBurger(ctx, b[0], b[1], 1);
     drawPopcorn(ctx, level.goal[0], level.goal[1], 1);
     const bike = new Bike(level.start.x, level.start.y);
@@ -76,7 +76,7 @@
     drawWorld(ctx, level, patterns[level.theme] || patterns.meadow, {
       x0: level.start.x - hw, y0: level.start.y - hh,
       x1: level.start.x + hw, y1: level.start.y + hh,
-    });
+    }, 2.0);
     for (const b of level.burgers) drawBurger(ctx, b[0], b[1], 1);
     drawBike(ctx, bike, false);
     ctx.restore();
