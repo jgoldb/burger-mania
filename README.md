@@ -49,6 +49,8 @@ Your best time is saved locally per level.
 node test/test_physics.js   # settle, drive, brake, lean, flip sanity checks
 node test/drive_long.js     # verifies the course is completable
 node test/music_check.js    # soundtrack data: pitches, loops, theme coverage
+node test/music_engine_check.js  # every scheduled note/envelope is valid
+node test/game_smoke.js     # full stack under a stub DOM: right song per screen
 ```
 
 ## Adding levels
