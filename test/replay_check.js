@@ -234,7 +234,7 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
 
   key('Escape');                             // dead -> pause
   pumpFrames(2, 1 / 60);
-  key('ArrowDown');                          // -> Return to Menu
+  key('ArrowUp');                            // wrap to Return to Menu (last item)
   key('Enter');
   pumpFrames(3, 1 / 60);
   key('ArrowDown');                          // menu: Play -> Replays

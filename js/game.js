@@ -39,9 +39,9 @@
   let loadFrac = 0, loadDone = false;
   let introT = 0, menuT = 0, diffT = 0, contT = 0;
   let introLaunched = 0, introLanded = 0, fanfared = false;
-  const menuItems = ['Play', 'Replays'];
+  const menuItems = ['Play', 'Replays', 'Audio'];
   let menuSel = 0, diffSel = 0, contSel = 0;
-  const pauseItems = ['Continue', 'Return to Menu'];
+  const pauseItems = ['Continue', 'Audio', 'Return to Menu'];
   let pauseSel = 0, pausedFrom = 'playing';
   let hoverIdx = -1;
   const mouse = { x: -1, y: -1 };
@@ -73,12 +73,49 @@
   }
 
   // ---------- sound ----------
+  // the engine drone and one-shot effects feed sfxGain, the soundtrack
+  // feeds musicGain, and both meet in masterGain — the three sliders on
+  // the audio settings screen
   let AC = null, engineSnd = null, muted = false;
+  let masterGain = null, musicGain = null, sfxGain = null;
+
+  const VOLUME_KEY = 'burger-mania-volume';
+  const volume = { master: 1, music: 1, sfx: 1 };
+  try {
+    const saved = JSON.parse(localStorage.getItem(VOLUME_KEY)) || {};
+    for (const k of Object.keys(volume)) {
+      if (isFinite(saved[k])) volume[k] = Math.min(1, Math.max(0, Number(saved[k])));
+    }
+  } catch (e) { /* unreadable save: ride at full volume */ }
+
+  // sliders are stored 0..1 and squared into gain so they track
+  // perceived loudness rather than raw amplitude
+  function applyVolume() {
+    if (!AC) return;
+    masterGain.gain.setTargetAtTime(volume.master * volume.master, AC.currentTime, 0.03);
+    musicGain.gain.setTargetAtTime(volume.music * volume.music, AC.currentTime, 0.03);
+    sfxGain.gain.setTargetAtTime(volume.sfx * volume.sfx, AC.currentTime, 0.03);
+  }
+
+  function setVolume(key, v) {
+    volume[key] = Math.min(1, Math.max(0, v));
+    applyVolume();
+    localStorage.setItem(VOLUME_KEY, JSON.stringify(volume));
+  }
 
   function ensureAudio() {
     if (AC) return;
     try {
       AC = new (window.AudioContext || window.webkitAudioContext)();
+      masterGain = AC.createGain();
+      masterGain.gain.value = volume.master * volume.master;
+      masterGain.connect(AC.destination);
+      musicGain = AC.createGain();
+      musicGain.gain.value = volume.music * volume.music;
+      musicGain.connect(masterGain);
+      sfxGain = AC.createGain();
+      sfxGain.gain.value = volume.sfx * volume.sfx;
+      sfxGain.connect(masterGain);
       const osc = AC.createOscillator();
       osc.type = 'sawtooth';
       const filt = AC.createBiquadFilter();
@@ -88,10 +125,10 @@
       gain.gain.value = 0;
       osc.connect(filt);
       filt.connect(gain);
-      gain.connect(AC.destination);
+      gain.connect(sfxGain);
       osc.start();
       engineSnd = { osc, gain };
-      MUSIC.init(AC);
+      MUSIC.init(AC, musicGain);
     } catch (e) { /* no audio available */ }
   }
 
@@ -103,6 +140,11 @@
     let want = null;
     if (state === 'menu' || state === 'difficulty' || state === 'replays') want = 'menu';
     else if (state === 'continue') want = 'continue';
+    else if (state === 'audio') {
+      // keep whatever was playing, full volume even over a pause, so the
+      // music slider is tuned against the level it'll actually play at
+      want = audioFrom === 'paused' ? level.theme : 'menu';
+    }
     else if (state === 'ready' || state === 'playing' || state === 'dead' ||
              state === 'finished' || state === 'paused' ||
              state === 'replay' || state === 'replayEnd') {
@@ -132,7 +174,7 @@
     g.gain.value = 0.10;
     g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + dur);
     o.connect(g);
-    g.connect(AC.destination);
+    g.connect(sfxGain);
     o.start();
     o.stop(AC.currentTime + dur);
   }
@@ -155,7 +197,7 @@
     g.gain.value = gain;
     src.connect(f);
     f.connect(g);
-    g.connect(AC.destination);
+    g.connect(sfxGain);
     src.start();
   }
 
@@ -241,6 +283,51 @@
     state = 'paused';
     pauseSel = 0;
     keys.up = keys.down = keys.left = keys.right = false;
+  }
+
+  // ---------- audio settings ----------
+  // rows on the audio screen: the volume keys in audioRects order, then Back
+  const audioKeys = ['master', 'music', 'sfx'];
+  let audioSel = 0, audioT = 0, audioFrom = 'menu';
+  let audioDrag = -1;        // slider row being mouse-dragged, -1 when none
+  let audioDragged = false;  // eats the click that ends a drag
+  let volBlipAt = 0;
+
+  function goAudio() {
+    audioFrom = state; // 'menu' or 'paused'
+    state = 'audio';
+    audioT = 0;
+    audioSel = 0;
+    audioDrag = -1;
+    hoverIdx = -1;
+  }
+
+  function closeAudio() {
+    if (audioFrom === 'paused') state = 'paused';
+    else goMenu();
+  }
+
+  // audible level check while a slider moves, throttled so a drag
+  // doesn't machine-gun blips
+  function volBlip() {
+    const now = performance.now();
+    if (now - volBlipAt < 90) return;
+    volBlipAt = now;
+    blip(740, 0.07);
+  }
+
+  function nudgeVolume(i, d) {
+    // snap to the 5% grid so arrow keys land on round numbers even
+    // after a mouse drag left the volume off-grid
+    setVolume(audioKeys[i], Math.round((volume[audioKeys[i]] + d * 0.05) * 20) / 20);
+    volBlip();
+  }
+
+  // maps a click/drag x onto the dragged row's slider track
+  function dragVolume(mx) {
+    const bar = audioRects(W, H)[audioDrag].bar;
+    setVolume(audioKeys[audioDrag], (mx - bar.x) / bar.w);
+    volBlip();
   }
 
   // ---------- replays ----------
@@ -446,6 +533,9 @@
     } else if (menuItems[i] === 'Replays') {
       blip(880, 0.08);
       goReplays();
+    } else if (menuItems[i] === 'Audio') {
+      blip(880, 0.08);
+      goAudio();
     }
   }
 
@@ -474,6 +564,7 @@
 
   function activatePause(i) {
     if (pauseItems[i] === 'Continue') state = pausedFrom;
+    else if (pauseItems[i] === 'Audio') goAudio();
     else goMenu();
   }
 
@@ -495,6 +586,9 @@
     }
     if (state === 'paused') {
       return menuRects(W, H, pauseItems.length, H * 0.46);
+    }
+    if (state === 'audio' && audioT > 0.15) {
+      return audioRects(W, H);
     }
     return null;
   }
@@ -569,6 +663,25 @@
           activatePause(pauseSel);
         }
         return;
+      case 'audio': {
+        if (e.key === 'Escape') { closeAudio(); return; }
+        const rows = audioKeys.length + 1; // sliders + Back
+        if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+          const d = e.key === 'ArrowUp' ? -1 : 1;
+          audioSel = (audioSel + d + rows) % rows;
+          blip(520, 0.05);
+        } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+          if (audioSel < audioKeys.length) {
+            nudgeVolume(audioSel, e.key === 'ArrowLeft' ? -1 : 1);
+          }
+        } else if (e.key === 'Enter' || e.key === ' ') {
+          if (audioSel === audioKeys.length) {
+            blip(880, 0.08);
+            closeAudio();
+          }
+        }
+        return;
+      }
       case 'replays':
         if (e.key === 'Escape') { goMenu(); return; }
         if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
@@ -651,14 +764,33 @@
   canvas.addEventListener('mousemove', e => {
     mouse.x = e.clientX;
     mouse.y = e.clientY;
+    if (audioDrag >= 0 && state === 'audio') dragVolume(e.clientX);
     updateHover();
   });
+  // the audio sliders want press-and-drag, which click alone can't express
+  canvas.addEventListener('mousedown', e => {
+    if (state !== 'audio') return;
+    ensureAudio();
+    if (AC && AC.state === 'suspended') AC.resume();
+    mouse.x = e.clientX;
+    mouse.y = e.clientY;
+    updateHover();
+    if (hoverIdx >= 0 && hoverIdx < audioKeys.length) {
+      audioDrag = hoverIdx;
+      audioSel = hoverIdx;
+      audioDragged = true;
+      dragVolume(e.clientX);
+    }
+  });
+  window.addEventListener('mouseup', () => { audioDrag = -1; });
   canvas.addEventListener('click', e => {
     ensureAudio();
     if (AC && AC.state === 'suspended') AC.resume();
     mouse.x = e.clientX;
     mouse.y = e.clientY;
     updateHover();
+    const wasDrag = audioDragged;
+    audioDragged = false;
     if (state === 'loading') {
       if (loadDone) { state = 'intro'; introT = 0; }
       return;
@@ -680,6 +812,12 @@
     } else if (state === 'paused') {
       pauseSel = hoverIdx;
       activatePause(hoverIdx);
+    } else if (state === 'audio') {
+      // a drag released over Back shouldn't activate it
+      if (!wasDrag && hoverIdx === audioKeys.length) {
+        blip(880, 0.08);
+        closeAudio();
+      }
     }
   });
 
@@ -837,6 +975,8 @@
         contT += FDT;
       } else if (state === 'replays') {
         repT += FDT;
+      } else if (state === 'audio') {
+        audioT += FDT;
       } else if (state === 'playing') {
         // the tape gets one mask per frame: exactly what the sim consumes
         REPLAY.record(
@@ -863,7 +1003,8 @@
       }
       flipQueued = false;
       if (state !== 'loading' && state !== 'intro' && state !== 'menu' &&
-          state !== 'difficulty' && state !== 'continue' && state !== 'replays') {
+          state !== 'difficulty' && state !== 'continue' && state !== 'replays' &&
+          state !== 'audio') {
         updateCamera(FDT);
       }
     }
@@ -906,6 +1047,14 @@
         repItems, repSel, repScroll, hoverIdx, repNote);
       return;
     }
+    if (state === 'audio' && audioFrom !== 'paused') {
+      drawMenuBackdrop(ctx, W, H, rt, patterns.meadow);
+      drawAudio(ctx, W, H, Math.min(1, audioT / 0.4),
+        { volume, sel: audioSel, hover: hoverIdx, dim: false, muted });
+      return;
+    }
+    // audio opened from the pause menu falls through: the frozen level
+    // stays visible behind it, just like the pause screen itself
 
     const theme = patterns[level.theme] || patterns.meadow;
     const Z = Math.min(W / 26, H / 13.5);
@@ -955,6 +1104,10 @@
 
     if (state === 'paused') {
       drawPause(ctx, W, H, pauseItems, pauseSel, hoverIdx);
+    }
+    if (state === 'audio') {
+      drawAudio(ctx, W, H, Math.min(1, audioT / 0.4),
+        { volume, sel: audioSel, hover: hoverIdx, dim: true, muted });
     }
   }
 

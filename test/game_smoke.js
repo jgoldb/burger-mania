@@ -121,6 +121,15 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   key('Enter');                              // skip intro -> menu
   pumpFrames(3, 1 / 60);
   if (playedNow !== 'menu') bad('menu should play menu, got ' + playedNow);
+  key('ArrowUp');                            // wrap to Audio (last menu item)
+  key('Enter');                              // -> audio settings
+  pumpFrames(3, 1 / 60);
+  if (playedNow !== 'menu') bad('audio screen should keep menu song, got ' + playedNow);
+  key('ArrowRight');                         // master nudge: must not throw
+  key('ArrowDown'); key('ArrowLeft');        // music down a notch
+  key('Escape');                             // back to the menu
+  pumpFrames(3, 1 / 60);
+  if (playedNow !== 'menu') bad('back from audio should keep menu, got ' + playedNow);
   key('Enter');                              // Play -> difficulty
   pumpFrames(3, 1 / 60);
   if (playedNow !== 'menu') bad('difficulty should keep menu, got ' + playedNow);
@@ -159,7 +168,15 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   if (playedNow !== 'volcano') bad('paused should keep volcano, got ' + playedNow);
   key('m');                                  // mute must not throw mid-song
   key('m');
-  key('ArrowDown');                          // Return to Menu
+  key('ArrowDown');                          // pause -> Audio
+  key('Enter');                              // audio settings over the pause
+  pumpFrames(3, 1 / 60);
+  if (playedNow !== 'volcano') bad('audio (from pause) should keep volcano, got ' + playedNow);
+  key('ArrowLeft');                          // master nudge: must not throw
+  key('Escape');                             // back to the pause menu
+  pumpFrames(3, 1 / 60);
+  if (playedNow !== 'volcano') bad('back at pause should keep volcano, got ' + playedNow);
+  key('ArrowDown');                          // selection was on Audio -> Return to Menu
   key('Enter');
   pumpFrames(3, 1 / 60);
   if (playedNow !== 'menu') bad('back at menu should play menu, got ' + playedNow);

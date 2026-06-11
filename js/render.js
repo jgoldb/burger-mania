@@ -1269,6 +1269,103 @@ function drawPause(ctx, W, H, items, sel, hover) {
   drawButtons(ctx, rects, items, sel, hover, 1);
 }
 
+// ---------- audio settings screen ----------
+
+// shared by drawing and hit-testing (like menuRects): three slider rows
+// plus a Back button. Each row rect is the hover/click target and its
+// `bar` is the slider track inside it.
+function audioRects(W, H) {
+  const bw = Math.min(520, W * 0.86), bh = 68, gap = 16;
+  const x = (W - bw) / 2;
+  let y = H * 0.30;
+  const rects = [];
+  for (let i = 0; i < 3; i++) {
+    rects.push({ x, y, w: bw, h: bh,
+      bar: { x: x + 24, y: y + 46, w: bw - 48, h: 8 } });
+    y += bh + gap;
+  }
+  rects.push({ x: (W - 240) / 2, y: y + 6, w: 240, h: 56 }); // Back
+  return rects;
+}
+
+const AUDIO_LABELS = ['Master', 'Music', 'Sound Effects'];
+
+// o: { volume: {master, music, sfx}, sel, hover, dim, muted } — `dim`
+// darkens the screen first, for when this sits over frozen gameplay
+// like the pause menu
+function drawAudio(ctx, W, H, alpha, o) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  if (o.dim) {
+    ctx.fillStyle = 'rgba(8,5,2,0.55)';
+    ctx.fillRect(0, 0, W, H);
+  }
+  const rects = audioRects(W, H);
+  const back = rects[rects.length - 1];
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = 'bold 44px "Consolas","Courier New",monospace';
+  ctx.fillStyle = 'rgba(40,16,4,0.85)';
+  ctx.fillText('AUDIO', W / 2 + 3, H * 0.16 + 3);
+  ctx.fillStyle = '#f9c623';
+  ctx.fillText('AUDIO', W / 2, H * 0.16);
+  if (o.muted) {
+    ctx.fillStyle = '#ff8a5c';
+    ctx.font = 'bold 16px "Consolas","Courier New",monospace';
+    ctx.fillText('muted - press M to unmute', W / 2, H * 0.16 + 38);
+  }
+
+  const vols = [o.volume.master, o.volume.music, o.volume.sfx];
+  rects.slice(0, 3).forEach((r, i) => {
+    const hot = i === o.sel || i === o.hover;
+    ctx.fillStyle = hot ? 'rgba(70,34,10,0.92)' : 'rgba(20,12,6,0.82)';
+    roundRectPath(ctx, r.x, r.y, r.w, r.h, 12);
+    ctx.fill();
+    ctx.lineWidth = hot ? 3 : 2;
+    ctx.strokeStyle = hot ? '#f9c623' : 'rgba(249,198,35,0.45)';
+    ctx.stroke();
+
+    ctx.font = 'bold 18px "Consolas","Courier New",monospace';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = hot ? '#ffe27a' : '#f0e8da';
+    ctx.fillText(AUDIO_LABELS[i], r.bar.x, r.y + 22);
+    ctx.textAlign = 'right';
+    ctx.fillText(Math.round(vols[i] * 100) + '%', r.bar.x + r.bar.w, r.y + 22);
+
+    const b = r.bar; // track, filled to the volume, with a knob on top
+    ctx.fillStyle = 'rgba(240,232,218,0.25)';
+    roundRectPath(ctx, b.x, b.y, b.w, b.h, b.h / 2);
+    ctx.fill();
+    if (vols[i] > 0) {
+      ctx.fillStyle = hot ? '#f9c623' : 'rgba(249,198,35,0.8)';
+      roundRectPath(ctx, b.x, b.y, Math.max(b.h, b.w * vols[i]), b.h, b.h / 2);
+      ctx.fill();
+    }
+    ctx.beginPath();
+    ctx.arc(b.x + b.w * vols[i], b.y + b.h / 2, 9, 0, Math.PI * 2);
+    ctx.fillStyle = hot ? '#ffe27a' : '#f0e8da';
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(40,16,4,0.8)';
+    ctx.stroke();
+  });
+  ctx.restore();
+
+  drawButtons(ctx, [back], ['Back'],
+    o.sel === 3 ? 0 : -1, o.hover === 3 ? 0 : -1, alpha);
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = o.dim ? 'rgba(240,232,218,0.75)' : 'rgba(40,20,8,0.85)';
+  ctx.font = '15px "Consolas","Courier New",monospace';
+  ctx.fillText('Arrows adjust - M mutes - Esc to go back', W / 2, back.y + back.h + 34);
+  ctx.restore();
+}
+
 // ---------- replays screen ----------
 
 const REPLAY_VIS = 6; // list rows visible at once

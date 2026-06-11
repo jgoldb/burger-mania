@@ -3,7 +3,8 @@
 // Procedural chiptune soundtrack. Every visual world (a level's `theme`)
 // has its own looping song, plus a title theme shared by the menu and
 // difficulty screens and a somber theme for the continue screen. game.js
-// owns the AudioContext and drives this module: MUSIC.init(AC) once, then
+// owns the AudioContext and drives this module: MUSIC.init(AC, dest) once
+// (dest is the gain the music slider controls; defaults to the speakers), then
 // MUSIC.play(name) with a song name (or null for silence) whenever the
 // screen changes — switching songs crossfades.
 //
@@ -167,12 +168,12 @@ const MUSIC = (function () {
   let timer = null;
   let muted = false, ducked = false;
 
-  function init(ac) {
+  function init(ac, dest) {
     if (AC) return;
     AC = ac;
     master = AC.createGain();
     master.gain.value = muted ? 0 : 1;
-    master.connect(AC.destination);
+    master.connect(dest || AC.destination);
     noiseBuf = AC.createBuffer(1, AC.sampleRate, AC.sampleRate);
     const d = noiseBuf.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;

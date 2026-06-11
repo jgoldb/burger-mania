@@ -14,7 +14,8 @@
 <script src="../js/physics.js"></script>
 <script src="../js/render.js"></script>
 <script>
-  // statically renders one UI screen (?ui=menu|difficulty|continue|pause)
+  // statically renders one UI screen
+  // (?ui=menu|difficulty|continue|pause|audio|audio-pause|...)
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
   const W = canvas.width = window.innerWidth;
@@ -90,7 +91,13 @@
       time: 0, got: 0, total: 6, best: null, state: 'ready', lives: 3,
       mapLabel: 'Easy 2/10 - Cheddar Canyon',
     });
-  } else if (ui === 'pause') {
+  } else if (ui === 'audio') {
+    drawMenuBackdrop(ctx, W, H, 2.0, menuPat);
+    drawAudio(ctx, W, H, 1, {
+      volume: { master: 0.8, music: 0.55, sfx: 1 },
+      sel: 1, hover: -1, dim: false, muted: false,
+    });
+  } else if (ui === 'pause' || ui === 'audio-pause') {
     const level = prepareLevel(LEVELS[0]);
     const bike = new Bike(level.start.x, level.start.y);
     const Z = Math.min(W / 26, H / 13.5);
@@ -107,7 +114,14 @@
     drawBike(ctx, bike, false);
     ctx.restore();
     drawHUD(ctx, W, H, { time: 12.34, got: 2, total: 5, best: null, state: 'paused', lives: 2 });
-    drawPause(ctx, W, H, ['Continue', 'Return to Menu'], 0, -1);
+    if (ui === 'pause') {
+      drawPause(ctx, W, H, ['Continue', 'Audio', 'Return to Menu'], 0, -1);
+    } else {
+      drawAudio(ctx, W, H, 1, {
+        volume: { master: 0.8, music: 0.55, sfx: 1 },
+        sel: 0, hover: -1, dim: true, muted: false,
+      });
+    }
   }
   });
 </script>
