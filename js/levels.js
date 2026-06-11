@@ -13,7 +13,7 @@ const LEVELS = [
         [100, 5.5],
         // floor, right to left
         [95, 5.5], [88, 5.5], [82, 5.5],
-        [76, 7], [70, 10.5], [64, 10.5], [58, 7.5],
+        [76, 7], [70, 10.9], [64, 10.9], [58, 7.5],
         [55, 5.5], [52, 6], [46, 9], [40, 9],
         [34, 8.5], [30, 6.5], [26, 7],
         [20, 9.5], [14, 9.5], [8, 8], [0, 8],
@@ -27,7 +27,7 @@ const LEVELS = [
       [30, 5.7],
       [44, 8.2],
       [55, 4.6],
-      [70, 9.6],
+      [70, 10.0],
     ],
     goal: [90, 4.75], // the popcorn bucket
   },
@@ -45,8 +45,8 @@ const LEVELS = [
         [105, 6.5], [92, 6.5], [86, 5.5],
         [80, 8], [74, 8], [69, 5.5],
         [64, 8.2], [61, 8.2], [57, 6.5], [52, 9.5], [46, 9.5],
-        [40, 7], [37, 6.5],
-        [31, 9], [25, 9], // canyon floor
+        [40, 7], [38.5, 6.5],
+        [32.5, 9], [25, 9], // canyon floor
         [20, 6.5],        // jump lip
         [17, 7.5], [13, 9], [8, 8], [0, 8],
         // left wall
@@ -57,8 +57,8 @@ const LEVELS = [
     burgers: [
       [10, 7.6],
       [20, 5.75],  // on the jump lip, in everyone's path
-      [37.5, 5.9], // in the jump's landing zone
-      [44, 7.9],
+      [39, 5.9],   // in the jump's landing zone
+      [44, 6.9],
       [57, 5.7],
       [69, 4.7],
     ],
@@ -74,9 +74,9 @@ const LEVELS = [
       [
         // ceiling, left to right
         [-5, -8], [13, -8],
-        // tunnel roof through the cliff (clearance ~2.4 over the floor)
-        [16, 5.9], [20, 6.2], [25, 6.2],
-        [29, 6.9], [33, 6.9], [37, 6.1], [40, 6.0],
+        // tunnel roof through the cliff (clearance ~2.25 over the floor)
+        [16, 5.9], [20, 6.35], [25, 6.35],
+        [29, 7.05], [33, 7.05], [37, 6.25], [40, 6.15],
         [44, -8], [110, -8],
         // right wall
         [110, 6.5],
@@ -84,7 +84,7 @@ const LEVELS = [
         [105, 6.5], [92, 6.5],            // goal shelf
         [88, 6.1], [84, 6.5], [82, 6.5],  // roller bump before the shelf
         [76, 8.9], [71, 8.9],             // last valley
-        [66, 6.5], [61, 6.5],             // crest plateau
+        [66, 6.2], [61, 6.2],             // crest plateau
         [55, 9.6], [50, 9.6],             // deep valley
         [45, 7.2],                        // launch crest after the tunnel
         [40, 8.4], [37, 8.5],             // tunnel exit
@@ -101,7 +101,7 @@ const LEVELS = [
       [23, 7.85],  // inside the tunnel, kept low
       [31, 8.55],  // in the tunnel dip
       [45, 6.45],  // on the launch crest
-      [63.5, 5.75],
+      [63.5, 5.45],
       [73.5, 8.15],
     ],
     goal: [100, 5.75],
@@ -122,8 +122,8 @@ const LEVELS = [
         // floor, right to left
         [105, 6.3], [92, 6.3], [84, 6.3], // goal shelf
         [78, 8.6], [73, 8.6],             // last valley
-        [68, 5.8], [64, 5.8],             // crest plateau
-        [59, 8], [54, 8],                 // landing flat past the mesa
+        [68, 5.5], [64, 5.5],             // crest plateau
+        [59, 8], [54, 8],                 // landing flat past the patty
         [48, 11],                         // climb out of the valley
         [36, 11],                         // valley floor under the patty
         [32.4, 9.4],                      // runout slope catches slow droppers
@@ -140,8 +140,8 @@ const LEVELS = [
       // wheels-first and deflects down into the valley instead of
       // head-first into an overhang.
       [
-        [36.6, 7.6], [48, 7.6],
-        [48.5, 8.6], [35.8, 8.6],
+        [37.4, 7.5], [47, 7.5],
+        [47.5, 8.5], [36.6, 8.5],
       ],
     ],
     start: { x: 2.5, y: 7.25 },
@@ -149,11 +149,62 @@ const LEVELS = [
       [14, 6.3],
       [25, 8.8],
       [33, 6.45],  // on the launch lip, in the jump path
-      [42, 6.85],  // on top of the patty
-      [66, 5.1],
+      [42, 6.75],  // on top of the patty
+      [66, 4.8],
       [75.5, 7.85],
     ],
     goal: [100, 5.55],
+  },
+  {
+    // Easy #5, the first checkpoint map: introduces the speed window — a
+    // giant skewer hangs over the gorge jump, and since launch arcs
+    // balloon higher with speed, hitting the ramp too fast drives your
+    // head into its point while too slow drops you short of the
+    // platform. The gorge floor is rideable out if you fall. Stair-step
+    // ledges and the steepest climb yet round out the back half.
+    name: 'Skewer Gorge',
+    polygons: [
+      [
+        // ceiling, left to right
+        [-5, -8], [31.4, -8],
+        [33.2, 4.2],  // the skewer point, hanging over the jump arc
+        [35, -8], [110, -8],
+        // right wall
+        [110, 6.4],
+        // floor, right to left
+        [105, 6.4], [86, 6.4],            // goal shelf
+        [80.5, 8.7], [77, 8.7],           // lower ledge
+        [76.8, 7.3], [72.7, 7.3],         // upper ledge
+        [72.5, 5.9], [68.5, 5.9],         // plateau after the big climb
+        [63.5, 8.6], [58, 8.6],           // rim flat
+        [52, 11.6],                       // climb out of the gorge
+        [34, 11.6],                       // gorge floor under the platform
+        [29.2, 8.8],                      // runout slope catches fallers
+        [30, 7.0],                        // launch lip, undercut ski-jump style
+        [26, 9.2], [18, 9.2],             // run-up flat
+        [14, 6.9], [11, 6.9],             // warmup roller
+        [8, 8], [0, 8],
+        // left wall
+        [-5, 8],
+      ],
+      // gorge platform: solid island with a receding left face so
+      // undershooters deflect wheels-first into the gorge
+      [
+        [35, 7.4], [42, 7.4],
+        [42.6, 8.4], [34.2, 8.4],
+      ],
+    ],
+    start: { x: 2.5, y: 7.25 },
+    burgers: [
+      [12.5, 6.2],
+      [22, 8.5],
+      [30, 6.25],  // on the launch lip
+      [38, 6.65],  // on the gorge platform
+      [60, 7.9],   // on the rim flat
+      [70.5, 5.2], // on the plateau
+      [74.5, 6.6], // on the upper ledge
+    ],
+    goal: [98, 5.65],
   },
 ];
 
@@ -162,7 +213,7 @@ const LEVELS = [
 // series; `levels` holds the maps that exist so far. A track with no
 // levels yet shows up disabled on the difficulty screen.
 const TRACKS = [
-  { id: 'easy',   label: 'Easy',   color: '#9be08a', length: 10, levels: [LEVELS[0], LEVELS[1], LEVELS[2], LEVELS[3]] },
+  { id: 'easy',   label: 'Easy',   color: '#9be08a', length: 10, levels: [LEVELS[0], LEVELS[1], LEVELS[2], LEVELS[3], LEVELS[4]] },
   { id: 'medium', label: 'Medium', color: '#f9c623', length: 20, levels: [] },
   { id: 'hard',   label: 'Hard',   color: '#ff6038', length: 30, levels: [] },
 ];
