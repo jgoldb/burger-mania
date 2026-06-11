@@ -937,6 +937,7 @@
     const watching = state === 'replay' || state === 'replayEnd';
     drawHUD(ctx, W, H, {
       time,
+      t: rt,
       got: burgers.filter(b => b.got).length,
       total: burgers.length,
       best,

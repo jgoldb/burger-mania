@@ -1411,6 +1411,80 @@ function drawMinimap(ctx, W, H, level, o) {
   ctx.restore();
 }
 
+// one reusable offscreen buffer for the life heads: we draw the head, then
+// paint the shimmer/shading onto it with 'source-atop' so the light only
+// lands on the head's pixels (not the transparent surround) before blitting
+let _headBuf = null;
+function lifeHeadBuffer(w, h) {
+  if (!_headBuf) _headBuf = document.createElement('canvas');
+  if (_headBuf.width !== w || _headBuf.height !== h) {
+    _headBuf.width = w;
+    _headBuf.height = h;
+  }
+  return _headBuf;
+}
+
+// a single "remaining life" head: bobs/sways/tilts slowly, casts a soft
+// ground shadow that breathes with the bob, and catches a shine that sweeps
+// across every few seconds. `i` phase-offsets each head so a row of them
+// drifts out of lockstep.
+function drawLifeHead(ctx, img, x, y, w, h, t, i) {
+  const ph = i * 1.7;
+  const bob = Math.sin(t * 1.5 + ph) * h * 0.10;     // vertical drift
+  const sway = Math.sin(t * 0.9 + ph * 1.3) * w * 0.04;
+  const tilt = Math.sin(t * 1.1 + ph) * 0.05;        // gentle head nod (rad)
+  const cx = x + w / 2 + sway, cy = y + h / 2 + bob;
+
+  // ground shadow on the resting baseline: bigger/darker when the head dips
+  // toward it, smaller/fainter as it lifts away
+  const dip = bob / (h * 0.10);                       // -1 (up) .. 1 (down)
+  const ss = 1 + dip * 0.18;
+  ctx.save();
+  ctx.fillStyle = `rgba(40,20,8,${0.22 + dip * 0.06})`;
+  ctx.beginPath();
+  ctx.ellipse(x + w / 2, y + h * 0.99, w * 0.40 * ss, h * 0.10 * ss, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  const buf = lifeHeadBuffer(Math.ceil(w), Math.ceil(h));
+  const bc = buf.getContext('2d');
+  bc.clearRect(0, 0, buf.width, buf.height);
+  bc.drawImage(img, 0, 0, w, h);
+  bc.globalCompositeOperation = 'source-atop';
+
+  // static modelling light: lit crown, shaded jaw, for a touch of volume
+  const sh = bc.createLinearGradient(0, 0, 0, h);
+  sh.addColorStop(0, 'rgba(255,250,235,0.16)');
+  sh.addColorStop(0.5, 'rgba(255,255,255,0)');
+  sh.addColorStop(1, 'rgba(20,10,4,0.20)');
+  bc.fillStyle = sh;
+  bc.fillRect(0, 0, w, h);
+
+  // shine: a diagonal highlight band sweeps left-to-right over ~half the
+  // cycle, then rests, so it glints rather than strobes
+  const cyc = (t * 0.16 + i * 0.37) % 1;
+  if (cyc < 0.5) {
+    const s = cyc * 2;                                // 0..1 across the head
+    const gx = -w * 0.4 + s * (w * 1.8);
+    const gl = bc.createLinearGradient(gx - w * 0.45, 0, gx + w * 0.45, h);
+    const a = Math.sin(s * Math.PI) * 0.38;           // fade in/out at edges
+    gl.addColorStop(0, 'rgba(255,255,255,0)');
+    gl.addColorStop(0.42, 'rgba(255,255,255,0)');
+    gl.addColorStop(0.5, `rgba(255,255,255,${a})`);
+    gl.addColorStop(0.58, 'rgba(255,255,255,0)');
+    gl.addColorStop(1, 'rgba(255,255,255,0)');
+    bc.fillStyle = gl;
+    bc.fillRect(0, 0, w, h);
+  }
+  bc.globalCompositeOperation = 'source-over';
+
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(tilt);
+  ctx.drawImage(buf, -w / 2, -h / 2, w, h);
+  ctx.restore();
+}
+
 function drawHUD(ctx, W, H, o) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   const fs = Math.max(14, Math.round(H / 34));
@@ -1429,13 +1503,15 @@ function drawHUD(ctx, W, H, o) {
     // value column matches "time", "best", "burgers" (all 8 monospace chars)
     const hx = 14 + ctx.measureText('burgers ').width;
     ctx.fillText('lives', 14, iy + (ih - fs) / 2);
+    const t = o.t || 0;
     for (let i = 0; i < o.lives; i++) {
       if (img && img.complete && img.naturalWidth > 0) {
         const iw = ih * img.naturalWidth / img.naturalHeight;
-        ctx.drawImage(img, hx + i * (iw + 8), iy, iw, ih);
+        drawLifeHead(ctx, img, hx + i * (iw + 8), iy, iw, ih, t, i);
       } else {
+        const bob = Math.sin(t * 1.5 + i * 1.7) * ih * 0.10;
         ctx.beginPath();
-        ctx.arc(hx + i * (ih * 0.8 + 8) + ih * 0.4, iy + ih / 2, ih * 0.4, 0, Math.PI * 2);
+        ctx.arc(hx + i * (ih * 0.8 + 8) + ih * 0.4, iy + ih / 2 + bob, ih * 0.4, 0, Math.PI * 2);
         ctx.fill();
       }
     }
