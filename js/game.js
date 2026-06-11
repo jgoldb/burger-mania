@@ -19,7 +19,8 @@
   let state = 'loading';
   let bike = null, time = 0, burgers = [], headBody = null;
   let currentTrack = null, levelIndex = 0;
-  let lives = 3, continues = 3, checkpointIndex = 0;
+  const MAX_CONTINUES = 2;
+  let lives = 3, continues = MAX_CONTINUES, checkpointIndex = 0;
   let level = prepareLevel(LEVELS[0]);
   let bestKey = 'burger-mania-best-' + level.name;
   let best = parseFloat(localStorage.getItem(bestKey) || '');
@@ -181,7 +182,7 @@
   function startGame(track) {
     currentTrack = track;
     lives = 3;
-    continues = 3;
+    continues = MAX_CONTINUES;
     checkpointIndex = 0;
     enterLevel(0);
     state = 'ready';
@@ -248,7 +249,7 @@
     if (!currentTrack) {
       currentTrack = track;
       lives = 3;
-      continues = 3;
+      continues = MAX_CONTINUES;
     }
     const target = track.levels.length - 1;
     // skipping counts as having beaten everything before the target, so a
