@@ -106,6 +106,55 @@ const LEVELS = [
     ],
     goal: [100, 5.75],
   },
+  {
+    // Easy #4: introduces a solid island — a giant patty floating over a
+    // valley. Hit the launch ramp with speed to land on top (a burger
+    // waits there); undershooting drops you into the valley, which is
+    // rideable under the patty and out the far side. Restart with Enter
+    // if you miss the burger up top.
+    name: 'Patty Bridge',
+    polygons: [
+      [
+        // ceiling, left to right
+        [-5, -8], [110, -8],
+        // right wall
+        [110, 6.3],
+        // floor, right to left
+        [105, 6.3], [92, 6.3], [84, 6.3], // goal shelf
+        [78, 8.6], [73, 8.6],             // last valley
+        [68, 5.8], [64, 5.8],             // crest plateau
+        [59, 8], [54, 8],                 // landing flat past the mesa
+        [48, 11],                         // climb out of the valley
+        [36, 11],                         // valley floor under the patty
+        [32.4, 9.4],                      // runout slope catches slow droppers
+        [33, 7.2],                        // launch lip, undercut like a ski
+                                          // jump so fallers tumble clear of it
+        [28, 9.5], [20, 9.5],             // run-up flat
+        [16, 7], [12, 7],                 // warmup hill plateau
+        [8, 8], [0, 8],
+        // left wall
+        [-5, 8],
+      ],
+      // the patty itself: solid island, grass grows on its top. The left
+      // face recedes as it rises so an undershooting jumper hits it
+      // wheels-first and deflects down into the valley instead of
+      // head-first into an overhang.
+      [
+        [36.6, 7.6], [48, 7.6],
+        [48.5, 8.6], [35.8, 8.6],
+      ],
+    ],
+    start: { x: 2.5, y: 7.25 },
+    burgers: [
+      [14, 6.3],
+      [25, 8.8],
+      [33, 6.45],  // on the launch lip, in the jump path
+      [42, 6.85],  // on top of the patty
+      [66, 5.1],
+      [75.5, 7.85],
+    ],
+    goal: [100, 5.55],
+  },
 ];
 
 // Difficulty tracks, Super-Monkey-Ball style: each difficulty is a fixed
@@ -113,7 +162,7 @@ const LEVELS = [
 // series; `levels` holds the maps that exist so far. A track with no
 // levels yet shows up disabled on the difficulty screen.
 const TRACKS = [
-  { id: 'easy',   label: 'Easy',   color: '#9be08a', length: 10, levels: [LEVELS[0], LEVELS[1], LEVELS[2]] },
+  { id: 'easy',   label: 'Easy',   color: '#9be08a', length: 10, levels: [LEVELS[0], LEVELS[1], LEVELS[2], LEVELS[3]] },
   { id: 'medium', label: 'Medium', color: '#f9c623', length: 20, levels: [] },
   { id: 'hard',   label: 'Hard',   color: '#ff6038', length: 30, levels: [] },
 ];
