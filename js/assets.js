@@ -5,8 +5,8 @@
 // and read them from IMAGES by key.
 const ASSET_MANIFEST = {
   images: {
-    biker: 'assets/biker.png',
-    astro: 'assets/astro.png',
+    biker: 'assets/biker.webp',
+    astro: 'assets/astro.webp',
   },
 };
 
