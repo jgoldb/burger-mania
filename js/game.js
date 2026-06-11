@@ -83,7 +83,24 @@
       gain.connect(AC.destination);
       osc.start();
       engineSnd = { osc, gain };
+      MUSIC.init(AC);
     } catch (e) { /* no audio available */ }
+  }
+
+  // picks the soundtrack for the current screen: the menu and difficulty
+  // screens share the title theme, the continue screen mourns on its own,
+  // and every in-game state plays the current world's song (a name MUSIC
+  // doesn't know, like the silent loading/intro screens' null, fades out)
+  function updateMusic() {
+    let want = null;
+    if (state === 'menu' || state === 'difficulty') want = 'menu';
+    else if (state === 'continue') want = 'continue';
+    else if (state === 'ready' || state === 'playing' || state === 'dead' ||
+             state === 'finished' || state === 'paused') {
+      want = level.theme;
+    }
+    MUSIC.play(want);
+    MUSIC.duck(state === 'paused');
   }
 
   function updateEngineSound() {
@@ -111,8 +128,9 @@
     o.stop(AC.currentTime + dur);
   }
 
-  // filtered noise burst for the title letters whipping past
-  function whoosh(dur, freq) {
+  // filtered noise burst for the title letters whipping past and the
+  // bike whipping around
+  function whoosh(dur, freq, gain = 0.35) {
     if (!AC || muted) return;
     const n = Math.floor(AC.sampleRate * dur);
     const buf = AC.createBuffer(1, n, AC.sampleRate);
@@ -125,7 +143,7 @@
     f.frequency.value = freq;
     f.Q.value = 1.4;
     const g = AC.createGain();
-    g.gain.value = 0.35;
+    g.gain.value = gain;
     src.connect(f);
     f.connect(g);
     g.connect(AC.destination);
@@ -322,6 +340,7 @@
     if (AC && AC.state === 'suspended') AC.resume();
     if (e.key === 'm' || e.key === 'M') {
       muted = !muted;
+      MUSIC.setMuted(muted);
       return;
     }
     if (state !== 'loading' && checkCheat(e.key)) return;
@@ -570,7 +589,10 @@
       } else if (state === 'continue') {
         contT += FDT;
       } else if (state === 'playing') {
-        if (flipQueued) bike.flip();
+        if (flipQueued) {
+          bike.flip();
+          whoosh(0.14, 950, 0.22);
+        }
         const input = {
           throttle: keys.up, brake: keys.down,
           left: keys.left, right: keys.right,
@@ -597,6 +619,7 @@
     updateHover();
     draw();
     updateEngineSound();
+    updateMusic();
     requestAnimationFrame(frame);
   }
 

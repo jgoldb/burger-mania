@@ -35,14 +35,20 @@ Your best time is saved locally per level.
 - `js/render.js` — canvas renderer: procedural ground/sky texture patterns
   (one themed set per visual world, see `THEMES`), turf fringes on up-facing
   edges, the bike + rider, the animated burgers and popcorn-bucket goal, HUD.
-- `js/game.js` — game loop, input, camera, WebAudio engine sound, state
-  machine (title / playing / dead / finished).
+- `js/music.js` — procedural chiptune soundtrack: step-sequenced pattern
+  strings played on the shared AudioContext. One looping song per visual
+  world, plus a title theme (menu + difficulty screens) and a continue-screen
+  theme; screen changes crossfade.
+- `js/game.js` — game loop, input, camera, WebAudio engine sound + effects,
+  state machine (title / playing / dead / finished), picks the soundtrack
+  for the current screen.
 
 ## Tests
 
 ```
 node test/test_physics.js   # settle, drive, brake, lean, flip sanity checks
 node test/drive_long.js     # verifies the course is completable
+node test/music_check.js    # soundtrack data: pitches, loops, theme coverage
 ```
 
 ## Adding levels
@@ -51,3 +57,5 @@ Append an entry to `LEVELS` in `js/levels.js`: a polygon vertex list
 (y grows downward), a `start` position, `burgers` coordinates, a
 `goal` position (the popcorn bucket), and a `theme` (a key of `THEMES`
 in `js/render.js` — every 5-map block between checkpoints shares one).
+A new theme also wants a song under the same name in `js/music.js`, or
+its maps ride in silence (`node test/music_check.js` catches this).
