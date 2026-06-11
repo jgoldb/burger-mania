@@ -1,1 +1,4 @@
 .idea/
+
+# Throwaway physics-probe harnesses (see headless test convention)
+_scratch_*
