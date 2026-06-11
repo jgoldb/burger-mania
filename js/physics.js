@@ -48,7 +48,11 @@ const PHYS = {
 
   voltT: 28,      // peak torque of one rider thrust ("volt")
   voltDur: 0.2,   // thrust duration: torque follows a half-sine burst
-  voltEvery: 0.85, // interval between thrusts while a lean key is held
+  voltEvery: 0.55, // interval between thrusts while a lean key is held:
+                   // short enough that grounded re-volts catch the bike
+                   // still tilted from the last one, so holding a lean key
+                   // ratchets it past the balance point and all the way
+                   // over (~2s from static; >=0.65 never tips)
   voltRate: 4.0,  // rad/s spin rate a thrust saturates toward
   voltStack: 1.0,  // strength gain per consecutive same-direction air volt
   voltStackMax: 3, // air volts stop compounding past this many stacks

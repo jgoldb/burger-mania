@@ -303,7 +303,12 @@ const LEVELS = [
         // jump at any speed (or a timid roll-off) meets ground that falls
         // away with the arc instead of slamming it flat
         [71, 16.0], [68, 14.5],
-        [65, 12.9],                         // sill at the top of the slope
+        [66, 13.43],                        // crest blend: the 28-degree
+        [64, 12.9],                         // face rounds off through ~15
+                                            // degrees onto the sill, so a
+                                            // climb back out of the bowl
+                                            // crests instead of bucking
+                                            // off a single sharp kink
         [61, 12.95], [58, 13.1],            // gallery mouth floor
         [54, 12.3], [51, 12.3],             // mound pinched under the ceiling
         [47, 13.8], [44, 14.2], [41, 13.8], // dip under the basalt fang
