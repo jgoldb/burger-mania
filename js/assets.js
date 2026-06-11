@@ -6,6 +6,7 @@
 const ASSET_MANIFEST = {
   images: {
     biker: 'assets/biker.png',
+    astro: 'assets/astro.png',
   },
 };
 

@@ -366,8 +366,14 @@
         if (e.key === 'Escape') { goMenu(); return; }
         if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
           const d = e.key === 'ArrowUp' ? -1 : 1;
-          diffSel = (diffSel + d + TRACKS.length) % TRACKS.length;
-          blip(520, 0.05);
+          // step to the next enabled track, skipping any that are disabled;
+          // if Easy is the only one unlocked, this stays put on it
+          let next = diffSel;
+          for (let k = 0; k < TRACKS.length; k++) {
+            next = (next + d + TRACKS.length) % TRACKS.length;
+            if (TRACKS[next].levels.length) break;
+          }
+          if (next !== diffSel) { diffSel = next; blip(520, 0.05); }
         } else if (e.key === 'Enter' || e.key === ' ') {
           activateDifficulty(diffSel);
         }
@@ -462,7 +468,7 @@
       menuSel = hoverIdx;
       activateMenu(hoverIdx);
     } else if (state === 'difficulty') {
-      diffSel = hoverIdx;
+      if (TRACKS[hoverIdx].levels.length) diffSel = hoverIdx;
       activateDifficulty(hoverIdx);
     } else if (state === 'continue') {
       contSel = hoverIdx;
@@ -631,7 +637,7 @@
       return;
     }
     if (state === 'intro' || state === 'menu') {
-      drawMenuBackdrop(ctx, W, H, rt, patterns.meadow);
+      drawMenuBackdrop(ctx, W, H, rt, patterns.meadow, true);
       drawTitleLetters(ctx, W, H, introT);
       if (state === 'menu') {
         drawMenu(ctx, W, H, Math.min(1, menuT / 0.6), menuItems, menuSel, hoverIdx);

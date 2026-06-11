@@ -913,9 +913,119 @@ function drawTitleLetters(ctx, W, H, t) {
   ctx.restore();
 }
 
+// 0..1 openness of the homage bubble along the ascent (q is 0..1 progress):
+// it pops open a little before the midpoint, holds for ~2s, then tucks
+// closed again well before the sprite slips off the top of the screen
+function astroBubbleOpenness(q) {
+  const o0 = 0.34, o1 = 0.43, c0 = 0.62, c1 = 0.70;
+  if (q <= o0 || q >= c1) return 0;
+  if (q < o1) return easeOutBack((q - o0) / (o1 - o0));
+  if (q < c0) return 1;
+  return 1 - (q - c0) / (c1 - c0);
+}
+
+// the little comic speech bubble the astronaut blurts out; it grows open
+// from anchorY (the top of the sprite, in the sprite's local frame) by
+// openness op (0..1), staying upright while the sprite itself tumbles
+function astroBubble(ctx, anchorY, op, unit) {
+  const text = "It's an homage";
+  const fs = unit * 0.42;
+  ctx.save();
+  ctx.font = `700 ${fs}px "Comic Sans MS","Trebuchet MS",sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const tw = ctx.measureText(text).width;
+  const padX = fs * 0.6, padY = fs * 0.45;
+  const bw = tw + padX * 2, bh = fs + padY * 2;
+  const tail = unit * 0.5, baseW = unit * 0.28, gap = unit * 0.12;
+
+  // grow out of the sprite's top: scale the whole bubble up from the tail tip
+  ctx.translate(0, anchorY - gap);
+  ctx.scale(op, op);
+  const boxBottom = -tail, by = -(tail + bh), bx = -bw / 2;
+
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = Math.max(fs * 0.09, 0.02);
+  ctx.strokeStyle = 'rgba(40,28,16,0.9)';
+  ctx.fillStyle = 'rgba(255,255,255,0.96)';
+
+  // tail first, then the rounded box laid over its base for a clean join
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(-baseW / 2, boxBottom);
+  ctx.lineTo(baseW / 2, boxBottom);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  roundRectPath(ctx, bx, by, bw, bh, fs * 0.55);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = 'rgba(35,25,15,0.96)';
+  ctx.fillText(text, 0, by + bh / 2);
+  ctx.restore();
+}
+
+// Every so often a tiny astronaut drifts up from behind the hills, tumbling
+// as it climbs into the sky and off the top of the screen. Halfway up it
+// pops a little speech bubble — "It's an homage" — then tucks it away again
+// before it leaves. Drawn deep in the backdrop (behind the hills and haze)
+// so it reads as far off in the distance. Menu only — not the continue
+// screen, which shares this same world.
+function drawMenuAstro(ctx, w, h, t) {
+  const P = 26;          // one ascent roughly every P seconds
+  const FLY = 11;        // seconds a single ascent lasts
+  const lt = t % P;
+  if (lt > FLY) return;  // resting between ascents
+  const q = lt / FLY;    // 0..1 progress along the path
+  const cyc = Math.floor(t / P);
+
+  // per-ascent randomness, stable across frames within one ascent
+  const r1 = srand(cyc * 1.7 + 0.3);
+  const r2 = srand(cyc * 2.9 + 1.1);
+  const r3 = srand(cyc * 4.3 + 2.7);
+  const r4 = srand(cyc * 6.7 + 4.5);
+
+  // path: climb from the horizon up past the top of the screen, with a slow
+  // sideways drift and a gentle wander so no two ascents trace the same line
+  const gy = h * 0.84;
+  const x = w * (0.18 + r1 * 0.64) + (r2 - 0.5) * w * 0.6 * q
+            + Math.sin(q * 3.2 + r3 * 6.283) * w * 0.05;
+  const y = gy - (gy + h * 0.22) * Math.pow(q, 0.9);
+
+  // small and shrinking as it recedes; spins either way by a random amount
+  const size = (0.65 + r4 * 0.4) * (1 - 0.3 * q);
+  const spin = (0.25 + r3 * 1.1) * (r2 < 0.5 ? -1 : 1);
+
+  ctx.save();
+  ctx.translate(x, y);
+
+  ctx.save();
+  ctx.rotate(spin * lt);
+  const img = IMAGES.astro;
+  if (img && img.complete && img.naturalWidth > 0) {
+    const ih = size, iw = ih * img.naturalWidth / img.naturalHeight;
+    ctx.globalAlpha = 0.92;
+    ctx.drawImage(img, -iw / 2, -ih / 2, iw, ih);
+  } else {
+    ctx.fillStyle = 'rgba(232,238,248,0.9)';
+    ctx.beginPath();
+    ctx.arc(0, 0, size * 0.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  const op = astroBubbleOpenness(q);
+  if (op > 0.001) astroBubble(ctx, -size * 0.5, op, Math.max(size, h * 0.05));
+  ctx.restore();
+}
+
 // animated scene behind the intro and menu: drifting clouds, tumbling
-// burgers, a grassy floor, and the popcorn bucket waiting on the right
-function drawMenuBackdrop(ctx, W, H, t, pat) {
+// burgers, a grassy floor, and the popcorn bucket waiting on the right.
+// showAstro adds the rising-astronaut gag (menu only, never the continue
+// screen)
+function drawMenuBackdrop(ctx, W, H, t, pat, showAstro) {
   const Z = Math.min(W / 26, H / 13.5);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.save();
@@ -925,6 +1035,9 @@ function drawMenuBackdrop(ctx, W, H, t, pat) {
   const gy = h * 0.84;
   ctx.fillStyle = skyGradient(ctx, pat, 0, gy);
   ctx.fillRect(0, 0, w, h);
+
+  // far in the distance, behind the hills, the occasional rising astronaut
+  if (showAstro) drawMenuAstro(ctx, w, h, t);
 
   // distant hills panning slowly past, then the drifting cloud layer
   const pan = t * 1.2;
@@ -1017,15 +1130,6 @@ function drawMenu(ctx, W, H, alpha, items, sel, hover) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   const rects = menuRects(W, H, items.length, H * 0.58);
   drawButtons(ctx, rects, items, sel, hover, alpha);
-  const last = rects[rects.length - 1];
-  ctx.save();
-  ctx.globalAlpha = alpha;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillStyle = 'rgba(40,20,8,0.85)';
-  ctx.font = '15px "Consolas","Courier New",monospace';
-  ctx.fillText('Arrow keys + Enter, or click', W / 2, last.y + last.h + 34);
-  ctx.restore();
 }
 
 function drawDifficulty(ctx, W, H, alpha, tracks, sel, hover) {

@@ -30,7 +30,10 @@
 
   loadAssets().then(() => {
   if (ui === 'menu') {
-    drawMenuBackdrop(ctx, W, H, 2.0, menuPat);
+    // ?t= scrubs the backdrop clock; default lands mid-astro so the
+    // rising-astronaut gag and its speech bubble show in the still
+    const t = params.get('t') ? parseFloat(params.get('t')) : 5.7;
+    drawMenuBackdrop(ctx, W, H, t, menuPat, true);
     drawTitleLetters(ctx, W, H, 10);
     drawMenu(ctx, W, H, 1, ['Play'], 0, -1);
   } else if (ui === 'difficulty') {
