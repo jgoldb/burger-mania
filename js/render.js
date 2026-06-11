@@ -840,6 +840,94 @@ function drawPause(ctx, W, H, items, sel, hover) {
   drawButtons(ctx, rects, items, sel, hover, 1);
 }
 
+// ---------- minimap ----------
+
+function levelBounds(level) {
+  if (level._bounds) return level._bounds;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const poly of level.polygons) {
+    for (const [x, y] of poly) {
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+  }
+  level._bounds = { minX, minY, maxX, maxY };
+  return level._bounds;
+}
+
+// Corner map in the top-right: a fixed-size window of world space that
+// follows the rider, so the scale stays readable no matter how large the
+// map is. Shows the terrain silhouette with dots for pickups, the goal,
+// and the rider.
+const MAP_VIEW = { w: 64, h: 30 }; // world units the window always covers
+
+function drawMinimap(ctx, W, H, level, o) {
+  const b = levelBounds(level);
+  const pad = 1; // world units of breathing room at the level edges
+  const s = Math.min(Math.min(W * 0.32, 320) / MAP_VIEW.w,
+                     Math.min(H * 0.26, 150) / MAP_VIEW.h);
+  const mw = MAP_VIEW.w * s, mh = MAP_VIEW.h * s;
+  const mx = W - mw - 14, my = 12;
+
+  // window origin: centered on the rider, clamped to the level bounds;
+  // a level smaller than the window sits centered inside it instead
+  const win = (c, lo, hi, span) => hi - lo <= span
+    ? (lo + hi - span) / 2
+    : Math.max(lo, Math.min(hi - span, c - span / 2));
+  const wx = win(o.pos.x, b.minX - pad, b.maxX + pad, MAP_VIEW.w);
+  const wy = win(o.pos.y, b.minY - pad, b.maxY + pad, MAP_VIEW.h);
+  const tx = x => mx + (x - wx) * s;
+  const ty = y => my + (y - wy) * s;
+
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 0.88;
+
+  roundRectPath(ctx, mx - 3, my - 3, mw + 6, mh + 6, 6);
+  ctx.fillStyle = 'rgba(20,12,6,0.82)';
+  ctx.fill();
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = 'rgba(249,198,35,0.45)';
+  ctx.stroke();
+
+  roundRectPath(ctx, mx, my, mw, mh, 4);
+  ctx.clip();
+
+  // ground everywhere, then carve out the playable sky
+  ctx.fillStyle = '#6b4a24';
+  ctx.fillRect(mx, my, mw, mh);
+  ctx.beginPath();
+  for (const poly of level.polygons) {
+    ctx.moveTo(tx(poly[0][0]), ty(poly[0][1]));
+    for (let i = 1; i < poly.length; i++) ctx.lineTo(tx(poly[i][0]), ty(poly[i][1]));
+    ctx.closePath();
+  }
+  ctx.fillStyle = '#a7c4de';
+  ctx.fill('evenodd');
+
+  const dot = (x, y, r, fill) => {
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fillStyle = fill;
+    ctx.fill();
+  };
+
+  for (const bu of o.burgers) {
+    if (!bu.got) dot(tx(bu.x), ty(bu.y), 2.2, '#f9c623');
+  }
+  dot(tx(o.goal[0]), ty(o.goal[1]), 2.6, '#c8202a');
+
+  // rider: white dot with a soft pulse so it reads at a glance
+  const px = tx(o.pos.x), py = ty(o.pos.y);
+  const pulse = 2.6 + Math.sin(o.t * 6) * 0.5;
+  dot(px, py, pulse + 1.4, 'rgba(255,255,255,0.35)');
+  dot(px, py, pulse, '#ffffff');
+
+  ctx.restore();
+}
+
 function drawHUD(ctx, W, H, o) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   const fs = Math.max(14, Math.round(H / 34));

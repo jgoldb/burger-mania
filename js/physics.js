@@ -2,7 +2,7 @@
 
 // Tuning constants for the bike. Units: meters, seconds, radians.
 const PHYS = {
-  g: 8,
+  g: 7,
 
   wheelR: 0.4,
   wheelM: 0.22,
@@ -11,19 +11,26 @@ const PHYS = {
   frameM: 1.0,
   frameI: 0.35,
 
-  springK: 110,
-  springC: 6.0,
+  springK: 100,
+  springC: 5.0,
   maxStretch: 0.4,
+  spinExt: 0.022,   // anchor extension (m) per (rad/s)^2 of frame spin
+  spinExtMax: 0.28, // cap on the spin-driven extension
 
-  engineT: 1.2,    // torque applied to the driven (rear) wheel
-  engineR: 7.0,    // reaction torque on the frame while the engine spins up
+  engineT: 1.4,    // torque applied to the driven (rear) wheel
+  engineR: 8.5,    // reaction torque on the frame while the engine spins up
   wheelieRate: 0.5, // rad/s pitch-back rate the engine reaction saturates at
   maxSpin: 55,     // rad/s cap on driven wheel spin
   brakeRate: 20,   // exponential lock rate for both wheels
   brakeR: 0.32,    // fraction of brake torque reacted onto the frame
   brakeSkid: 2.0,  // skid friction torque multiplier passed to the frame
 
-  leanT: 5.5,      // "volt" torque applied to the frame
+  voltT: 14,      // peak torque of one rider thrust ("volt")
+  voltDur: 0.2,   // thrust duration: torque follows a half-sine burst
+  voltEvery: 0.85, // interval between thrusts while a lean key is held
+  voltRate: 4.0,  // rad/s spin rate a thrust saturates toward
+  voltStack: 1.0,  // strength gain per consecutive same-direction air volt
+  voltStackMax: 3, // air volts stop compounding past this many stacks
 
   mu: 0.95,        // tire friction coefficient
   rollRes: 9,      // rolling resistance (spin decel, rad/s^2, on contact)
@@ -88,6 +95,12 @@ class Bike {
     this.avel = 0;
     this.facing = 1; // 1 = right, -1 = left
     this.turnT = 9;  // seconds since last turn-around (drives the flip animation)
+    this.voltCd = 0;  // time until the next volt may start
+    this.voltAge = 9; // time since the current volt began (>= voltDur = idle)
+    this.voltDir = 0;
+    this.voltCombo = 0;     // consecutive same-direction airborne volts
+    this.voltWasAir = false; // last volt fired while fully airborne
+    this.voltBoost = 1;     // strength multiplier locked in at volt start
     this.dead = false;
     this.wheels = [];
     for (const sx of [-1, 1]) {
@@ -124,12 +137,45 @@ class Bike {
     const c = Math.cos(this.angle), s = Math.sin(this.angle);
 
     let fx = 0, fy = P.frameM * P.g, torque = 0;
-    if (input.left) torque -= P.leanT;
-    if (input.right) torque += P.leanT;
+    // lean ("volt") control: the rider throws his weight in one big thrust,
+    // Elasto Mania style — at most one per voltEvery, same strength on the
+    // ground and in the air, re-volting on the interval while a key is held.
+    // Torque follows a half-sine burst so the rotation winds up smoothly,
+    // and it fades as the spin rate approaches voltRate, so repeated volts
+    // top the spin back up to a ceiling instead of winding it up forever
+    this.voltCd -= dt;
+    const lean = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+    const air = !this.wheels.some(w => w.onGround);
+    if (!air) { this.voltCombo = 0; this.voltWasAir = false; }
+    if (lean !== 0 && this.voltCd <= 0) {
+      // consecutive same-direction volts in the air compound: each one
+      // boosts both the thrust and the spin ceiling it saturates toward,
+      // so a few stacked thrusts wind up a fast spin. Ground contact or
+      // a direction change resets the stack
+      this.voltCombo = air && this.voltWasAir && lean === this.voltDir
+        ? Math.min(P.voltStackMax, this.voltCombo + 1) : 0;
+      this.voltBoost = 1 + P.voltStack * this.voltCombo;
+      this.voltWasAir = air;
+      this.voltCd = P.voltEvery;
+      this.voltAge = 0;
+      this.voltDir = lean;
+    }
+    if (this.voltAge < P.voltDur) {
+      const env = Math.sin(Math.PI * this.voltAge / P.voltDur);
+      const sat = Math.min(1, Math.max(0,
+        1 - this.voltDir * this.avel / (P.voltRate * this.voltBoost)));
+      torque += this.voltDir * P.voltT * this.voltBoost * env * sat;
+      this.voltAge += dt;
+    }
 
+    // fast spins sling the wheels outward: the spring's rest anchor extends
+    // radially with the square of the spin rate, like elastic bars. The
+    // maxStretch clamp below still bounds total travel from the raw anchor
+    const sling = 1 + Math.min(P.spinExtMax, P.spinExt * this.avel * this.avel) /
+      Math.hypot(P.anchorX, P.anchorY);
     for (let i = 0; i < 2; i++) {
       const w = this.wheels[i];
-      const lx = (i === 0 ? -1 : 1) * P.anchorX, ly = P.anchorY;
+      const lx = (i === 0 ? -1 : 1) * P.anchorX * sling, ly = P.anchorY * sling;
       const ax = this.pos.x + lx * c - ly * s;
       const ay = this.pos.y + lx * s + ly * c;
       const rx = ax - this.pos.x, ry = ay - this.pos.y;

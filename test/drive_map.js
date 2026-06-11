@@ -35,10 +35,28 @@ for (let i = 0; i < 480 * 40; i++) {
   // predicted pitch: lead with the pitch rate so crest kinks at full
   // throttle don't carry the bike over backward before the cut kicks in
   const pred = b.angle - travel + 0.3 * b.avel;
+  // volts are big one-per-second thrusts now, so save them for real
+  // trouble and let the throttle cut handle routine wheelie trim. The
+  // low-speed throttle override only applies on the ground: gassing in
+  // mid-air pitches the bike backward (engine reaction) with no volt
+  // available to counter it until the cooldown runs out
+  const grounded = b.wheels[0].onGround || b.wheels[1].onGround;
+  // coast when an uncollected burger sits below the line just ahead, so a
+  // fast approach doesn't sail clean over a dip pickup
+  const dipAhead = burgers.some(bg => !bg.got &&
+    bg.x - b.pos.x > 0 && bg.x - b.pos.x < 8 && bg.y - b.pos.y > 0.5);
   const input = {
-    throttle: pred > -0.45 || sp < 3.5,
-    right: pred < -0.25,
-    left: pred > 0.3,
+    // the low-speed override never gasses past a deep wheelie: with volts
+    // a second apart, engine reaction past the balance point is fatal
+    throttle: (pred > -0.45 || (sp < 3.5 && grounded && pred > -0.85)) &&
+      (!dipAhead || sp < 2.5),
+    // in the air only volt nose-down for severe pitch: rear-first landings
+    // are safe, and a strong volt at mild pitch over-rotates into a
+    // momentum-killing nose-dive
+    right: pred < (grounded ? -0.55 : -1.1),
+    // be reluctant to volt the nose up: suspension absorbs nose-down
+    // landings, while an over-rotated nose-up landing is head-first
+    left: pred > 1.0,
   };
   b.step(dt, input, level.segments);
   if (b.dead) { console.log('died t=' + (i * dt).toFixed(2) + ' x=' + b.pos.x.toFixed(2)); break; }

@@ -25,6 +25,8 @@
   let best = parseFloat(localStorage.getItem(bestKey) || '');
   if (!isFinite(best)) best = null;
   let cam = { x: level.start.x, y: level.start.y };
+  const CAM_LEAD = 4.2; // how far the view centers ahead of the bike's facing
+  let camLead = CAM_LEAD; // smoothed, so turning around pans rather than snaps
   let flipQueued = false;
   const keys = { up: false, down: false, left: false, right: false };
 
@@ -47,7 +49,8 @@
     time = 0;
     burgers = level.burgers.map(b => ({ x: b[0], y: b[1], got: false }));
     headBody = null;
-    cam.x = level.start.x;
+    camLead = bike.facing * CAM_LEAD;
+    cam.x = level.start.x + camLead;
     cam.y = level.start.y;
   }
   reset();
@@ -152,11 +155,8 @@
   }
 
   // ---------- screen flow ----------
-  // enters track level i, recording a checkpoint at every 5th map; the
-  // next-map advance will call this too once tracks are stranded together
   function enterLevel(i) {
     levelIndex = i;
-    if (i % 5 === 0) checkpointIndex = i;
     loadLevel(currentTrack.levels[i]);
   }
 
@@ -214,6 +214,29 @@
     state = 'paused';
     pauseSel = 0;
     keys.up = keys.down = keys.left = keys.right = false;
+  }
+
+  // dev cheat: typing "skip" jumps to the latest level in the track,
+  // starting the first playable track if none is active
+  const CHEAT_SKIP = 'skip';
+  let cheatBuffer = '';
+  function checkCheat(key) {
+    if (key.length !== 1) return false;
+    cheatBuffer = (cheatBuffer + key.toLowerCase()).slice(-CHEAT_SKIP.length);
+    if (cheatBuffer !== CHEAT_SKIP) return false;
+    cheatBuffer = '';
+    const track = currentTrack || TRACKS.find(t => t.levels.length);
+    if (!track) return false;
+    if (!currentTrack) {
+      currentTrack = track;
+      lives = 3;
+      continues = 3;
+      checkpointIndex = 0;
+    }
+    enterLevel(track.levels.length - 1);
+    state = 'ready';
+    blip(1320, 0.15);
+    return true;
   }
 
   function skipIntro() {
@@ -297,6 +320,7 @@
       muted = !muted;
       return;
     }
+    if (state !== 'loading' && checkCheat(e.key)) return;
 
     switch (state) {
       case 'loading':
@@ -457,6 +481,9 @@
 
   function finish() {
     state = 'finished';
+    // completing every 5th map of a track (1-5, 1-10, ...) makes it the
+    // checkpoint: a continue used later restarts from that map
+    if (currentTrack && (levelIndex + 1) % 5 === 0) checkpointIndex = levelIndex;
     if (best === null || time < best) {
       best = time;
       localStorage.setItem(bestKey, String(best));
@@ -505,7 +532,10 @@
   }
 
   function updateCamera(dt) {
-    const tx = bike.pos.x + bike.vel.x * 0.30;
+    // ease the look-ahead toward the current facing so a flip pans the
+    // view across rather than snapping it
+    camLead += (bike.facing * CAM_LEAD - camLead) * Math.min(1, 3 * dt);
+    const tx = bike.pos.x + camLead + bike.vel.x * 0.12;
     const ty = bike.pos.y + bike.vel.y * 0.12 - 0.6;
     const k = Math.min(1, 6 * dt);
     cam.x += (tx - cam.x) * k;
@@ -605,6 +635,13 @@
     drawBike(ctx, bike, !!headBody);
     if (headBody) drawHead(ctx, headBody.x, headBody.y, bike.facing, headBody.rot);
     ctx.restore();
+
+    drawMinimap(ctx, W, H, level, {
+      pos: bike.pos,
+      burgers,
+      goal: level.goal,
+      t: rt,
+    });
 
     drawHUD(ctx, W, H, {
       time,
