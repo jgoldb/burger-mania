@@ -587,9 +587,12 @@ function drawPopcorn(ctx, x, y, t) {
   for (let b = 0; b < 3; b++) {
     const ph = b * (Math.PI * 2 / 3) + t * 0.9 + 0.8;
     const c = Math.cos(ph);
-    if (c <= 0.05) continue;
+    if (c <= 0.02) continue;
+    // fade and thin out near the silhouette instead of popping
+    const edge = Math.min(1, (c - 0.02) / 0.33);
+    ctx.globalAlpha = edge * edge * (3 - 2 * edge);
     const len = 0.24 + b * 0.05 + Math.sin(t * 0.6 + b * 2.1) * 0.05;
-    const bw = 0.034 * (0.4 + 0.6 * c);
+    const bw = 0.034 * (0.15 + 0.85 * c);
     // streaks slant inward with the bucket wall as they run down
     const bx = Math.sin(ph) * topW;
     const tipX = Math.sin(ph) * (topW + (botW - topW) * len / (botY - topY));
@@ -608,6 +611,7 @@ function drawPopcorn(ctx, x, y, t) {
     ctx.ellipse(tipX, topY + len, bw * 0.5, bw * 0.5, 0, 0, Math.PI * 2);
     ctx.fill();
   }
+  ctx.globalAlpha = 1;
 
   // a couple of dropped puffs beside the bucket
   drawKernel(ctx, -0.36, 0.52, 0.06, 7.1);

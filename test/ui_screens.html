@@ -61,9 +61,11 @@
     ctx.restore();
   } else if (ui === 'sprites') {
     // burger and popcorn close-ups at several animation times
+    // (override the sample times with ?ts=0.1,0.5,...)
     ctx.fillStyle = '#9ad0ee';
     ctx.fillRect(0, 0, W, H);
-    const ts = [0.0, 0.7, 1.4, 2.1];
+    const ts = params.get('ts')
+      ? params.get('ts').split(',').map(Number) : [0.0, 0.7, 1.4, 2.1];
     const cw = W / ts.length;
     for (let i = 0; i < ts.length; i++) {
       ctx.save();
