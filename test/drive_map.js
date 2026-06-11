@@ -28,15 +28,30 @@ let reachedGoal = null;
 // direction of travel (clamped, so steep falls don't read as slopes):
 // on a steep climb the slope itself pitches the bike back, and that is
 // not a wheelie. Below walking pace the throttle always stays on.
+// Switchback maps ride both ways: the next objective (first uncollected
+// burger in authored order, then the goal) steers the travel direction
+// m, and all pitch/volt/brake judgements happen in a frame mirrored by
+// m so the same rules work riding left.
 let airT = 0, settle = 0;
-let lastX = -1e9, stuckT = 0, crawl = false;
-for (let i = 0; i < 480 * 40; i++) {
+let prog = -1e9, stuckT = 0, crawl = false;
+let m = 1; // desired travel direction: +1 right, -1 left
+for (let i = 0; i < 480 * 60; i++) {
+  // flip only on a decisive reversal, so a burger passing underfoot
+  // doesn't flap the heading
+  const next = burgers.find(bg => !bg.got);
+  const tx = next ? next.x : level.goal[0];
+  if ((tx - b.pos.x) * m < -1.2) {
+    m = -m;
+    prog = b.pos.x * m; stuckT = 0; crawl = false;
+  }
+  if (b.facing !== m) b.flip();
   const sp = Math.hypot(b.vel.x, b.vel.y);
-  let travel = b.vel.x > 1 ? Math.atan2(b.vel.y, b.vel.x) : 0;
+  const vm = b.vel.x * m;
+  let travel = vm > 1 ? Math.atan2(b.vel.y, vm) : 0;
   travel = Math.max(-0.6, Math.min(0.2, travel));
   // predicted pitch: lead with the pitch rate so crest kinks at full
   // throttle don't carry the bike over backward before the cut kicks in
-  const pred = b.angle - travel + 0.3 * b.avel;
+  const pred = m * b.angle - travel + 0.3 * m * b.avel;
   // volts are big one-per-second thrusts now, so save them for real
   // trouble and let the throttle cut handle routine wheelie trim. The
   // low-speed throttle override only applies on the ground: gassing in
@@ -54,13 +69,27 @@ for (let i = 0; i < 480 * 40; i++) {
   // them: when progress stalls (bounced back off a wall), switch to a
   // slow crawl until it grinds over — wheel slip friction climbs grades
   // that a fast bounce never will
-  if (b.pos.x > lastX + 0.5) { lastX = b.pos.x; stuckT = 0; crawl = false; }
+  if (b.pos.x * m > prog + 0.5) { prog = b.pos.x * m; stuckT = 0; crawl = false; }
   else stuckT += dt;
   if (stuckT > 3) crawl = true;
   // coast when an uncollected burger sits below the line just ahead, so a
   // fast approach doesn't sail clean over a dip pickup
   const dipAhead = burgers.some(bg => !bg.got &&
-    bg.x - b.pos.x > 0 && bg.x - b.pos.x < 8 && bg.y - b.pos.y > 0.5);
+    (bg.x - b.pos.x) * m > 0 && (bg.x - b.pos.x) * m < 8 && bg.y - b.pos.y > 0.5);
+  // shed speed on the ground before a dip pickup, the way a player
+  // brakes into a drop, so the arc falls onto the burger instead of
+  // sailing past it
+  const brakeNow = dipAhead && grounded && sp > 2.5;
+  // in the air only volt nose-down for severe pitch: rear-first landings
+  // are safe, and a strong volt at mild pitch over-rotates into a
+  // momentum-killing nose-dive. Never stack a nose-down volt on the
+  // brake: the brake's own stoppie torque is already pitching forward,
+  // and the pair goes over the bars (burning the volt that would have
+  // caught the tumble)
+  const noseDown = pred < (grounded ? -0.6 : -1.45) && !brakeNow;
+  // be reluctant to volt the nose up: suspension absorbs nose-down
+  // landings, while an over-rotated nose-up landing is head-first
+  const noseUp = pred > 1.15;
   const input = {
     // the low-speed override never gasses past a deep wheelie: with volts
     // a second apart, engine reaction past the balance point is fatal.
@@ -68,17 +97,10 @@ for (let i = 0; i < 480 * 40; i++) {
     // terrain they can't see landing on
     throttle: (pred > -0.45 || (sp < 3.5 && grounded && pred > -0.85)) &&
       (!dipAhead || sp < 2.5) && settle <= 0 && sp < (crawl ? 2.5 : 9),
-    // in the air only volt nose-down for severe pitch: rear-first landings
-    // are safe, and a strong volt at mild pitch over-rotates into a
-    // momentum-killing nose-dive
-    right: pred < (grounded ? -0.6 : -1.45),
-    // be reluctant to volt the nose up: suspension absorbs nose-down
-    // landings, while an over-rotated nose-up landing is head-first
-    left: pred > 1.15,
-    // shed speed on the ground before a dip pickup, the way a player
-    // brakes into a drop, so the arc falls onto the burger instead of
-    // sailing past it
-    brake: dipAhead && grounded && sp > 2.5,
+    // a nose-down volt torques toward travel, mirrored with direction
+    right: m === 1 ? noseDown : noseUp,
+    left: m === 1 ? noseUp : noseDown,
+    brake: brakeNow,
   };
   b.step(dt, input, level.segments);
   if (b.dead) { console.log('died t=' + (i * dt).toFixed(2) + ' x=' + b.pos.x.toFixed(2)); break; }

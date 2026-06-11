@@ -277,6 +277,78 @@ const LEVELS = [
     ],
     goal: [76.5, 7.65],
   },
+  {
+    // Easy #7: introduces the turn-around (Space flips the bike) with a
+    // two-storey switchback, Elasto Mania style. Ride right across the
+    // rim — rollers, a cinder plateau, the 28-degree climb to the high
+    // rim, then stair-steps down to a diving-board lip — and drop into
+    // the shaft at the far end. A dished bowl with a quarter-pipe far
+    // wall collects every landing speed and rolls it back leftward;
+    // flip there and ride back left through the lava gallery bored
+    // under the floor you just crossed: a mound pinched under the
+    // ceiling (keep the nose down), then a basalt fang over a dip
+    // (brake in low), out to the goal shelf directly beneath the start.
+    name: 'Scoville Switchback',
+    theme: 'volcano',
+    polygons: [
+      [
+        // ceiling: open sky over the upper storey and the drop shaft
+        [-5, -8], [81.3, -8],
+        // right wall, down to the top of the quarter-pipe
+        [81.3, 9.5],
+        // floor, right to left: the quarter-pipe sweeps into the bowl
+        [80.8, 11.8], [79.8, 14.0], [78, 15.7],
+        [75.5, 16.6], [73, 16.6],           // bowl bottom
+        // the landing slope: a long 28-degree face under the drop, so a
+        // jump at any speed (or a timid roll-off) meets ground that falls
+        // away with the arc instead of slamming it flat
+        [71, 16.0], [68, 14.5],
+        [65, 12.9],                         // sill at the top of the slope
+        [61, 12.95], [58, 13.1],            // gallery mouth floor
+        [54, 12.3], [51, 12.3],             // mound pinched under the ceiling
+        [47, 13.8], [44, 14.2], [41, 13.8], // dip under the basalt fang
+        [37, 12.4], [34, 12.4],             // ledge
+        [30, 13.9], [26, 13.9],             // low step
+        [21, 12.6], [16, 12.7],             // climb to the goal shelf
+        [8, 12.6], [0, 12.6],               // goal shelf, under the start
+        // gallery left wall, up to the gallery ceiling
+        [-5, 12.6], [-5, 9.8],
+        // gallery ceiling (the underside of the upper storey), left to right
+        [43.5, 9.8],
+        [44.6, 11.9], [45.8, 11.9],         // the basalt fang
+        [47, 9.8], [60, 9.8],
+        [64, 8.2],                          // nose face up to the lip tip
+        // upper floor, right to left: the lip kicks up like a diving board
+        [60.5, 8.6], [57, 8.6],             // step before the lip
+        [53, 7.3], [49.5, 7.3],             // upper step
+        [46, 5.9], [42.5, 5.9],             // high rim
+        [38.5, 7.8],                        // lead-in onto the rim climb
+        [36, 8.6], [32.5, 8.6],             // ash dip
+        [29, 6.1], [26, 6.1],               // cinder plateau
+        [22.5, 7.5],                        // lead-in onto the climb
+        [20, 8.3], [17, 8.3],               // dip
+        [13.5, 6.7], [10.5, 6.7],           // warmup roller
+        [8, 8], [0, 8],
+        // left wall
+        [-5, 8],
+      ],
+    ],
+    start: { x: 2.5, y: 7.25 },
+    burgers: [
+      [12, 6.0],     // warmup roller crest
+      [27.5, 5.4],   // cinder plateau
+      [44.2, 5.2],   // high rim
+      [51.2, 6.6],   // upper step
+      [63.5, 7.5],   // on the lip, in everyone's path
+      [68, 13.75],   // on the landing slope, under every arc
+      [74.5, 15.85], // bowl bottom, crossed swinging through
+      [52.5, 11.55], // on the gallery mound
+      [44.5, 13.45], // in the fang dip, kept low
+      [35.5, 11.65], // on the ledge
+      [27.5, 13.2],  // on the low step
+    ],
+    goal: [3.5, 11.85], // directly beneath the start, one storey down
+  },
 ];
 
 // Difficulty tracks, Super-Monkey-Ball style: each difficulty is a fixed
@@ -284,7 +356,7 @@ const LEVELS = [
 // series; `levels` holds the maps that exist so far. A track with no
 // levels yet shows up disabled on the difficulty screen.
 const TRACKS = [
-  { id: 'easy',   label: 'Easy',   color: '#9be08a', length: 10, levels: [LEVELS[0], LEVELS[1], LEVELS[2], LEVELS[3], LEVELS[4], LEVELS[5]] },
+  { id: 'easy',   label: 'Easy',   color: '#9be08a', length: 10, levels: [LEVELS[0], LEVELS[1], LEVELS[2], LEVELS[3], LEVELS[4], LEVELS[5], LEVELS[6]] },
   { id: 'medium', label: 'Medium', color: '#f9c623', length: 20, levels: [] },
   { id: 'hard',   label: 'Hard',   color: '#ff6038', length: 30, levels: [] },
 ];

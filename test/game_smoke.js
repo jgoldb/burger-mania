@@ -148,7 +148,7 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   if (playedNow !== 'meadow') bad('after using a continue should be meadow, got ' + playedNow);
   key('s'); key('k'); key('i'); key('p');    // cheat to the last map (volcano)
   pumpFrames(3, 1 / 60);
-  if (playedNow !== 'volcano') bad('Habanero Heights should play volcano, got ' + playedNow);
+  if (playedNow !== 'volcano') bad('last Easy map should play volcano, got ' + playedNow);
   key('ArrowUp');                            // ready -> playing
   pumpFrames(3, 1 / 60);
   keyUp('ArrowUp');
