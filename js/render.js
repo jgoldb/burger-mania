@@ -6,49 +6,80 @@ function srand(n) {
   return x - Math.floor(x);
 }
 
-function makePatterns(ctx) {
+// Visual worlds: every 5-map (checkpoint-to-checkpoint) block of a track
+// gets its own ground/sky tiles, turf colors, and minimap palette. Levels
+// pick one via their `theme` field. Tile layers are blob passes over the
+// base color: n blobs, radius in [rMin, rMax], cycling through `colors`.
+const THEMES = {
+  // sunny meadow: dirt, blue sky, green grass (Easy 1-5)
+  meadow: {
+    ground: { base: '#8c5e35', layers: [
+      { n: 240, rMin: 2, rMax: 9, colors: ['rgba(60,38,18,0.25)',
+        'rgba(140,100,55,0.30)', 'rgba(172,126,70,0.22)', 'rgba(80,50,25,0.28)'] },
+    ] },
+    sky: { base: '#aecbe6', layers: [
+      { n: 26, rMin: 8, rMax: 26, colors: ['rgba(150,185,220,0.18)',
+        'rgba(255,255,255,0.10)', 'rgba(255,255,255,0.10)'] },
+    ] },
+    turfFill: '#3f8d27', turfBlade: '#2f7a1d',
+    outline: 'rgba(40,20,5,0.5)',
+    miniGround: '#6b4a24', miniSky: '#a7c4de',
+  },
+  // charcoal grill: glowing coals under a smoky dusk, flame tufts for
+  // grass (Easy 6-10)
+  charcoal: {
+    ground: { base: '#37312d', layers: [
+      { n: 240, rMin: 2, rMax: 9, colors: ['rgba(12,10,9,0.35)',
+        'rgba(74,64,57,0.30)', 'rgba(20,16,14,0.30)', 'rgba(96,84,73,0.20)'] },
+      // embers glowing between the coals
+      { n: 60, rMin: 0.8, rMax: 2.6, colors: ['rgba(255,122,28,0.55)',
+        'rgba(255,186,64,0.40)', 'rgba(232,72,20,0.45)'] },
+    ] },
+    sky: { base: '#b85c35', layers: [
+      { n: 26, rMin: 8, rMax: 26, colors: ['rgba(58,38,40,0.20)',
+        'rgba(255,196,120,0.12)', 'rgba(58,38,40,0.16)'] },
+    ] },
+    turfFill: '#c2491b', turfBlade: '#ffb02e',
+    outline: 'rgba(255,120,30,0.35)',
+    miniGround: '#3a3330', miniSky: '#d9885a',
+  },
+};
+
+function makeTile(spec) {
   // blobs are stamped at wrapped offsets so the tiles repeat seamlessly
   const wraps = [[0, 0], [128, 0], [-128, 0], [0, 128], [0, -128]];
-
-  const g = document.createElement('canvas');
-  g.width = g.height = 128;
-  const gc = g.getContext('2d');
-  gc.fillStyle = '#8c5e35';
-  gc.fillRect(0, 0, 128, 128);
-  const dirt = ['rgba(60,38,18,0.25)', 'rgba(140,100,55,0.30)',
-                'rgba(172,126,70,0.22)', 'rgba(80,50,25,0.28)'];
-  for (let i = 0; i < 240; i++) {
-    const x = Math.random() * 128, y = Math.random() * 128;
-    const r = 2 + Math.random() * 7;
-    gc.fillStyle = dirt[i % 4];
-    for (const [ox, oy] of wraps) {
-      gc.beginPath();
-      gc.arc(x + ox, y + oy, r, 0, Math.PI * 2);
-      gc.fill();
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const cc = c.getContext('2d');
+  cc.fillStyle = spec.base;
+  cc.fillRect(0, 0, 128, 128);
+  for (const layer of spec.layers) {
+    for (let i = 0; i < layer.n; i++) {
+      const x = Math.random() * 128, y = Math.random() * 128;
+      const r = layer.rMin + Math.random() * (layer.rMax - layer.rMin);
+      cc.fillStyle = layer.colors[i % layer.colors.length];
+      for (const [ox, oy] of wraps) {
+        cc.beginPath();
+        cc.arc(x + ox, y + oy, r, 0, Math.PI * 2);
+        cc.fill();
+      }
     }
   }
+  return c;
+}
 
-  const s = document.createElement('canvas');
-  s.width = s.height = 128;
-  const sc = s.getContext('2d');
-  sc.fillStyle = '#aecbe6';
-  sc.fillRect(0, 0, 128, 128);
-  for (let i = 0; i < 26; i++) {
-    const x = Math.random() * 128, y = Math.random() * 128;
-    const r = 8 + Math.random() * 18;
-    sc.fillStyle = i % 3 ? 'rgba(255,255,255,0.10)' : 'rgba(150,185,220,0.18)';
-    for (const [ox, oy] of wraps) {
-      sc.beginPath();
-      sc.arc(x + ox, y + oy, r, 0, Math.PI * 2);
-      sc.fill();
-    }
+// builds one pattern set per theme; callers pick by level theme name
+function makePatterns(ctx) {
+  const out = {};
+  for (const name of Object.keys(THEMES)) {
+    const t = THEMES[name];
+    const ground = ctx.createPattern(makeTile(t.ground), 'repeat');
+    ground.setTransform(new DOMMatrix([3.6 / 128, 0, 0, 3.6 / 128, 0, 0]));
+    const sky = ctx.createPattern(makeTile(t.sky), 'repeat');
+    sky.setTransform(new DOMMatrix([7 / 128, 0, 0, 7 / 128, 0, 0]));
+    out[name] = Object.assign({}, t, { ground, sky });
   }
-
-  const ground = ctx.createPattern(g, 'repeat');
-  ground.setTransform(new DOMMatrix([3.6 / 128, 0, 0, 3.6 / 128, 0, 0]));
-  const sky = ctx.createPattern(s, 'repeat');
-  sky.setTransform(new DOMMatrix([7 / 128, 0, 0, 7 / 128, 0, 0]));
-  return { ground, sky };
+  return out;
 }
 
 function drawWorld(ctx, level, pat, view) {
@@ -63,21 +94,21 @@ function drawWorld(ctx, level, pat, view) {
   }
   ctx.fillStyle = pat.sky;
   ctx.fill('evenodd');
-  ctx.strokeStyle = 'rgba(40,20,5,0.5)';
+  ctx.strokeStyle = pat.outline;
   ctx.lineWidth = 0.07;
   ctx.stroke();
 
-  for (const e of level.grass) drawGrassEdge(ctx, e);
+  for (const e of level.grass) drawGrassEdge(ctx, e, pat);
 }
 
-function drawGrassEdge(ctx, s) {
+function drawGrassEdge(ctx, s, theme) {
   const dx = s.bx - s.ax, dy = s.by - s.ay;
   const len = Math.hypot(dx, dy);
   const ux = dx / len, uy = dy / len;
   let nx = uy, ny = -ux;            // normal pointing up into the playable area
   if (ny > 0) { nx = -nx; ny = -ny; }
 
-  ctx.fillStyle = '#3f8d27';
+  ctx.fillStyle = theme.turfFill;
   ctx.beginPath();
   ctx.moveTo(s.ax - nx * 0.02, s.ay - ny * 0.02);
   ctx.lineTo(s.bx - nx * 0.02, s.by - ny * 0.02);
@@ -86,7 +117,7 @@ function drawGrassEdge(ctx, s) {
   ctx.closePath();
   ctx.fill();
 
-  ctx.strokeStyle = '#2f7a1d';
+  ctx.strokeStyle = theme.turfBlade;
   ctx.lineWidth = 0.05;
   ctx.beginPath();
   const n = Math.max(1, Math.floor(len / 0.22));
@@ -621,7 +652,7 @@ function drawMenuBackdrop(ctx, W, H, t, pat) {
   const gy = h * 0.84;
   ctx.fillStyle = pat.ground;
   ctx.fillRect(0, gy, w, h - gy);
-  drawGrassEdge(ctx, { ax: 0, ay: gy, bx: w, by: gy });
+  drawGrassEdge(ctx, { ax: 0, ay: gy, bx: w, by: gy }, pat);
 
   ctx.save();
   ctx.translate(w * 0.86, gy - 1.05);
@@ -896,7 +927,7 @@ function drawMinimap(ctx, W, H, level, o) {
   ctx.clip();
 
   // ground everywhere, then carve out the playable sky
-  ctx.fillStyle = '#6b4a24';
+  ctx.fillStyle = o.theme.miniGround;
   ctx.fillRect(mx, my, mw, mh);
   ctx.beginPath();
   for (const poly of level.polygons) {
@@ -904,7 +935,7 @@ function drawMinimap(ctx, W, H, level, o) {
     for (let i = 1; i < poly.length; i++) ctx.lineTo(tx(poly[i][0]), ty(poly[i][1]));
     ctx.closePath();
   }
-  ctx.fillStyle = '#a7c4de';
+  ctx.fillStyle = o.theme.miniSky;
   ctx.fill('evenodd');
 
   const dot = (x, y, r, fill) => {

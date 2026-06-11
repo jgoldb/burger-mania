@@ -2,9 +2,12 @@
 
 // Level coordinates use world units, y grows downward (canvas convention).
 // The playable area is the INSIDE of each polygon; everything outside is ground.
+// `theme` picks the visual world from THEMES in render.js; every 5-map
+// (checkpoint-to-checkpoint) block of a track shares one theme.
 const LEVELS = [
   {
     name: 'Burger Hill',
+    theme: 'meadow',
     polygons: [
       [
         // ceiling, left to right
@@ -35,6 +38,7 @@ const LEVELS = [
     // Easy #2: introduces a gap jump — clear the canyon with speed, or
     // drop in and ride out the far side — plus slightly steeper hills.
     name: 'Cheddar Canyon',
+    theme: 'meadow',
     polygons: [
       [
         // ceiling, left to right
@@ -70,6 +74,7 @@ const LEVELS = [
     // (or a bounced landing) puts your head into the rock. The hills
     // after the tunnel are a notch steeper than Cheddar Canyon's.
     name: 'Onion Underpass',
+    theme: 'meadow',
     polygons: [
       [
         // ceiling, left to right
@@ -113,6 +118,7 @@ const LEVELS = [
     // rideable under the patty and out the far side. Restart with Enter
     // if you miss the burger up top.
     name: 'Patty Bridge',
+    theme: 'meadow',
     polygons: [
       [
         // ceiling, left to right
@@ -163,6 +169,7 @@ const LEVELS = [
     // platform. The gorge floor is rideable out if you fall. Stair-step
     // ledges and the steepest climb yet round out the back half.
     name: 'Skewer Gorge',
+    theme: 'meadow',
     polygons: [
       [
         // ceiling, left to right
@@ -206,6 +213,49 @@ const LEVELS = [
     ],
     goal: [98, 5.65],
   },
+  {
+    // Easy #6, the first map of the charcoal world: introduces the
+    // momentum climb — dive through the coal pit to bank speed for the
+    // longest, steepest slope yet (30 degrees, twice the length of Skewer
+    // Gorge's). Stalling mid-slope just slides you back down for another
+    // run; nothing here is fatal, the test is throttle and wheelie
+    // control on the way up.
+    name: 'Charcoal Climb',
+    theme: 'charcoal',
+    polygons: [
+      [
+        // ceiling, left to right
+        [-5, -8], [88, -8],
+        // right wall
+        [88, 6.6],
+        // floor, right to left
+        [83, 6.6], [74, 6.6],             // goal shelf
+        [71, 7.4], [68, 7.4],             // ember dip
+        [65.5, 6.5], [62.5, 6.5],         // second crest
+        [57, 8.8], [54, 8.8],             // valley
+        [48.5, 6.4], [43.5, 6.4],         // summit plateau
+        [36, 10.4],                       // THE climb, 28 deg and 8.5 long
+        [33, 11.4],                       // gentler lead-in onto the slope
+        [27, 11.4],                       // coal pit floor
+        [20, 7.6], [17, 7.6],             // rim before the dive
+        [14, 6.8], [11, 6.8],             // warmup roller
+        [8, 8], [0, 8],
+        // left wall
+        [-5, 8],
+      ],
+    ],
+    start: { x: 2.5, y: 7.25 },
+    burgers: [
+      [12.5, 6.1],
+      [30, 10.7],   // on the pit floor
+      [39.5, 7.85], // halfway up the climb
+      [46, 5.7],    // on the summit plateau
+      [55.5, 8.1],  // in the valley
+      [63.5, 5.8],  // on the second crest
+      [69.5, 6.7],  // in the ember dip
+    ],
+    goal: [79, 5.85],
+  },
 ];
 
 // Difficulty tracks, Super-Monkey-Ball style: each difficulty is a fixed
@@ -213,7 +263,7 @@ const LEVELS = [
 // series; `levels` holds the maps that exist so far. A track with no
 // levels yet shows up disabled on the difficulty screen.
 const TRACKS = [
-  { id: 'easy',   label: 'Easy',   color: '#9be08a', length: 10, levels: [LEVELS[0], LEVELS[1], LEVELS[2], LEVELS[3], LEVELS[4]] },
+  { id: 'easy',   label: 'Easy',   color: '#9be08a', length: 10, levels: [LEVELS[0], LEVELS[1], LEVELS[2], LEVELS[3], LEVELS[4], LEVELS[5]] },
   { id: 'medium', label: 'Medium', color: '#f9c623', length: 20, levels: [] },
   { id: 'hard',   label: 'Hard',   color: '#ff6038', length: 30, levels: [] },
 ];

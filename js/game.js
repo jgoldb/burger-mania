@@ -231,9 +231,13 @@
       currentTrack = track;
       lives = 3;
       continues = 3;
-      checkpointIndex = 0;
     }
-    enterLevel(track.levels.length - 1);
+    const target = track.levels.length - 1;
+    // skipping counts as having beaten everything before the target, so a
+    // continue restarts from the latest checkpoint map (every 5th) cleared
+    // along the way, exactly as if the player had ridden there
+    checkpointIndex = Math.max(0, Math.floor(target / 5) * 5 - 1);
+    enterLevel(target);
     state = 'ready';
     blip(1320, 0.15);
     return true;
@@ -600,7 +604,7 @@
       return;
     }
     if (state === 'intro' || state === 'menu') {
-      drawMenuBackdrop(ctx, W, H, rt, patterns);
+      drawMenuBackdrop(ctx, W, H, rt, patterns.meadow);
       drawTitleLetters(ctx, W, H, introT);
       if (state === 'menu') {
         drawMenu(ctx, W, H, Math.min(1, menuT / 0.6), menuItems, menuSel, hoverIdx);
@@ -608,16 +612,17 @@
       return;
     }
     if (state === 'difficulty') {
-      drawMenuBackdrop(ctx, W, H, rt, patterns);
+      drawMenuBackdrop(ctx, W, H, rt, patterns.meadow);
       drawDifficulty(ctx, W, H, Math.min(1, diffT / 0.4), TRACKS, diffSel, hoverIdx);
       return;
     }
     if (state === 'continue') {
-      drawMenuBackdrop(ctx, W, H, rt, patterns);
+      drawMenuBackdrop(ctx, W, H, rt, patterns.meadow);
       drawContinue(ctx, W, H, Math.min(1, contT / 0.4), rt, continues, contSel, hoverIdx);
       return;
     }
 
+    const theme = patterns[level.theme] || patterns.meadow;
     const Z = Math.min(W / 26, H / 13.5);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = '#000';
@@ -628,7 +633,7 @@
     ctx.scale(Z, Z);
     ctx.translate(-cam.x, -cam.y);
     const hw = W / 2 / Z + 1, hh = H / 2 / Z + 1;
-    drawWorld(ctx, level, patterns,
+    drawWorld(ctx, level, theme,
       { x0: cam.x - hw, y0: cam.y - hh, x1: cam.x + hw, y1: cam.y + hh });
     for (const b of burgers) if (!b.got) drawBurger(ctx, b.x, b.y, rt);
     drawPopcorn(ctx, level.goal[0], level.goal[1], rt);
@@ -641,6 +646,7 @@
       burgers,
       goal: level.goal,
       t: rt,
+      theme,
     });
 
     drawHUD(ctx, W, H, {

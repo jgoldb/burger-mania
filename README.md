@@ -32,9 +32,9 @@ Your best time is saved locally per level.
   is the only fatal collider. Runs at 480 Hz (8 substeps per 60 fps frame).
 - `js/levels.js` — level data: the playable area is the inside of a polygon;
   everything outside is ground. Burger and goal positions per level.
-- `js/render.js` — canvas renderer: procedural ground/sky texture patterns,
-  grass fringes on up-facing edges, the bike + rider, the animated burgers
-  and popcorn-bucket goal, HUD.
+- `js/render.js` — canvas renderer: procedural ground/sky texture patterns
+  (one themed set per visual world, see `THEMES`), turf fringes on up-facing
+  edges, the bike + rider, the animated burgers and popcorn-bucket goal, HUD.
 - `js/game.js` — game loop, input, camera, WebAudio engine sound, state
   machine (title / playing / dead / finished).
 
@@ -48,5 +48,6 @@ node test/drive_long.js     # verifies the course is completable
 ## Adding levels
 
 Append an entry to `LEVELS` in `js/levels.js`: a polygon vertex list
-(y grows downward), a `start` position, `burgers` coordinates, and a
-`goal` position (the popcorn bucket).
+(y grows downward), a `start` position, `burgers` coordinates, a
+`goal` position (the popcorn bucket), and a `theme` (a key of `THEMES`
+in `js/render.js` — every 5-map block between checkpoints shares one).

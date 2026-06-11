@@ -27,17 +27,17 @@
 
   loadAssets().then(() => {
   if (ui === 'menu') {
-    drawMenuBackdrop(ctx, W, H, 2.0, patterns);
+    drawMenuBackdrop(ctx, W, H, 2.0, patterns.meadow);
     drawTitleLetters(ctx, W, H, 10);
     drawMenu(ctx, W, H, 1, ['Play'], 0, -1);
   } else if (ui === 'difficulty') {
-    drawMenuBackdrop(ctx, W, H, 2.0, patterns);
+    drawMenuBackdrop(ctx, W, H, 2.0, patterns.meadow);
     drawDifficulty(ctx, W, H, 1, TRACKS, 0, -1);
   } else if (ui === 'continue') {
-    drawMenuBackdrop(ctx, W, H, 2.0, patterns);
+    drawMenuBackdrop(ctx, W, H, 2.0, patterns.meadow);
     drawContinue(ctx, W, H, 1, 2.0, 3, 0, -1);
   } else if (ui === 'continue-out') {
-    drawMenuBackdrop(ctx, W, H, 2.0, patterns);
+    drawMenuBackdrop(ctx, W, H, 2.0, patterns.meadow);
     drawContinue(ctx, W, H, 1, 2.0, 0, 1, -1);
   } else if (ui === 'map') {
     // whole-level overview: ?ui=map&i=<level index>
@@ -50,7 +50,7 @@
     ctx.save();
     ctx.scale(Z, Z);
     ctx.translate(-x0, -y0);
-    drawWorld(ctx, level, patterns, { x0, y0, x1, y1 });
+    drawWorld(ctx, level, patterns[level.theme] || patterns.meadow, { x0, y0, x1, y1 });
     for (const b of level.burgers) drawBurger(ctx, b[0], b[1], 1);
     drawPopcorn(ctx, level.goal[0], level.goal[1], 1);
     const bike = new Bike(level.start.x, level.start.y);
@@ -73,7 +73,7 @@
     ctx.scale(Z, Z);
     ctx.translate(-level.start.x, -level.start.y);
     const hw = W / 2 / Z + 1, hh = H / 2 / Z + 1;
-    drawWorld(ctx, level, patterns, {
+    drawWorld(ctx, level, patterns[level.theme] || patterns.meadow, {
       x0: level.start.x - hw, y0: level.start.y - hh,
       x1: level.start.x + hw, y1: level.start.y + hh,
     });
