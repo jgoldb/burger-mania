@@ -1654,21 +1654,24 @@ function drawHUD(ctx, W, H, o) {
   ctx.fillStyle = ink.text;
   ctx.shadowColor = ink.halo;
   ctx.shadowBlur = Math.max(3, Math.round(fs * 0.3));
-  ctx.fillText(`time    ${fmt(o.time)}`, 14, 12);
-  ctx.fillText(`best    ${o.best != null ? fmt(o.best) : '--:--,--'}`, 14, 12 + fs * 1.3);
-  ctx.fillText(`burgers ${o.got}/${o.total}`, 14, 12 + fs * 2.6);
-  // the style row only appears when the caller tracks it (the live game);
-  // bare drawHUD harnesses without it keep the old layout
+  // metrics stack as label/value rows; each record-bearing metric (time,
+  // style) is followed by an indented "best" row so both records read the
+  // same way. Harnesses that pass no style keep the time-only layout
   const hasStyle = o.style != null;
+  const rowY = i => 12 + fs * 1.3 * i;
+  let row = 0;
+  ctx.fillText(`time    ${fmt(o.time)}`, 14, rowY(row++));
+  ctx.fillText(`  best  ${o.best != null ? fmt(o.best) : '--:--,--'}`, 14, rowY(row++));
   if (hasStyle) {
-    ctx.fillText(`style   ${o.style}` +
-      (o.styleBest != null ? `  best ${o.styleBest}` : ''), 14, 12 + fs * 3.9);
+    ctx.fillText(`style   ${o.style}`, 14, rowY(row++));
+    ctx.fillText(`  best  ${o.styleBest != null ? o.styleBest : '---'}`, 14, rowY(row++));
   }
+  ctx.fillText(`burgers ${o.got}/${o.total}`, 14, rowY(row++));
   if (o.lives != null) {
     // one biker head per remaining life, behind a "lives" label that lines
     // up with the value column of the rows above
     const img = IMAGES.biker;
-    const ih = fs * 1.5, iy = 12 + fs * (hasStyle ? 5.2 : 3.9);
+    const ih = fs * 1.5, iy = rowY(row);
     // value column matches "time", "best", "burgers" (all 8 monospace chars)
     const hx = 14 + ctx.measureText('burgers ').width;
     ctx.fillText('lives', 14, iy + (ih - fs) / 2);
