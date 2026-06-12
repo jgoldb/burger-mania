@@ -58,6 +58,9 @@ const PHYS = {
   voltStackMax: 3, // air volts stop compounding past this many stacks
 
   mu: 1.1,         // tire friction coefficient
+  muGlass: 0.06,   // tire friction on obsidian glass: the engine can barely
+                   // push and the brakes barely bite, so glass is crossed on
+                   // momentum alone (the parking clamp never engages on it)
   rollRes: 9,      // rolling resistance (spin decel, rad/s^2, on contact)
   bounce: 0.3,     // restitution of a belly impact (elastic bar rebound)
   bounceMin: 0.8,  // impact speed (m/s) below which contact is inelastic,
@@ -101,9 +104,13 @@ function pointInPoly(px, py, poly) {
 // the head pass straight through, so a wire can thread the rider's body
 // — and a bike tipping over a ledge gets shepherded around by the wire
 // until the wheels land on top of it, hanging the bike upside down.
+// Spans of the floor listed in L.glass ([[x0, x1], ...], matched on
+// segment midpoint) are obsidian glass: solid like rock, but the tires
+// get almost no grip on it, so glass is ridden on banked momentum.
 function prepareLevel(L) {
-  const segments = [], grass = [];
+  const segments = [], grass = [], glassTops = [];
   const wires = new Set(L.wires || []);
+  const glassSpans = L.glass || [];
   L.polygons.forEach((poly, pi) => {
     const wire = wires.has(pi);
     // a polygon nested inside another is a solid island in the playable
@@ -113,19 +120,22 @@ function prepareLevel(L) {
     for (let i = 0; i < poly.length; i++) {
       const a = poly[i], b = poly[(i + 1) % poly.length];
       const s = { ax: a[0], ay: a[1], bx: b[0], by: b[1], wire };
-      segments.push(s);
       const mx = (s.ax + s.bx) / 2, my = (s.ay + s.by) / 2;
+      s.glass = !wire && glassSpans.some(r => mx >= r[0] && mx <= r[1]);
+      segments.push(s);
       const dx = s.bx - s.ax, dy = s.by - s.ay;
       // grass grows on edges that are not too steep and face the playable
-      // side upward; wires stay bare
+      // side upward; wires stay bare and glass gets a sheen instead
       if (!wire && Math.abs(dx) > 0.001 && Math.abs(dy / dx) < 2.0) {
         const up = pointInPoly(mx, my - 0.3, poly);
         const down = pointInPoly(mx, my + 0.3, poly);
-        if (island ? (down && !up) : (up && !down)) grass.push(s);
+        if (island ? (down && !up) : (up && !down)) {
+          (s.glass ? glassTops : grass).push(s);
+        }
       }
     }
   });
-  return Object.assign({}, L, { segments, grass });
+  return Object.assign({}, L, { segments, grass, glassTops });
 }
 
 class Bike {
@@ -394,8 +404,9 @@ class Bike {
       // ordinary friction would let the wheel slow-roll down the hill
       // forever (the brake decays spin, friction re-spins it to match
       // the creep). Static grip is also far stronger than sliding grip,
-      // so the bike holds until the grade gets very steep
-      if (braking && Math.abs(w.spin) * P.wheelR < P.parkVt &&
+      // so the bike holds until the grade gets very steep. Glass has no
+      // static grip to speak of: the clamp never engages there
+      if (braking && !seg.glass && Math.abs(w.spin) * P.wheelR < P.parkVt &&
           Math.abs(vg) < P.parkVt) {
         let jp = -vg * P.wheelM;
         const cap = P.parkMu * jn;
@@ -414,11 +425,11 @@ class Bike {
         continue;
       }
       // tire friction: drive contact-point tangential slip toward zero,
-      // clamped by the Coulomb limit
+      // clamped by the Coulomb limit (a sliver of a limit on glass)
       const vt = vg - P.wheelR * w.spin;
       const meff = 1 / (1 / P.wheelM + P.wheelR * P.wheelR / P.wheelI);
       let jt = -vt * meff;
-      const maxF = P.mu * jn;
+      const maxF = (seg.glass ? P.muGlass : P.mu) * jn;
       if (jt > maxF) jt = maxF;
       if (jt < -maxF) jt = -maxF;
       w.vel.x += tx * jt / P.wheelM;

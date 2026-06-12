@@ -252,6 +252,57 @@ function drawWorld(ctx, level, pat, view, t) {
   ctx.stroke();
 
   for (const e of level.grass) pat.edge(ctx, e, pat, t);
+  for (const e of level.glassTops || []) drawObsidianEdge(ctx, e, t);
+}
+
+// obsidian glass: where the volcano world grows molten crust, a frozen
+// flow gets a deep glassy band, a cold specular seam along the surface,
+// and slow glints sliding over it — the visual promise of zero grip
+function drawObsidianEdge(ctx, s, t) {
+  t = t || 0;
+  const dx = s.bx - s.ax, dy = s.by - s.ay;
+  const len = Math.hypot(dx, dy);
+  const ux = dx / len, uy = dy / len;
+  let nx = uy, ny = -ux;            // normal pointing up into the playable area
+  if (ny > 0) { nx = -nx; ny = -ny; }
+
+  // deep glass body fading down into the rock
+  const g = ctx.createLinearGradient(s.ax + nx * 0.05, s.ay + ny * 0.05,
+    s.ax - nx * 1.1, s.ay - ny * 1.1);
+  g.addColorStop(0, 'rgba(38,52,66,0.92)');
+  g.addColorStop(0.45, 'rgba(22,30,40,0.78)');
+  g.addColorStop(1, 'rgba(14,18,26,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(s.ax + nx * 0.06, s.ay + ny * 0.06);
+  ctx.lineTo(s.bx + nx * 0.06, s.by + ny * 0.06);
+  ctx.lineTo(s.bx - nx * 1.1, s.by - ny * 1.1);
+  ctx.lineTo(s.ax - nx * 1.1, s.ay - ny * 1.1);
+  ctx.closePath();
+  ctx.fill();
+
+  // cold mirror seam right at the surface
+  ctx.strokeStyle = 'rgba(170,215,235,0.55)';
+  ctx.lineWidth = 0.06;
+  ctx.beginPath();
+  ctx.moveTo(s.ax + nx * 0.03, s.ay + ny * 0.03);
+  ctx.lineTo(s.bx + nx * 0.03, s.by + ny * 0.03);
+  ctx.stroke();
+
+  // glints: short bright dashes drifting slowly along the seam
+  ctx.strokeStyle = 'rgba(235,250,255,0.85)';
+  ctx.lineWidth = 0.09;
+  ctx.beginPath();
+  const n = Math.max(1, Math.floor(len / 2.4));
+  for (let i = 0; i < n; i++) {
+    const r = srand(s.ax * 3.7 + s.ay * 9.1 + i * 5.3);
+    const f = ((r + t * 0.06) % 1) * len;
+    const gl = Math.min(0.5 + r * 0.5, len - f);
+    if (gl <= 0) continue;
+    ctx.moveTo(s.ax + ux * f + nx * 0.03, s.ay + uy * f + ny * 0.03);
+    ctx.lineTo(s.ax + ux * (f + gl) + nx * 0.03, s.ay + uy * (f + gl) + ny * 0.03);
+  }
+  ctx.stroke();
 }
 
 function drawGrassEdge(ctx, s, theme, t) {

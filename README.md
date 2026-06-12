@@ -99,3 +99,9 @@ Append an entry to `LEVELS` in `js/levels.js`: a polygon vertex list
 in `js/render.js` — every 5-map block between checkpoints shares one).
 A new theme also wants a song under the same name in `js/music.js`, or
 its maps ride in silence (`node test/music_check.js` catches this).
+
+Two optional fields mark special terrain: `wires` lists polygon indices
+that only the wheels collide with (the body and head thread through —
+hang from them, Elasto Mania style), and `glass` lists `[x0, x1]` spans
+of the floor that are obsidian — volcanic glass the tires barely grip,
+where the engine and brakes are passengers and momentum is everything.
