@@ -79,6 +79,31 @@ function makeTile(spec) {
   return c;
 }
 
+// HUD lettering comes in two inks: dark over bright skies, warm light
+// over dark ones. Each pairs with a halo in the opposite shade, drawn as
+// a soft glow behind the glyphs, so the text stays readable even where
+// the backdrop drifts toward the ink's own shade (ground, ceilings, the
+// bright band of a gradient).
+const HUD_INK_DARK = { text: 'rgba(58,26,10,0.9)', halo: 'rgba(255,247,230,0.9)' };
+const HUD_INK_LIGHT = { text: 'rgba(255,241,222,0.92)', halo: 'rgba(30,14,9,0.9)' };
+
+// picks a theme's HUD ink from its sky-gradient luminance (the sky is
+// what usually sits behind the corner text), weighting the zenith stop
+// since the HUD lives at the top of the screen. Derived rather than
+// hand-picked so each new world gets a readable HUD for free. Expects
+// #rrggbb stops, which is what every theme uses.
+function hudInk(theme) {
+  let lum = 0, wsum = 0;
+  theme.skyStops.forEach(([, c], i) => {
+    const n = parseInt(c.slice(1), 16);
+    const w = i === 0 ? 2 : 1;
+    lum += w * (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255)
+      + 0.0722 * (n & 255)) / 255;
+    wsum += w;
+  });
+  return lum / wsum > 0.5 ? HUD_INK_DARK : HUD_INK_LIGHT;
+}
+
 // builds one pattern set per theme; callers pick by level theme name
 function makePatterns(ctx) {
   const out = {};
@@ -88,7 +113,7 @@ function makePatterns(ctx) {
     ground.setTransform(new DOMMatrix([3.6 / 128, 0, 0, 3.6 / 128, 0, 0]));
     const sky = ctx.createPattern(makeTile(t.skyTile), 'repeat');
     sky.setTransform(new DOMMatrix([7 / 128, 0, 0, 7 / 128, 0, 0]));
-    out[name] = Object.assign({}, t, { ground, sky });
+    out[name] = Object.assign({}, t, { ground, sky, hud: hudInk(t) });
   }
   return out;
 }
@@ -1600,7 +1625,10 @@ function drawHUD(ctx, W, H, o) {
   ctx.font = `bold ${fs}px "Consolas","Courier New",monospace`;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
-  ctx.fillStyle = 'rgba(58,26,10,0.9)';
+  const ink = (o.theme && o.theme.hud) || HUD_INK_DARK;
+  ctx.fillStyle = ink.text;
+  ctx.shadowColor = ink.halo;
+  ctx.shadowBlur = Math.max(3, Math.round(fs * 0.3));
   ctx.fillText(`time    ${fmt(o.time)}`, 14, 12);
   ctx.fillText(`best    ${o.best != null ? fmt(o.best) : '--:--,--'}`, 14, 12 + fs * 1.3);
   ctx.fillText(`burgers ${o.got}/${o.total}`, 14, 12 + fs * 2.6);
@@ -1612,6 +1640,8 @@ function drawHUD(ctx, W, H, o) {
     // value column matches "time", "best", "burgers" (all 8 monospace chars)
     const hx = 14 + ctx.measureText('burgers ').width;
     ctx.fillText('lives', 14, iy + (ih - fs) / 2);
+    // the heads paint their own shadow and shine; no halo on the sprites
+    ctx.shadowBlur = 0;
     const t = o.t || 0;
     for (let i = 0; i < o.lives; i++) {
       if (img && img.complete && img.naturalWidth > 0) {
@@ -1625,6 +1655,7 @@ function drawHUD(ctx, W, H, o) {
       }
     }
   }
+  ctx.shadowBlur = 0;
 
   if (o.replay) {
     // banner so a playback can't be mistaken for live riding

@@ -1231,6 +1231,7 @@
     drawHUD(ctx, W, H, {
       time,
       t: rt,
+      theme,
       got: burgers.filter(b => b.got).length,
       total: burgers.length,
       best,
