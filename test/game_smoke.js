@@ -155,7 +155,10 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   key('Enter');                              // spend a continue -> ready (meadow)
   pumpFrames(3, 1 / 60);
   if (playedNow !== 'meadow') bad('after using a continue should be meadow, got ' + playedNow);
-  key('s'); key('k'); key('i'); key('p');    // cheat to the last map (volcano)
+  key('s'); key('k'); key('i'); key('p');    // open the skip-cheat level picker
+  pumpFrames(3, 1 / 60);
+  key('ArrowUp');                            // wrap up to the last Easy map (volcano)
+  key('Enter');                              // jump to the picked map
   pumpFrames(3, 1 / 60);
   if (playedNow !== 'volcano') bad('last Easy map should play volcano, got ' + playedNow);
   key('ArrowUp');                            // ready -> playing

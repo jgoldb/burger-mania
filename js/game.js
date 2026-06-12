@@ -156,6 +156,9 @@
     let want = null;
     if (state === 'menu' || state === 'difficulty' || state === 'replays') want = 'menu';
     else if (state === 'continue') want = 'continue';
+    // the picker keeps the summoning screen's song: the frozen world's
+    // theme mid-game, the menu theme otherwise
+    else if (state === 'skip') want = skipOverGame() ? level.theme : 'menu';
     else if (state === 'audio') {
       // keep whatever was playing, full volume even over a pause, so the
       // music slider is tuned against the level it'll actually play at
@@ -534,31 +537,67 @@
     saveBusy = false;
   }
 
-  // dev cheat: typing "skip" jumps to the latest level in the track,
-  // starting the first playable track if none is active
+  // dev cheat: typing "skip" raises a level-select overlay over whatever
+  // screen summoned it, letting any map in the track be jumped to
   const CHEAT_SKIP = 'skip';
   let cheatBuffer = '';
+  let skipTrack = null, skipItems = [];
+  let skipSel = 0, skipScroll = 0, skipT = 0, skipFrom = 'menu';
+
   function checkCheat(key) {
     if (key.length !== 1) return false;
     cheatBuffer = (cheatBuffer + key.toLowerCase()).slice(-CHEAT_SKIP.length);
     if (cheatBuffer !== CHEAT_SKIP) return false;
     cheatBuffer = '';
+    return openSkip();
+  }
+
+  // the overlay floats over a frozen level when summoned mid-game, or over
+  // a menu backdrop otherwise — draw() branches on this
+  function skipOverGame() {
+    return skipFrom === 'ready' || skipFrom === 'playing' || skipFrom === 'dead' ||
+           skipFrom === 'finished' || skipFrom === 'paused';
+  }
+
+  function openSkip() {
     const track = currentTrack || TRACKS.find(t => t.levels.length);
     if (!track) return false;
+    skipTrack = track;
+    skipFrom = state;
+    skipItems = track.levels.map((raw, i) => ({
+      label: raw.name, sub: 'Map ' + (i + 1) + '/' + track.length,
+    }));
+    // land on the current map when skipping from inside its own track
+    skipSel = currentTrack ? levelIndex : 0;
+    const maxScroll = Math.max(0, skipItems.length - SKIP_VIS);
+    skipScroll = Math.max(0, Math.min(skipSel - SKIP_VIS + 1, maxScroll));
+    state = 'skip';
+    skipT = 0;
+    hoverIdx = -1;
+    keys.up = keys.down = keys.left = keys.right = false;
+    blip(1320, 0.15);
+    return true;
+  }
+
+  function closeSkip() {
+    state = skipFrom;
+    hoverIdx = -1;
+    blip(440, 0.08);
+  }
+
+  function activateSkip(i) {
     if (!currentTrack) {
-      currentTrack = track;
+      currentTrack = skipTrack;
       lives = 3;
       continues = MAX_CONTINUES;
     }
-    const target = track.levels.length - 1;
     // skipping counts as having beaten everything before the target, so a
     // continue restarts from the checkpoint the player would hold having
     // ridden there: the map right after the last cleared 5th map
-    checkpointIndex = Math.floor(target / 5) * 5;
-    enterLevel(target);
+    checkpointIndex = Math.floor(i / 5) * 5;
+    enterLevel(i);
     state = 'ready';
     blip(1320, 0.15);
-    return true;
   }
 
   function skipIntro() {
@@ -626,6 +665,11 @@
       if (n > 0) return replayRects(W, H, n, H * 0.22);
       return null;
     }
+    if (state === 'skip' && skipT > 0.15) {
+      const n = Math.min(SKIP_VIS, skipItems.length - skipScroll);
+      if (n > 0) return replayRects(W, H, n, H * 0.24);
+      return null;
+    }
     if (state === 'paused') {
       return menuRects(W, H, pauseItems.length, H * 0.46);
     }
@@ -658,9 +702,10 @@
       MUSIC.setMuted(muted);
       return;
     }
-    // the cheat would clobber the replay tape mid-watch via reset()
+    // the cheat would clobber the replay tape mid-watch via reset(); while
+    // the picker is already open, typing must not re-summon it
     if (state !== 'loading' && state !== 'replay' && state !== 'replayEnd' &&
-        checkCheat(e.key)) return;
+        state !== 'skip' && checkCheat(e.key)) return;
 
     switch (state) {
       case 'loading':
@@ -737,6 +782,21 @@
           }
         } else if (e.key === 'Enter' || e.key === ' ') {
           activateReplays(repSel);
+        }
+        return;
+      case 'skip':
+        if (e.key === 'Escape') { closeSkip(); return; }
+        if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+          if (skipItems.length) {
+            const d = e.key === 'ArrowUp' ? -1 : 1;
+            skipSel = (skipSel + d + skipItems.length) % skipItems.length;
+            // keep the selection inside the visible window
+            if (skipSel < skipScroll) skipScroll = skipSel;
+            if (skipSel >= skipScroll + SKIP_VIS) skipScroll = skipSel - SKIP_VIS + 1;
+            blip(520, 0.05);
+          }
+        } else if (e.key === 'Enter' || e.key === ' ') {
+          activateSkip(skipSel);
         }
         return;
       case 'replay':
@@ -819,6 +879,9 @@
     } else if (state === 'replays') {
       repSel = repScroll + hoverIdx;
       activateReplays(repSel);
+    } else if (state === 'skip') {
+      skipSel = skipScroll + hoverIdx;
+      activateSkip(skipSel);
     } else if (state === 'paused') {
       pauseSel = hoverIdx;
       activatePause(hoverIdx);
@@ -909,6 +972,23 @@
         }
         if (repScroll < maxScroll && y > bot && y < bot + 56) {
           repScroll++;
+          blip(520, 0.05);
+          return;
+        }
+        activateHover();
+        return;
+      }
+      case 'skip': {
+        if (TOUCH.hit(k.back, x, y)) { closeSkip(); return; }
+        const y0 = H * 0.24, bot = y0 + SKIP_VIS * 64 - 12;
+        const maxScroll = Math.max(0, skipItems.length - SKIP_VIS);
+        if (skipScroll > 0 && y > y0 - 50 && y < y0) {
+          skipScroll--;
+          blip(520, 0.05);
+          return;
+        }
+        if (skipScroll < maxScroll && y > bot && y < bot + 56) {
+          skipScroll++;
           blip(520, 0.05);
           return;
         }
@@ -1196,6 +1276,8 @@
         contT += FDT;
       } else if (state === 'replays') {
         repT += FDT;
+      } else if (state === 'skip') {
+        skipT += FDT;
       } else if (state === 'audio') {
         audioT += FDT;
       } else if (state === 'playing') {
@@ -1227,7 +1309,7 @@
       flipQueued = false;
       if (state !== 'loading' && state !== 'intro' && state !== 'menu' &&
           state !== 'difficulty' && state !== 'continue' && state !== 'replays' &&
-          state !== 'audio') {
+          state !== 'audio' && state !== 'skip') {
         updateCamera(FDT);
         // toasts keep rising over the crash/finish screens, but a pause
         // freezes them along with everything else
@@ -1280,6 +1362,16 @@
       drawAudio(ctx, W, H, Math.min(1, audioT / 0.4),
         { volume, sel: audioSel, hover: hoverIdx, dim: false, muted,
           touch: TOUCH.active });
+      return;
+    }
+    // the skip picker summoned from a menu gets its own backdrop; summoned
+    // mid-game it falls through to float over the frozen level instead
+    if (state === 'skip' && !skipOverGame()) {
+      drawMenuBackdrop(ctx, W, H, rt, patterns[level.theme] || patterns.meadow);
+      drawLevelSelect(ctx, W, H, Math.min(1, skipT / 0.4), {
+        items: skipItems, sel: skipSel, scroll: skipScroll, hover: hoverIdx,
+        label: skipTrack ? skipTrack.label : '', touch: TOUCH.active,
+      });
       return;
     }
     // audio opened from the pause menu falls through: the frozen level
@@ -1353,6 +1445,12 @@
       drawAudio(ctx, W, H, Math.min(1, audioT / 0.4),
         { volume, sel: audioSel, hover: hoverIdx, dim: true, muted,
           touch: TOUCH.active });
+    }
+    if (state === 'skip') {
+      drawLevelSelect(ctx, W, H, Math.min(1, skipT / 0.4), {
+        items: skipItems, sel: skipSel, scroll: skipScroll, hover: hoverIdx,
+        label: skipTrack ? skipTrack.label : '', touch: TOUCH.active,
+      });
     }
   }
 

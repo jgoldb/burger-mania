@@ -15,7 +15,7 @@
 <script src="../js/render.js"></script>
 <script>
   // statically renders one UI screen
-  // (?ui=menu|difficulty|continue|pause|audio|audio-pause|...)
+  // (?ui=menu|difficulty|continue|pause|audio|audio-pause|skip|skip-game|...)
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
   const W = canvas.width = window.innerWidth;
@@ -122,6 +122,36 @@
         sel: 0, hover: -1, dim: true, muted: false,
       });
     }
+  } else if (ui === 'skip' || ui === 'skip-game') {
+    // the "skip" cheat's level picker, over a menu backdrop or, with
+    // ?ui=skip-game, floating over a frozen level like the pause menu
+    const track = TRACKS[0];
+    const items = track.levels.map((raw, i) => ({
+      label: raw.name, sub: 'Map ' + (i + 1) + '/' + track.length,
+    }));
+    if (ui === 'skip-game') {
+      const level = prepareLevel(LEVELS[0]);
+      const bike = new Bike(level.start.x, level.start.y);
+      const Z = Math.min(W / 26, H / 13.5);
+      ctx.save();
+      ctx.translate(W / 2, H / 2);
+      ctx.scale(Z, Z);
+      ctx.translate(-level.start.x, -level.start.y);
+      const hw = W / 2 / Z + 1, hh = H / 2 / Z + 1;
+      drawWorld(ctx, level, patterns[level.theme] || patterns.meadow, {
+        x0: level.start.x - hw, y0: level.start.y - hh,
+        x1: level.start.x + hw, y1: level.start.y + hh,
+      }, 2.0);
+      for (const b of level.burgers) drawBurger(ctx, b[0], b[1], 1);
+      drawBike(ctx, bike, false);
+      ctx.restore();
+      drawHUD(ctx, W, H, { time: 12.34, got: 2, total: 5, best: null, state: 'paused', lives: 2 });
+    } else {
+      drawMenuBackdrop(ctx, W, H, 2.0, menuPat);
+    }
+    drawLevelSelect(ctx, W, H, 1, {
+      items, sel: 2, scroll: 0, hover: -1, label: track.label, touch: false,
+    });
   }
   });
 </script>

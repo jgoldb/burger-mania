@@ -1480,6 +1480,7 @@ function drawAudio(ctx, W, H, alpha, o) {
 // ---------- replays screen ----------
 
 const REPLAY_VIS = 6; // list rows visible at once
+const SKIP_VIS = 6;   // skip-cheat level-picker rows visible at once
 
 function replayRects(W, H, n, y0) {
   const bw = Math.min(560, W * 0.86), bh = 52, gap = 12;
@@ -1527,6 +1528,59 @@ function drawReplays(ctx, W, H, alpha, items, sel, scroll, hover, note, touch) {
   }
   if (!touch) {
     ctx.fillStyle = 'rgba(40,20,8,0.85)';
+    ctx.font = '15px "Consolas","Courier New",monospace';
+    ctx.fillText('Esc to go back', W / 2, H * 0.95);
+  }
+  ctx.restore();
+}
+
+// ---------- skip-cheat level picker ----------
+
+// The "skip" dev cheat's overlay: a windowed list of a track's maps drawn
+// over a dimmed copy of whatever screen summoned it (the menu, or a frozen
+// level). Shares replayRects/drawButtons with the Replays list; SKIP_VIS
+// rows show at once and `scroll` is the index of the first visible map.
+// o: { items, sel, scroll, hover, label, touch }
+function drawLevelSelect(ctx, W, H, alpha, o) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  // darken the summoning screen so the picker reads as an overlay
+  ctx.fillStyle = 'rgba(8,5,2,0.62)';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = 'bold 44px "Consolas","Courier New",monospace';
+  ctx.fillStyle = 'rgba(40,16,4,0.85)';
+  ctx.fillText('SKIP TO MAP', W / 2 + 3, H * 0.13 + 3);
+  ctx.fillStyle = '#f9c623';
+  ctx.fillText('SKIP TO MAP', W / 2, H * 0.13);
+  if (o.label) {
+    ctx.font = 'bold 18px "Consolas","Courier New",monospace';
+    ctx.fillStyle = '#f0e8da';
+    ctx.fillText(o.label + ' track', W / 2, H * 0.13 + 40);
+  }
+  ctx.restore();
+
+  const y0 = H * 0.24;
+  const vis = o.items.slice(o.scroll, o.scroll + SKIP_VIS);
+  const rects = replayRects(W, H, vis.length, y0);
+  drawButtons(ctx, rects, vis, o.sel - o.scroll, o.hover, alpha);
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = 'rgba(249,198,35,0.8)';
+  ctx.font = 'bold 16px "Consolas","Courier New",monospace';
+  if (o.scroll > 0) ctx.fillText('- more -', W / 2, y0 - 16);
+  if (o.scroll + SKIP_VIS < o.items.length && rects.length) {
+    const last = rects[rects.length - 1];
+    ctx.fillText('- more -', W / 2, last.y + last.h + 18);
+  }
+  if (!o.touch) {
+    ctx.fillStyle = 'rgba(240,232,218,0.85)';
     ctx.font = '15px "Consolas","Courier New",monospace';
     ctx.fillText('Esc to go back', W / 2, H * 0.95);
   }
