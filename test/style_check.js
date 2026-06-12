@@ -1,7 +1,7 @@
 // Style points check: plays back a synthetic "drop lab" replay — a long
 // free fall with a mid-air turn-around (space) at frame 30 and a held lean
 // key volt-spinning the bike — and requires the sim to re-earn the points:
-// +100 for the airborne flip, +250 per full airborne rotation, the floating
+// +100 for the airborne flip, +250 per full rotation, the floating
 // "+N" toasts on screen, a climbing HUD style row, and no best-score
 // banking from merely watching. Run with: node test/style_check.js
 const fs = require('fs');
@@ -195,7 +195,7 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
   }
   if (!ended) bad('drop lab playback never reached an ending');
   if (!sawFlip) bad('mid-air turn-around never showed a +100 toast');
-  if (!sawSpin) bad('full airborne rotation never showed a +250 toast');
+  if (!sawSpin) bad('full rotation never showed a +250 toast');
   if (maxStyle < 350) {
     bad('HUD style row never reached 350 (flip + one rotation), saw ' + maxStyle);
   }

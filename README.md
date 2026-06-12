@@ -26,11 +26,12 @@ Your best time is saved locally per level.
 
 ## Style points
 
-Mid-air tricks score **style points**, a second record to chase alongside
-best time: turning around (Space) while fully airborne is worth **+100**,
-and every full rotation in the air pays **+250**. Awards float up over the
-rider as they land, with a sparkle to match. A finished run banks your
-per-level best style score (a crash forfeits the banking, not the fun).
+Tricks score **style points**, a second record to chase alongside best
+time: turning around (Space) while fully airborne is worth **+100**, and
+every full rotation pays **+250** — mid-air spins and ground loop-the-loops
+alike. Awards float up over the rider as they land, with a sparkle to
+match. A finished run banks your per-level best style score (a crash
+forfeits the banking, not the fun).
 
 On phones and tablets (any touch screen) the game shows on-screen controls
 instead: gas/brake pedals under the right thumb, lean buttons under the

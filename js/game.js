@@ -32,7 +32,7 @@
   let styleBest = parseInt(localStorage.getItem(styleKey) || '', 10);
   if (!isFinite(styleBest)) styleBest = null;
   let stylePts = 0;     // this run's total
-  let airSpin = 0;      // net rotation accumulated while fully airborne
+  let spinAcc = 0;      // net rotation accumulated toward the next full lap
   let stylePopups = []; // floating "+N" toasts riding above the biker
   let popupSeq = 0;     // cycles spawn lanes so stacked toasts stay legible
   let cam = { x: level.start.x, y: level.start.y };
@@ -64,7 +64,7 @@
     burgers = level.burgers.map(b => ({ x: b[0], y: b[1], got: false }));
     headBody = null;
     stylePts = 0;
-    airSpin = 0;
+    spinAcc = 0;
     stylePopups = [];
     popupSeq = 0;
     camLead = bike.facing * CAM_LEAD;
@@ -1004,7 +1004,7 @@
   // sim state (never feeds back into the physics), so live play and replay
   // playback recompute the same totals and old tapes stay in sync.
   const STYLE_FLIP = 100; // turning around (space) while fully airborne
-  const STYLE_SPIN = 250; // each full rotation while fully airborne
+  const STYLE_SPIN = 250; // each full rotation, in the air or on the ground
 
   // true only once a physics step has run (onGround starts undefined), so
   // a flip queued on the very first frame of a run can't read as airborne
@@ -1167,15 +1167,12 @@
       onDeath();
     } else {
       time += FDT;
-      // net airborne rotation: only whole frames spent in the air count,
-      // every full lap pays out, and a touchdown forfeits the remainder
-      if (!bikeAirborne()) airSpin = 0;
-      else if (wasAir) {
-        airSpin += bike.angle - angle0;
-        if (Math.abs(airSpin) >= Math.PI * 2) {
-          airSpin -= Math.sign(airSpin) * Math.PI * 2;
-          awardStyle(STYLE_SPIN);
-        }
+      // net rotation, airborne or not (a ground loop-the-loop is style
+      // too): every full lap pays out, wobble cancels itself
+      spinAcc += bike.angle - angle0;
+      if (Math.abs(spinAcc) >= Math.PI * 2) {
+        spinAcc -= Math.sign(spinAcc) * Math.PI * 2;
+        awardStyle(STYLE_SPIN);
       }
       checkPickups();
     }
