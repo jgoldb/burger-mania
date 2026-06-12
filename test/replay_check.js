@@ -153,7 +153,7 @@ function lastFrameTexts() {
 }
 
 const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
-  'js/music.js', 'js/replay.js', 'js/game.js']
+  'js/music.js', 'js/replay.js', 'js/touch.js', 'js/game.js']
   .map(f => fs.readFileSync(path.join(root, f), 'utf8')).join('\n') + `
 (async () => {
   // ---- tape encoding round trip on a deterministic pseudo-random stream ----

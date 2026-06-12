@@ -401,7 +401,8 @@
     }));
     repItems.push({ label: 'Change Folder...', act: chooseReplayFolder });
     repNote = files.length ? ''
-      : 'No replays in "' + replayDir.name + '" yet - finish a run and press S!';
+      : 'No replays in "' + replayDir.name + '" yet - finish a run and ' +
+        (TOUCH.active ? 'tap Save Replay!' : 'press S!');
   }
 
   function replaySub(f) {
@@ -761,6 +762,28 @@
     if (state === 'playing') openPause();
   });
 
+  // fire the menu item under the cursor/finger; shared by mouse clicks
+  // and touch taps
+  function activateHover() {
+    if (hoverIdx < 0) return;
+    if (state === 'menu') {
+      menuSel = hoverIdx;
+      activateMenu(hoverIdx);
+    } else if (state === 'difficulty') {
+      if (TRACKS[hoverIdx].levels.length) diffSel = hoverIdx;
+      activateDifficulty(hoverIdx);
+    } else if (state === 'continue') {
+      contSel = hoverIdx;
+      activateContinue(hoverIdx);
+    } else if (state === 'replays') {
+      repSel = repScroll + hoverIdx;
+      activateReplays(repSel);
+    } else if (state === 'paused') {
+      pauseSel = hoverIdx;
+      activatePause(hoverIdx);
+    }
+  }
+
   canvas.addEventListener('mousemove', e => {
     mouse.x = e.clientX;
     mouse.y = e.clientY;
@@ -797,28 +820,142 @@
     }
     if (state === 'intro') { skipIntro(); return; }
     if (hoverIdx < 0) return;
-    if (state === 'menu') {
-      menuSel = hoverIdx;
-      activateMenu(hoverIdx);
-    } else if (state === 'difficulty') {
-      if (TRACKS[hoverIdx].levels.length) diffSel = hoverIdx;
-      activateDifficulty(hoverIdx);
-    } else if (state === 'continue') {
-      contSel = hoverIdx;
-      activateContinue(hoverIdx);
-    } else if (state === 'replays') {
-      repSel = repScroll + hoverIdx;
-      activateReplays(repSel);
-    } else if (state === 'paused') {
-      pauseSel = hoverIdx;
-      activatePause(hoverIdx);
-    } else if (state === 'audio') {
+    if (state === 'audio') {
       // a drag released over Back shouldn't activate it
       if (!wasDrag && hoverIdx === audioKeys.length) {
         blip(880, 0.08);
         closeAudio();
       }
+      return;
     }
+    activateHover();
+  });
+
+  // ---------- touch ----------
+  // Taps drive the menus (acting on touchstart, so there is no synthetic
+  // click to double-fire); held fingers drive the riding cluster, which
+  // TOUCH resolves positionally on every event.
+  let tapGuardUntil = 0; // shields the crash/finish screens from mash-taps
+
+  // per-state tap actions beyond what a mouse click can mean
+  function touchTap(x, y) {
+    const k = TOUCH.layout(W, H);
+    switch (state) {
+      case 'loading':
+        if (loadDone) { state = 'intro'; introT = 0; }
+        return;
+      case 'intro':
+        skipIntro();
+        return;
+      case 'menu':
+      case 'continue':
+      case 'paused':
+        activateHover();
+        return;
+      case 'difficulty':
+        if (TOUCH.hit(k.back, x, y)) { blip(880, 0.08); goMenu(); return; }
+        activateHover();
+        return;
+      case 'replays': {
+        if (TOUCH.hit(k.back, x, y)) { blip(880, 0.08); goMenu(); return; }
+        // the "- more -" rows above and below the list window scroll it
+        const y0 = H * 0.22, bot = y0 + REPLAY_VIS * 64 - 12;
+        const maxScroll = Math.max(0, repItems.length - REPLAY_VIS);
+        if (repScroll > 0 && y > y0 - 50 && y < y0) {
+          repScroll--;
+          blip(520, 0.05);
+          return;
+        }
+        if (repScroll < maxScroll && y > bot && y < bot + 56) {
+          repScroll++;
+          blip(520, 0.05);
+          return;
+        }
+        activateHover();
+        return;
+      }
+      case 'audio':
+        if (hoverIdx >= 0 && hoverIdx < audioKeys.length) {
+          audioDrag = hoverIdx;
+          audioSel = hoverIdx;
+          dragVolume(x);
+        } else if (hoverIdx === audioKeys.length) {
+          blip(880, 0.08);
+          closeAudio();
+        }
+        return;
+      case 'ready':
+        if (TOUCH.hit(k.pause, x, y)) { openPause(); return; }
+        state = 'playing'; // tap to ride; a held gas finger already counts
+        return;
+      case 'playing':
+        if (TOUCH.hit(k.pause, x, y)) { openPause(); return; }
+        if (TOUCH.hit(k.restart, x, y)) { reset(); return; }
+        return;
+      case 'dead':
+      case 'finished':
+        if (TOUCH.hit(k.save, x, y)) { saveReplay(); return; }
+        if (TOUCH.hit(k.pause, x, y)) { openPause(); return; }
+        if (performance.now() < tapGuardUntil) return;
+        if (state === 'dead') {
+          if (lives > 0) { reset(); state = 'playing'; }
+          else goContinue();
+        } else if (hasNextLevel()) {
+          enterLevel(levelIndex + 1);
+          state = 'ready';
+        } else {
+          goMenu();
+        }
+        return;
+      case 'replay':
+      case 'replayEnd':
+        endReplayView();
+        return;
+    }
+  }
+
+  canvas.addEventListener('touchstart', e => {
+    e.preventDefault();
+    TOUCH.activate();
+    ensureAudio();
+    if (AC && AC.state === 'suspended') AC.resume();
+    const t = e.changedTouches[0];
+    mouse.x = t.clientX;
+    mouse.y = t.clientY;
+    updateHover();
+    // a fresh finger on the turn-around button queues a flip (one-shot,
+    // like the space bar — a held finger doesn't repeat it)
+    if (state === 'playing' || state === 'ready') {
+      const L = TOUCH.layout(W, H);
+      for (const c of e.changedTouches) {
+        if (TOUCH.hit(L.flip, c.clientX, c.clientY)) flipQueued = true;
+      }
+    }
+    TOUCH.sync(e.touches, W, H);
+    touchTap(t.clientX, t.clientY);
+  }, { passive: false });
+
+  canvas.addEventListener('touchmove', e => {
+    e.preventDefault();
+    const t = e.changedTouches[0];
+    mouse.x = t.clientX;
+    mouse.y = t.clientY;
+    if (audioDrag >= 0 && state === 'audio') dragVolume(t.clientX);
+    updateHover();
+    TOUCH.sync(e.touches, W, H);
+  }, { passive: false });
+
+  function touchEnd(e) {
+    e.preventDefault();
+    TOUCH.sync(e.touches, W, H);
+    if (!e.touches.length) audioDrag = -1;
+  }
+  canvas.addEventListener('touchend', touchEnd, { passive: false });
+  canvas.addEventListener('touchcancel', touchEnd, { passive: false });
+
+  // long-press save-image popups would interrupt play on touch devices
+  canvas.addEventListener('contextmenu', e => {
+    if (TOUCH.active) e.preventDefault();
   });
 
   // ---------- gameplay ----------
@@ -863,6 +1000,7 @@
     }
     state = 'finished';
     saveNote = 'S: save replay';
+    tapGuardUntil = performance.now() + 600;
     // completing every 5th map of a track (1-5, 1-10, ...) banks a
     // checkpoint: a continue used later restarts from the NEXT map, so a
     // cleared checkpoint map never has to be re-beaten
@@ -886,6 +1024,7 @@
       state = 'dead';
       lives = Math.max(0, lives - 1);
       saveNote = 'S: save replay';
+      tapGuardUntil = performance.now() + 600;
     }
     const h = bike.headPos();
     headBody = {
@@ -978,14 +1117,16 @@
       } else if (state === 'audio') {
         audioT += FDT;
       } else if (state === 'playing') {
+        // keyboard and the on-screen touch cluster merge into one mask;
         // the tape gets one mask per frame: exactly what the sim consumes
+        const up = keys.up || TOUCH.input.up;
+        const down = keys.down || TOUCH.input.down;
+        const left = keys.left || TOUCH.input.left;
+        const right = keys.right || TOUCH.input.right;
         REPLAY.record(
-          (keys.up ? 1 : 0) | (keys.down ? 2 : 0) |
-          (keys.left ? 4 : 0) | (keys.right ? 8 : 0), flipQueued);
-        simFrame({
-          throttle: keys.up, brake: keys.down,
-          left: keys.left, right: keys.right,
-        }, flipQueued);
+          (up ? 1 : 0) | (down ? 2 : 0) |
+          (left ? 4 : 0) | (right ? 8 : 0), flipQueued);
+        simFrame({ throttle: up, brake: down, left, right }, flipQueued);
       } else if (state === 'replay') {
         let f = { mask: 0, flip: false };
         if (replayCursor && !replayCursor.done()) f = replayCursor.next();
@@ -1010,6 +1151,7 @@
     }
     updateHover();
     draw();
+    TOUCH.draw(ctx, W, H, { state, saveBusy });
     updateEngineSound();
     updateMusic();
     requestAnimationFrame(frame);
@@ -1018,7 +1160,7 @@
   function draw() {
     const rt = performance.now() / 1000;
     if (state === 'loading') {
-      drawLoading(ctx, W, H, loadFrac, rt, loadDone);
+      drawLoading(ctx, W, H, loadFrac, rt, loadDone, TOUCH.active);
       return;
     }
     if (state === 'intro' || state === 'menu') {
@@ -1031,7 +1173,8 @@
     }
     if (state === 'difficulty') {
       drawMenuBackdrop(ctx, W, H, rt, patterns.meadow);
-      drawDifficulty(ctx, W, H, Math.min(1, diffT / 0.4), TRACKS, diffSel, hoverIdx);
+      drawDifficulty(ctx, W, H, Math.min(1, diffT / 0.4), TRACKS, diffSel, hoverIdx,
+        TOUCH.active);
       return;
     }
     if (state === 'continue') {
@@ -1044,13 +1187,14 @@
     if (state === 'replays') {
       drawMenuBackdrop(ctx, W, H, rt, patterns.meadow);
       drawReplays(ctx, W, H, Math.min(1, repT / 0.4),
-        repItems, repSel, repScroll, hoverIdx, repNote);
+        repItems, repSel, repScroll, hoverIdx, repNote, TOUCH.active);
       return;
     }
     if (state === 'audio' && audioFrom !== 'paused') {
       drawMenuBackdrop(ctx, W, H, rt, patterns.meadow);
       drawAudio(ctx, W, H, Math.min(1, audioT / 0.4),
-        { volume, sel: audioSel, hover: hoverIdx, dim: false, muted });
+        { volume, sel: audioSel, hover: hoverIdx, dim: false, muted,
+          touch: TOUCH.active });
       return;
     }
     // audio opened from the pause menu falls through: the frozen level
@@ -1099,7 +1243,10 @@
         done: state === 'replayEnd',
         outcome: replayOutcome,
       } : null,
-      saveNote,
+      // the keyboard hint is redundant next to the touch save button;
+      // save status messages still show either way
+      saveNote: TOUCH.active && saveNote === 'S: save replay' ? '' : saveNote,
+      touch: TOUCH.active,
     });
 
     if (state === 'paused') {
@@ -1107,7 +1254,8 @@
     }
     if (state === 'audio') {
       drawAudio(ctx, W, H, Math.min(1, audioT / 0.4),
-        { volume, sel: audioSel, hover: hoverIdx, dim: true, muted });
+        { volume, sel: audioSel, hover: hoverIdx, dim: true, muted,
+          touch: TOUCH.active });
     }
   }
 

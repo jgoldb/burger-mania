@@ -2,10 +2,18 @@
 <html>
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Burger Mania</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
-  canvas { display: block; }
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden;
+               overscroll-behavior: none; }
+  canvas { display: block; touch-action: none;
+           -webkit-user-select: none; user-select: none;
+           -webkit-touch-callout: none;
+           -webkit-tap-highlight-color: transparent; }
 </style>
 </head>
 <body>
@@ -16,6 +24,7 @@
 <script src="js/render.js"></script>
 <script src="js/music.js"></script>
 <script src="js/replay.js"></script>
+<script src="js/touch.js"></script>
 <script src="js/game.js"></script>
 </body>
 </html>

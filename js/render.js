@@ -800,7 +800,7 @@ function centerMsg(ctx, W, H, title, sub, sub2) {
   ctx.restore();
 }
 
-function drawReady(ctx, W, H, mapLabel) {
+function drawReady(ctx, W, H, mapLabel, touch) {
   ctx.save();
   const pw = Math.min(W * 0.86, 720), ph = 330;
   const px = (W - pw) / 2, py = H * 0.18;
@@ -831,7 +831,12 @@ function drawReady(ctx, W, H, mapLabel) {
 
   ctx.fillStyle = '#f0e8da';
   ctx.font = '17px "Consolas","Courier New",monospace';
-  const lines = [
+  const lines = touch ? [
+    'Collect every triple cheeseburger, then ride to the popcorn.',
+    '',
+    'Right thumb: gas and brake - left thumb: lean',
+    'Double arrow turns around - top buttons pause and restart',
+  ] : [
     'Collect every triple cheeseburger, then ride to the popcorn.',
     '',
     'UP gas   DOWN brake   LEFT / RIGHT rotate',
@@ -841,7 +846,8 @@ function drawReady(ctx, W, H, mapLabel) {
 
   ctx.fillStyle = '#9be08a';
   ctx.font = 'bold 19px "Consolas","Courier New",monospace';
-  ctx.fillText('Press any key to ride', W / 2, py + ph - 24);
+  ctx.fillText(touch ? 'Tap anywhere to ride' : 'Press any key to ride',
+    W / 2, py + ph - 24);
   ctx.restore();
 }
 
@@ -1137,7 +1143,7 @@ function drawMenu(ctx, W, H, alpha, items, sel, hover) {
   drawButtons(ctx, rects, items, sel, hover, alpha);
 }
 
-function drawDifficulty(ctx, W, H, alpha, tracks, sel, hover) {
+function drawDifficulty(ctx, W, H, alpha, tracks, sel, hover, touch) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.save();
   ctx.globalAlpha = alpha;
@@ -1159,15 +1165,18 @@ function drawDifficulty(ctx, W, H, alpha, tracks, sel, hover) {
   const rects = menuRects(W, H, tracks.length, H * 0.34);
   drawButtons(ctx, rects, items, sel, hover, alpha);
 
-  const last = rects[rects.length - 1];
-  ctx.save();
-  ctx.globalAlpha = alpha;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillStyle = 'rgba(40,20,8,0.85)';
-  ctx.font = '15px "Consolas","Courier New",monospace';
-  ctx.fillText('Esc to go back', W / 2, last.y + last.h + 34);
-  ctx.restore();
+  // touch devices get an on-screen back button instead of the Esc hint
+  if (!touch) {
+    const last = rects[rects.length - 1];
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(40,20,8,0.85)';
+    ctx.font = '15px "Consolas","Courier New",monospace';
+    ctx.fillText('Esc to go back', W / 2, last.y + last.h + 34);
+    ctx.restore();
+  }
 }
 
 // the rider slumped over his bike, head hanging low — shown on the
@@ -1362,7 +1371,8 @@ function drawAudio(ctx, W, H, alpha, o) {
   ctx.textBaseline = 'middle';
   ctx.fillStyle = o.dim ? 'rgba(240,232,218,0.75)' : 'rgba(40,20,8,0.85)';
   ctx.font = '15px "Consolas","Courier New",monospace';
-  ctx.fillText('Arrows adjust - M mutes - Esc to go back', W / 2, back.y + back.h + 34);
+  ctx.fillText(o.touch ? 'Drag the sliders - tap Back when done'
+    : 'Arrows adjust - M mutes - Esc to go back', W / 2, back.y + back.h + 34);
   ctx.restore();
 }
 
@@ -1380,7 +1390,7 @@ function replayRects(W, H, n, y0) {
 
 // items render through drawButtons; the list shows a REPLAY_VIS-row
 // window and `scroll` is the index of the first visible item
-function drawReplays(ctx, W, H, alpha, items, sel, scroll, hover, note) {
+function drawReplays(ctx, W, H, alpha, items, sel, scroll, hover, note, touch) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.save();
   ctx.globalAlpha = alpha;
@@ -1414,9 +1424,11 @@ function drawReplays(ctx, W, H, alpha, items, sel, scroll, hover, note) {
     ctx.font = '15px "Consolas","Courier New",monospace';
     ctx.fillText(note, W / 2, H * 0.90);
   }
-  ctx.fillStyle = 'rgba(40,20,8,0.85)';
-  ctx.font = '15px "Consolas","Courier New",monospace';
-  ctx.fillText('Esc to go back', W / 2, H * 0.95);
+  if (!touch) {
+    ctx.fillStyle = 'rgba(40,20,8,0.85)';
+    ctx.font = '15px "Consolas","Courier New",monospace';
+    ctx.fillText('Esc to go back', W / 2, H * 0.95);
+  }
   ctx.restore();
 }
 
@@ -1627,35 +1639,38 @@ function drawHUD(ctx, W, H, o) {
     ctx.fillStyle = '#f9c623';
     ctx.fillText(text, W / 2, 10 + bf * 0.45);
     ctx.textAlign = 'left';
+    const goBack = o.touch ? 'Tap to go back' : 'Press Enter to go back';
     if (o.replay.done) {
       if (o.replay.outcome === 'finished') {
         centerMsg(ctx, W, H, 'Course completed!',
-          `Time ${fmt(o.time)} - press Enter to go back`);
+          `Time ${fmt(o.time)} - ${o.touch ? 'tap' : 'press Enter'} to go back`);
       } else if (o.replay.outcome === 'crashed') {
-        centerMsg(ctx, W, H, 'The rider crashed!', 'Press Enter to go back');
+        centerMsg(ctx, W, H, 'The rider crashed!', goBack);
       } else {
         // the inputs ran out before the recorded ending (the game has
         // changed since this was saved): stop the tape gracefully
-        centerMsg(ctx, W, H, 'End of the tape!', 'Press Enter to go back');
+        centerMsg(ctx, W, H, 'End of the tape!', goBack);
       }
     }
   } else if (o.state === 'dead') {
+    const again = o.touch ? 'Tap' : 'Press Enter';
     const sub = o.lives > 0
-      ? `Press Enter to try again - ${o.lives} ${o.lives === 1 ? 'life' : 'lives'} left`
-      : 'Out of lives... press Enter';
+      ? `${again} to try again - ${o.lives} ${o.lives === 1 ? 'life' : 'lives'} left`
+      : `Out of lives... ${o.touch ? 'tap to continue' : 'press Enter'}`;
     centerMsg(ctx, W, H, 'You crashed!', sub, o.saveNote);
   } else if (o.state === 'finished') {
     centerMsg(ctx, W, H, 'Course completed!',
-      `Time ${fmt(o.time)} - press Enter for ${o.hasNext ? 'the next map' : 'the menu'}`,
+      `Time ${fmt(o.time)} - ${o.touch ? 'tap' : 'press Enter'} for ` +
+        (o.hasNext ? 'the next map' : 'the menu'),
       o.saveNote);
   } else if (o.state === 'ready') {
-    drawReady(ctx, W, H, o.mapLabel);
+    drawReady(ctx, W, H, o.mapLabel, o.touch);
   }
 }
 
 // boot screen: progress bar while assets stream in; once ready it becomes
 // the "press to start" gate (the gesture also unlocks the audio context)
-function drawLoading(ctx, W, H, frac, t, ready) {
+function drawLoading(ctx, W, H, frac, t, ready, touch) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = '#1a0f06';
   ctx.fillRect(0, 0, W, H);
@@ -1672,7 +1687,8 @@ function drawLoading(ctx, W, H, frac, t, ready) {
     ctx.globalAlpha = 0.65 + Math.sin(t * 4) * 0.35;
     ctx.fillStyle = '#9be08a';
     ctx.font = 'bold 24px "Consolas","Courier New",monospace';
-    ctx.fillText('Press any key or click to start', W / 2, H * 0.62);
+    ctx.fillText(touch ? 'Tap to start' : 'Press any key or click to start',
+      W / 2, H * 0.62);
     ctx.globalAlpha = 1;
     return;
   }

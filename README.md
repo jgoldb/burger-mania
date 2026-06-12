@@ -24,6 +24,12 @@ Open `index.html` in any modern browser (no build step, no server needed).
 
 Your best time is saved locally per level.
 
+On phones and tablets (any touch screen) the game shows on-screen controls
+instead: gas/brake pedals under the right thumb, lean buttons under the
+left, a turn-around button, and pause/restart buttons at the top. Menus,
+sliders, and the replay list all respond to taps, and a **Save Replay**
+button appears on the crash/finish screens.
+
 ## Replays
 
 When a run ends — crash or course complete — press **S** to save a replay

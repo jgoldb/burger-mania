@@ -103,7 +103,7 @@ function keyUp(k) {
 }
 
 const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
-  'js/music.js', 'js/replay.js', 'js/game.js']
+  'js/music.js', 'js/replay.js', 'js/touch.js', 'js/game.js']
   .map(f => fs.readFileSync(path.join(root, f), 'utf8')).join('\n') + `
 // MUSIC.play is private state; observe through the module's public songs
 // table by wrapping play
