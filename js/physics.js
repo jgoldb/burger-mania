@@ -96,27 +96,35 @@ function pointInPoly(px, py, poly) {
 }
 
 // Builds collision segments and the list of grass-topped edges from raw level data.
+// Polygons whose index appears in L.wires are "wire" terrain, Elasto
+// Mania style: only the WHEELS collide with them. The frame's belly and
+// the head pass straight through, so a wire can thread the rider's body
+// — and a bike tipping over a ledge gets shepherded around by the wire
+// until the wheels land on top of it, hanging the bike upside down.
 function prepareLevel(L) {
   const segments = [], grass = [];
-  for (const poly of L.polygons) {
+  const wires = new Set(L.wires || []);
+  L.polygons.forEach((poly, pi) => {
+    const wire = wires.has(pi);
     // a polygon nested inside another is a solid island in the playable
     // area (evenodd fill), so its playable side is the inverse
     const island = L.polygons.some(p =>
       p !== poly && pointInPoly(poly[0][0], poly[0][1], p));
     for (let i = 0; i < poly.length; i++) {
       const a = poly[i], b = poly[(i + 1) % poly.length];
-      const s = { ax: a[0], ay: a[1], bx: b[0], by: b[1] };
+      const s = { ax: a[0], ay: a[1], bx: b[0], by: b[1], wire };
       segments.push(s);
       const mx = (s.ax + s.bx) / 2, my = (s.ay + s.by) / 2;
       const dx = s.bx - s.ax, dy = s.by - s.ay;
-      // grass grows on edges that are not too steep and face the playable side upward
-      if (Math.abs(dx) > 0.001 && Math.abs(dy / dx) < 2.0) {
+      // grass grows on edges that are not too steep and face the playable
+      // side upward; wires stay bare
+      if (!wire && Math.abs(dx) > 0.001 && Math.abs(dy / dx) < 2.0) {
         const up = pointInPoly(mx, my - 0.3, poly);
         const down = pointInPoly(mx, my + 0.3, poly);
         if (island ? (down && !up) : (up && !down)) grass.push(s);
       }
     }
-  }
+  });
   return Object.assign({}, L, { segments, grass });
 }
 
@@ -308,8 +316,9 @@ class Bike {
     // the wheels splay sideways and the frame dives between them, so the
     // belly is what actually meets the ground — and it bounces off (the
     // elastic bars fire the whole bike back up) instead of letting the
-    // head carry on through
+    // head carry on through. Wires touch wheels only: the body threads past
     for (const seg of segs) {
+      if (seg.wire) continue;
       const cp = closestOnSeg(this.pos.x, this.pos.y, seg);
       let nx = this.pos.x - cp.x, ny = this.pos.y - cp.y;
       const d = Math.hypot(nx, ny);
@@ -334,9 +343,10 @@ class Bike {
       else w.spin -= Math.sign(w.spin) * dec;
     }
 
-    // the head is the only fatal collider
+    // the head is the only fatal collider; wires can't hurt it
     const h = this.headPos();
     for (const seg of segs) {
+      if (seg.wire) continue;
       const cp = closestOnSeg(h.x, h.y, seg);
       if (Math.hypot(h.x - cp.x, h.y - cp.y) < P.headR) {
         this.dead = true;
@@ -348,12 +358,14 @@ class Bike {
   wheelContacts(w, segs, dt, braking) {
     const P = PHYS;
     w.onGround = false;
+    w.onWire = false;
     for (const seg of segs) {
       const cp = closestOnSeg(w.pos.x, w.pos.y, seg);
       let nx = w.pos.x - cp.x, ny = w.pos.y - cp.y;
       const d = Math.hypot(nx, ny);
       if (d >= P.wheelR || d === 0) continue;
       w.onGround = true;
+      if (seg.wire) w.onWire = true;
       nx /= d; ny /= d;
 
       // positional correction
