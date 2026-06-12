@@ -802,6 +802,31 @@ function fmt(t) {
          String(h).padStart(2, '0');
 }
 
+// rising "+N" toast for a style award: pops in with a little overshoot,
+// then fades out at the end of its ride (the caller moves it upward).
+// `zoom` is the world scale, so the lettering tracks the window size
+const STYLE_POPUP_DUR = 0.9;
+
+function drawStylePopup(ctx, x, y, text, age, zoom) {
+  if (age >= STYLE_POPUP_DUR) return;
+  const pop = easeOutBack(Math.min(1, age / 0.14));
+  const fade = Math.min(1, (STYLE_POPUP_DUR - age) / 0.25);
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(pop, pop);
+  ctx.globalAlpha = Math.max(0, fade);
+  ctx.font = `bold ${Math.max(16, Math.round(zoom * 0.62))}px "Consolas","Courier New",monospace`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = Math.max(3, zoom * 0.12);
+  ctx.strokeStyle = 'rgba(40,16,4,0.85)';
+  ctx.strokeText(text, 0, 0);
+  ctx.fillStyle = '#ffd84d';
+  ctx.fillText(text, 0, 0);
+  ctx.restore();
+}
+
 function centerMsg(ctx, W, H, title, sub, sub2) {
   ctx.save();
   const pw = Math.min(W * 0.8, 640), ph = sub2 ? 142 : 110;
@@ -1632,11 +1657,18 @@ function drawHUD(ctx, W, H, o) {
   ctx.fillText(`time    ${fmt(o.time)}`, 14, 12);
   ctx.fillText(`best    ${o.best != null ? fmt(o.best) : '--:--,--'}`, 14, 12 + fs * 1.3);
   ctx.fillText(`burgers ${o.got}/${o.total}`, 14, 12 + fs * 2.6);
+  // the style row only appears when the caller tracks it (the live game);
+  // bare drawHUD harnesses without it keep the old layout
+  const hasStyle = o.style != null;
+  if (hasStyle) {
+    ctx.fillText(`style   ${o.style}` +
+      (o.styleBest != null ? `  best ${o.styleBest}` : ''), 14, 12 + fs * 3.9);
+  }
   if (o.lives != null) {
     // one biker head per remaining life, behind a "lives" label that lines
     // up with the value column of the rows above
     const img = IMAGES.biker;
-    const ih = fs * 1.5, iy = 12 + fs * 3.9;
+    const ih = fs * 1.5, iy = 12 + fs * (hasStyle ? 5.2 : 3.9);
     // value column matches "time", "best", "burgers" (all 8 monospace chars)
     const hx = 14 + ctx.measureText('burgers ').width;
     ctx.fillText('lives', 14, iy + (ih - fs) / 2);
@@ -1674,7 +1706,8 @@ function drawHUD(ctx, W, H, o) {
     if (o.replay.done) {
       if (o.replay.outcome === 'finished') {
         centerMsg(ctx, W, H, 'Course completed!',
-          `Time ${fmt(o.time)} - ${o.touch ? 'tap' : 'press Enter'} to go back`);
+          `Time ${fmt(o.time)}${hasStyle ? ' - Style ' + o.style : ''} - ` +
+            `${o.touch ? 'tap' : 'press Enter'} to go back`);
       } else if (o.replay.outcome === 'crashed') {
         centerMsg(ctx, W, H, 'The rider crashed!', goBack);
       } else {
@@ -1691,7 +1724,8 @@ function drawHUD(ctx, W, H, o) {
     centerMsg(ctx, W, H, 'You crashed!', sub, o.saveNote);
   } else if (o.state === 'finished') {
     centerMsg(ctx, W, H, 'Course completed!',
-      `Time ${fmt(o.time)} - ${o.touch ? 'tap' : 'press Enter'} for ` +
+      `Time ${fmt(o.time)}${hasStyle ? ' - Style ' + o.style : ''} - ` +
+        `${o.touch ? 'tap' : 'press Enter'} for ` +
         (o.hasNext ? 'the next map' : 'the menu'),
       o.saveNote);
   } else if (o.state === 'ready') {

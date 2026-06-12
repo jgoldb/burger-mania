@@ -26,6 +26,15 @@
   let bestKey = 'burger-mania-best-' + level.name;
   let best = parseFloat(localStorage.getItem(bestKey) || '');
   if (!isFinite(best)) best = null;
+  // style points: airborne tricks pay out on the spot; a finished run
+  // banks the per-level best, a second record to chase alongside time
+  let styleKey = 'burger-mania-style-' + level.name;
+  let styleBest = parseInt(localStorage.getItem(styleKey) || '', 10);
+  if (!isFinite(styleBest)) styleBest = null;
+  let stylePts = 0;     // this run's total
+  let airSpin = 0;      // net rotation accumulated while fully airborne
+  let stylePopups = []; // floating "+N" toasts riding above the biker
+  let popupSeq = 0;     // cycles spawn lanes so stacked toasts stay legible
   let cam = { x: level.start.x, y: level.start.y };
   const CAM_LEAD = 4.2; // how far the view centers ahead of the bike's facing
   let camLead = CAM_LEAD; // smoothed, so turning around pans rather than snaps
@@ -54,6 +63,10 @@
     time = 0;
     burgers = level.burgers.map(b => ({ x: b[0], y: b[1], got: false }));
     headBody = null;
+    stylePts = 0;
+    airSpin = 0;
+    stylePopups = [];
+    popupSeq = 0;
     camLead = bike.facing * CAM_LEAD;
     cam.x = level.start.x + camLead;
     cam.y = level.start.y;
@@ -69,6 +82,9 @@
     bestKey = 'burger-mania-best-' + level.name;
     best = parseFloat(localStorage.getItem(bestKey) || '');
     if (!isFinite(best)) best = null;
+    styleKey = 'burger-mania-style-' + level.name;
+    styleBest = parseInt(localStorage.getItem(styleKey) || '', 10);
+    if (!isFinite(styleBest)) styleBest = null;
     reset();
   }
 
@@ -199,6 +215,28 @@
     f.connect(g);
     g.connect(sfxGain);
     src.start();
+  }
+
+  // quick rising arpeggio when style points land, each note sliding up a
+  // little as it rings; a big award (full rotation) gets an extra top note
+  // so it reads flashier than a turn-around
+  function styleSparkle(big) {
+    if (!AC || muted) return;
+    const notes = big ? [740, 988, 1480, 1976] : [740, 988, 1480];
+    notes.forEach((freq, i) => {
+      const t0 = AC.currentTime + i * 0.05;
+      const o = AC.createOscillator(), g = AC.createGain();
+      o.type = 'triangle';
+      o.frequency.setValueAtTime(freq, t0);
+      o.frequency.exponentialRampToValueAtTime(freq * 1.3, t0 + 0.16);
+      g.gain.setValueAtTime(0.0001, t0); // exponential ramps can't leave 0
+      g.gain.exponentialRampToValueAtTime(0.14, t0 + 0.025);
+      g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.22);
+      o.connect(g);
+      g.connect(sfxGain);
+      o.start(t0);
+      o.stop(t0 + 0.24);
+    });
   }
 
   // fires whoosh / thud / fanfare cues as title letters launch and land
@@ -409,7 +447,9 @@
     const what = f.data.outcome === 'finished'
       ? 'finished ' + fmt(f.data.time)
       : 'crashed at ' + fmt(f.data.time);
-    return f.name + ' - ' + what;
+    // replays saved before style points existed carry no total
+    const style = f.data.style != null ? f.data.style : 'N/A';
+    return f.name + ' - ' + what + ' - style ' + style;
   }
 
   async function chooseReplayFolder() {
@@ -478,6 +518,7 @@
         label: mapLabel(),
         outcome,
         time,
+        style: stylePts,
         trackId: currentTrack ? currentTrack.id : null,
         levelIndex,
       });
@@ -959,6 +1000,33 @@
   });
 
   // ---------- gameplay ----------
+  // Style points are scored for airborne tricks. The detection only READS
+  // sim state (never feeds back into the physics), so live play and replay
+  // playback recompute the same totals and old tapes stay in sync.
+  const STYLE_FLIP = 100; // turning around (space) while fully airborne
+  const STYLE_SPIN = 250; // each full rotation while fully airborne
+
+  // true only once a physics step has run (onGround starts undefined), so
+  // a flip queued on the very first frame of a run can't read as airborne
+  function bikeAirborne() {
+    return bike.wheels.every(w => w.onGround === false);
+  }
+
+  function awardStyle(pts) {
+    stylePts += pts;
+    // toasts cycle three lanes so back-to-back awards rise side by side
+    stylePopups.push({ text: '+' + pts, age: 0, dx: [0, -0.6, 0.6][popupSeq++ % 3] });
+    styleSparkle(pts >= STYLE_SPIN);
+  }
+
+  function agePopups(dt) {
+    for (const p of stylePopups) p.age += dt;
+    // appended in age order, so the head is always the oldest
+    if (stylePopups.length && stylePopups[0].age >= STYLE_POPUP_DUR) {
+      stylePopups = stylePopups.filter(p => p.age < STYLE_POPUP_DUR);
+    }
+  }
+
   function checkPickups() {
     const h = bike.headPos();
     const pts = [
@@ -1010,6 +1078,10 @@
     if (best === null || time < best) {
       best = time;
       localStorage.setItem(bestKey, String(best));
+    }
+    if (stylePts > 0 && (styleBest === null || stylePts > styleBest)) {
+      styleBest = stylePts;
+      localStorage.setItem(styleKey, String(styleBest));
     }
     blip(660, 0.12);
     setTimeout(() => blip(880, 0.12), 130);
@@ -1079,11 +1151,14 @@
   // one 60 Hz sim frame, shared by live play and replay playback: applies
   // a queued turn-around, substeps the physics, then settles the outcome
   function simFrame(input, doFlip) {
+    const wasAir = bikeAirborne();
     if (doFlip) {
       bike.flip();
       whoosh(0.14, 950, 0.22);
+      if (wasAir) awardStyle(STYLE_FLIP);
     }
     simInput = input;
+    const angle0 = bike.angle;
     for (let i = 0; i < SUB; i++) {
       bike.step(FDT / SUB, input, level.segments);
       if (bike.dead) break;
@@ -1092,6 +1167,16 @@
       onDeath();
     } else {
       time += FDT;
+      // net airborne rotation: only whole frames spent in the air count,
+      // every full lap pays out, and a touchdown forfeits the remainder
+      if (!bikeAirborne()) airSpin = 0;
+      else if (wasAir) {
+        airSpin += bike.angle - angle0;
+        if (Math.abs(airSpin) >= Math.PI * 2) {
+          airSpin -= Math.sign(airSpin) * Math.PI * 2;
+          awardStyle(STYLE_SPIN);
+        }
+      }
       checkPickups();
     }
   }
@@ -1147,6 +1232,9 @@
           state !== 'difficulty' && state !== 'continue' && state !== 'replays' &&
           state !== 'audio') {
         updateCamera(FDT);
+        // toasts keep rising over the crash/finish screens, but a pause
+        // freezes them along with everything else
+        if (state !== 'paused') agePopups(FDT);
       }
     }
     updateHover();
@@ -1219,6 +1307,15 @@
     if (headBody) drawHead(ctx, headBody.x, headBody.y, bike.facing, headBody.rot);
     ctx.restore();
 
+    // floating "+N" awards ride above the biker in world coordinates but
+    // are lettered in screen space so the text stays crisp
+    for (const p of stylePopups) {
+      const wx = bike.pos.x + p.dx;
+      const wy = bike.pos.y - 1.5 - p.age * 1.1;
+      drawStylePopup(ctx, W / 2 + (wx - cam.x) * Z, H / 2 + (wy - cam.y) * Z,
+        p.text, p.age, Z);
+    }
+
     drawMinimap(ctx, W, H, level, {
       pos: bike.pos,
       burgers,
@@ -1235,6 +1332,8 @@
       got: burgers.filter(b => b.got).length,
       total: burgers.length,
       best,
+      style: stylePts,
+      styleBest,
       state,
       lives: watching ? null : lives,
       hasNext: hasNextLevel(),

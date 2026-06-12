@@ -49,6 +49,7 @@ const REPLAY = (() => {
       label: meta.label,
       outcome: meta.outcome,
       time: meta.time,
+      style: Number.isFinite(meta.style) ? meta.style : null,
       trackId: meta.trackId || null,
       levelIndex: meta.levelIndex,
       level,
@@ -93,6 +94,9 @@ const REPLAY = (() => {
     }
     if (total !== d.frames) throw new Error('replay frame count mismatch');
     if (!Array.isArray(d.flips)) d.flips = [];
+    // style points arrived after the format shipped: older files (and
+    // hand-damaged values) read as null, which the UI shows as N/A
+    if (!Number.isFinite(d.style)) d.style = null;
     return d;
   }
 

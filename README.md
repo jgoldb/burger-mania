@@ -24,6 +24,14 @@ Open `index.html` in any modern browser (no build step, no server needed).
 
 Your best time is saved locally per level.
 
+## Style points
+
+Mid-air tricks score **style points**, a second record to chase alongside
+best time: turning around (Space) while fully airborne is worth **+100**,
+and every full rotation in the air pays **+250**. Awards float up over the
+rider as they land, with a sparkle to match. A finished run banks your
+per-level best style score (a crash forfeits the banking, not the fun).
+
 On phones and tablets (any touch screen) the game shows on-screen controls
 instead: gas/brake pedals under the right thumb, lean buttons under the
 left, a turn-around button, and pause/restart buttons at the top. Menus,
@@ -40,6 +48,9 @@ file at a time. Playback feeds the recorded per-frame inputs back through
 the deterministic sim, so it reproduces the run exactly. The level data is
 embedded in the file, so later level edits can't bend an old replay — but
 physics changes can; a desynced tape just stops where its inputs run out.
+Each file also records the run's style points total, shown in the replay
+list; files saved before style points existed list it as **N/A** (playback
+still re-earns the points live, since the sim recomputes them).
 
 ## How it works
 
@@ -64,7 +75,8 @@ physics changes can; a desynced tape just stops where its inputs run out.
 - `js/game.js` — game loop, input, camera, WebAudio engine sound + effects,
   state machine (title / playing / dead / finished, plus the replay
   browser and playback screens), picks the soundtrack for the current
-  screen.
+  screen. Also detects and scores style points (the detection only reads
+  sim state, so replays recompute identical totals).
 
 ## Tests
 
@@ -75,6 +87,7 @@ node test/music_check.js    # soundtrack data: pitches, loops, theme coverage
 node test/music_engine_check.js  # every scheduled note/envelope is valid
 node test/game_smoke.js     # full stack under a stub DOM: right song per screen
 node test/replay_check.js   # tape encoding + record/save/playback determinism
+node test/style_check.js    # style points: airborne flip/rotation awards
 ```
 
 ## Adding levels

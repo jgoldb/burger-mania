@@ -193,6 +193,13 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
     REPLAY.parse(JSON.stringify(broken));
   } catch (e) { threw = true; }
   if (!threw) bad('parse accepted a frame-count mismatch');
+  // style metadata: round-trips when present, null (shown as N/A) when not
+  const styled = REPLAY.parse(REPLAY.serialize({
+    level: LEVELS[0], label: 'st', outcome: 'finished', time: 2,
+    trackId: 'easy', levelIndex: 0, style: 350,
+  }));
+  if (styled.style !== 350) bad('style total did not round trip: ' + styled.style);
+  if (rt.style !== null) bad('absent style should parse as null, got ' + rt.style);
 
   // ---- whole-stack: record a doomed run, save it, watch it back ----
   await new Promise(r => setImmediate(r));   // let loadAssets settle
@@ -212,6 +219,8 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
   const deadTexts = lastFrameTexts();
   const liveTime = deadTexts.find(t => t.startsWith('time'));
   const liveBurgers = deadTexts.find(t => t.startsWith('burgers'));
+  const liveStyle = deadTexts.find(t => t.startsWith('style'));
+  if (!liveStyle) bad('HUD does not show a style row');
   if (!deadTexts.some(t => t.includes('S: save replay'))) {
     bad('crash screen does not offer S: save replay');
   }
@@ -227,6 +236,9 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
     if (d.outcome !== 'crashed') bad('saved outcome should be crashed, got ' + d.outcome);
     if (!(d.frames > 0)) bad('saved replay has no frames');
     if (d.level.name !== 'Burger Hill') bad('saved level should be Burger Hill, got ' + d.level.name);
+    if (!Number.isFinite(d.style) || d.style < 0) {
+      bad('saved replay is missing its style total: ' + d.style);
+    }
   }
   if (!lastFrameTexts().some(t => t.startsWith('Saved '))) {
     bad('save confirmation not shown on the crash screen');
@@ -249,6 +261,9 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
   if (!listTexts.some(t => t.includes('Burger Hill'))) {
     bad('replay list does not show the saved Burger Hill run');
   }
+  if (!listTexts.some(t => / - style \\d+$/.test(t))) {
+    bad('replay list does not show the saved run style total');
+  }
   key('Enter');                              // play the newest replay
   pumpFrames(2, 1 / 60);
   if (!lastFrameTexts().some(t => t.startsWith('REPLAY'))) {
@@ -260,11 +275,15 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
     const endTexts = lastFrameTexts();
     const repTime = endTexts.find(t => t.startsWith('time'));
     const repBurgers = endTexts.find(t => t.startsWith('burgers'));
+    const repStyle = endTexts.find(t => t.startsWith('style'));
     if (repTime !== liveTime) {
       bad('replay time differs from the live run: ' + repTime + ' vs ' + liveTime);
     }
     if (repBurgers !== liveBurgers) {
       bad('replay burgers differ from the live run: ' + repBurgers + ' vs ' + liveBurgers);
+    }
+    if (repStyle !== liveStyle) {
+      bad('replay style differs from the live run: ' + repStyle + ' vs ' + liveStyle);
     }
   }
   // ---- a synthetic instant-win replay covers the finished path ----
@@ -289,6 +308,10 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
   }
   if (!lastFrameTexts().some(t => t.includes('Synthetic Win'))) {
     bad('replay list does not show the synthetic win replay');
+  }
+  // the synthetic file predates style points (no field): the list says N/A
+  if (!lastFrameTexts().some(t => t.includes('style N/A'))) {
+    bad('replay without style data should list style N/A');
   }
   storageWrites.count = 0;
   key('Enter');                              // newest first: play Win Box
