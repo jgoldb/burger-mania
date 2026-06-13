@@ -319,6 +319,7 @@ const REPLAY = (() => {
   }
 
   return {
+    VERSION,
     EXT, fsSupported,
     begin, record, hasRun, serialize,
     parse, cursor,

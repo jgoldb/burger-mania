@@ -1,6 +1,28 @@
 'use strict';
 
 (function () {
+  // One-time records reset, tied to the sim version. Best times and style
+  // scores are only comparable within one physics build, so whenever the sim
+  // changes (REPLAY.VERSION bumps on any physics/step/input change) we drop the
+  // saved records once and stamp the new version. Reloads on the same version
+  // see a matching stamp and leave storage untouched — no manual bump needed.
+  // Only the best-/style- record keys are cleared; volume prefs, saved editor
+  // maps, and the editor autosave are deliberately left intact.
+  const SIM_VER_KEY = 'burger-mania-sim-version';
+  try {
+    const cur = String(REPLAY.VERSION);
+    if (localStorage.getItem(SIM_VER_KEY) !== cur) {
+      const drop = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && (k.indexOf('burger-mania-best-') === 0 ||
+                  k.indexOf('burger-mania-style-') === 0)) drop.push(k);
+      }
+      drop.forEach(k => localStorage.removeItem(k));
+      localStorage.setItem(SIM_VER_KEY, cur); // stamp so reloads on this version are untouched
+    }
+  } catch (e) { /* storage blocked or stubbed (headless tests) — nothing to reset */ }
+
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
   let W = 0, H = 0;
