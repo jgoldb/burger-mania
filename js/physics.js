@@ -2,7 +2,7 @@
 
 // Tuning constants for the bike. Units: meters, seconds, radians.
 const PHYS = {
-  g: 7,
+  g: 5.6,
 
   wheelR: 0.4,
   wheelM: 0.22,
@@ -32,7 +32,7 @@ const PHYS = {
                     // riding a loop. The dramatic stretch comes from momentum
                     // flinging the wheel past the rest, out to maxStretch
 
-  engineT: 1.4,    // torque applied to the driven (rear) wheel
+  engineT: 1.1,    // torque applied to the driven (rear) wheel
   engineLow: 0.25, // extra low-end torque fraction: full extra at zero
                    // wheel spin, gone by engineKnee. Steep-hill starts get
                    // the grunt without raising cruise acceleration
@@ -43,7 +43,7 @@ const PHYS = {
   brakeRate: 30,   // exponential lock rate for both wheels
   brakeR: 0.32,    // fraction of brake torque reacted onto the frame
   brakeSkid: 2.0,  // skid friction torque multiplier passed to the frame
-  brakeCap: 0.4,   // stoppie pitch (rad) the brake torque fades out at;
+  brakeCap: 0.5,   // stoppie pitch (rad) the brake torque fades out at;
                    // braking decel is endo-limited, so this IS the brake
                    // strength on flat ground
   parkMu: 1.9,     // static friction once the brake has fully clamped a
