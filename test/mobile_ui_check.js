@@ -90,7 +90,8 @@ const code = ['js/assets.js', 'js/physics.js', 'js/render.js', 'js/touch.js']
   + '\nglobal.__R = { drawLoading, drawMenu, drawDifficulty, drawReady, drawPause,'
   + ' drawAudio, drawContinue, drawReplays, drawLevelSelect, drawVictory, drawHUD,'
   + ' drawTitleLetters, makePatterns, TOUCH, setSafeInsets, saveButtonRect,'
-  + ' menuRects, audioRects, replayRects, minimapRect };';
+  + ' menuRects, audioRects, replayRects, minimapRect,'
+  + ' victoryRects, victoryCardBox, victoryLandscape };';
 eval(code);
 
 const R = global.__R;
@@ -217,6 +218,45 @@ for (const [W, H] of LANDSCAPE) {
   }
 }
 R.setSafeInsets({});
+
+// the victory feast: on a short landscape screen the scorecard docks to the
+// right half so the lower-left champion stays in view, with the Back-to-Menu
+// button tucked beneath it — never overlapping the card, the rider, or the
+// bottom safe edge.
+function checkVictoryLayout(inset) {
+  R.setSafeInsets(inset);
+  const tag = (inset.top || inset.right || inset.bottom || inset.left)
+    ? ` [safe ${inset.top}/${inset.right}/${inset.bottom}/${inset.left}]` : '';
+  for (const [W, H] of LANDSCAPE) {
+    if (!R.victoryLandscape(W, H)) { bad(`victory @ ${W}x${H}${tag}: expected the docked layout`); continue; }
+    const card = R.victoryCardBox(W, H);
+    const btn = R.victoryRects(W, H)[0];
+    const sb = H - inset.bottom;
+    if (card.x < inset.left - 0.5 || card.x + card.w > W - inset.right + 0.5 ||
+        card.y < inset.top - 0.5 || card.y + card.h > sb + 0.5) {
+      bad(`victory card @ ${W}x${H}${tag} outside the safe band`);
+    }
+    if (btn.x < inset.left - 0.5 || btn.x + btn.w > W - inset.right + 0.5 ||
+        btn.y + btn.h > sb + 0.5) {
+      bad(`victory button @ ${W}x${H}${tag} off the safe band`);
+    }
+    if (btn.y < card.y + card.h - 0.5) {
+      bad(`victory button @ ${W}x${H}${tag} overlaps the scorecard `
+        + `(button y ${btn.y.toFixed(0)} vs card bottom ${(card.y + card.h).toFixed(0)})`);
+    }
+    // the feasting champion sits lower-left (drawn at x ~0.27W, scale 2.1);
+    // the card must clear his right edge so he's never buried
+    const Z = Math.min(W / 26, H / 13.5);
+    const bikerRight = 0.27 * W + 1.365 * Z;
+    if (card.x < bikerRight + 12) {
+      bad(`victory card @ ${W}x${H}${tag} buries the champion `
+        + `(card x ${card.x.toFixed(0)} vs rider right ${bikerRight.toFixed(0)})`);
+    }
+  }
+  R.setSafeInsets({});
+}
+checkVictoryLayout({ top: 0, right: 0, bottom: 0, left: 0 });
+checkVictoryLayout(NOTCH);
 
 console.log(fail ? `FAILED (${fail})` : 'OK');
 process.exit(fail ? 1 : 0);

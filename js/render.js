@@ -1666,8 +1666,35 @@ function drawVictoryBiker(ctx, x, y, scale, t) {
   ctx.restore();
 }
 
+// A short landscape screen can't hold the centred scorecard: it would
+// blanket the feast, bury the lower-left champion and run under the button.
+// (Every phone in play is landscape — portrait shows the rotate prompt — so
+// this is the live case on mobile; a small desktop window hits it too.) There
+// we dock a slim card to the right half with the button beneath it; taller
+// screens keep the roomy centred layout.
+function victoryLandscape(W, H) { return W > H && H < 520; }
+
+// Geometry of that right-docked card — a slim panel in the right half, clear
+// of the rider, leaving a strip beneath for the button. Fixed to W/H/insets
+// (not the row count) so victoryRects can place the button under it without
+// knowing the scorecard's contents.
+function victoryCardBox(W, H) {
+  const x = SAFE.left + safeBandW(W) * 0.42;
+  const w = safeBandW(W) * 0.56;
+  const top = Math.max(H * 0.2, H * 0.08 + 62);     // below the title block
+  const bottom = H - SAFE.bottom - 8 - 66;          // reserve a button band
+  return { x, y: top, w, h: Math.max(60, bottom - top) };
+}
+
 // the victory screen's single button, shared with game.js for hit-testing
 function victoryRects(W, H) {
+  if (victoryLandscape(W, H)) {
+    const card = victoryCardBox(W, H);
+    const bw = Math.min(card.w, 280);
+    const y = card.y + card.h + 10;
+    const h = Math.min(52, Math.max(40, H - SAFE.bottom - 8 - y));
+    return [{ x: card.x + (card.w - bw) / 2, y, w: bw, h }];
+  }
   return menuRects(W, H, 1, H * 0.68);
 }
 
@@ -1740,21 +1767,43 @@ function drawVictory(ctx, W, H, o) {
   ctx.fillText('VICTORY!', 0, 0);
   ctx.restore();
 
-  ctx.fillStyle = '#9be08a';
-  fitFont(ctx, `Every ${o.label} map cleared!`, safeBandW(W) * 0.9, 19, 'bold', 12);
-  ctx.fillText(`Every ${o.label} map cleared!`, W / 2, H * 0.08 + 42);
+  // the green subtitle washes out against the bright sky, so lay it over a
+  // dark outline halo for contrast before the green fill on top
+  const sub = `Every ${o.label} map cleared!`;
+  const subY = H * 0.08 + 42;
+  fitFont(ctx, sub, safeBandW(W) * 0.9, 19, 'bold', 12);
+  ctx.fillStyle = 'rgba(22,11,3,0.92)';
+  for (const [dx, dy] of [[1.6, 1.6], [-1.6, 1.6], [1.6, -1.6], [-1.6, -1.6]]) {
+    ctx.fillText(sub, W / 2 + dx, subY + dy);
+  }
+  ctx.fillStyle = '#caf0a2';
+  ctx.fillText(sub, W / 2, subY);
 
   // ---------- the scorecard ----------
   const names = o.names || [], results = o.results || [];
   const complete = names.length > 0 && names.every((_, i) => results[i]);
   const rows = names.length + 1 + (complete ? 1 : 0); // + header (+ total)
-  // below the subtitle even on short screens, above the button always
-  const top = Math.max(H * 0.155, H * 0.08 + 56), bottom = H * 0.645;
-  const rowH = Math.max(13, Math.min(27, (bottom - top - 24) / (rows + 1.1)));
-  const fs = Math.max(10, Math.round(rowH * 0.62));
-  const pw = Math.min(safeBandW(W) * 0.88, 600);
-  const px = safeCenterX(W, pw);
-  const ph = rowH * (rows + 1.1) + 24;
+  const rects = victoryRects(W, H);
+
+  // short landscape: a slim card docked right, clear of the rider, button
+  // beneath it. otherwise a centred card under the title, its bottom held
+  // above the button so the two never collide.
+  const side = victoryLandscape(W, H);
+  let top, px, pw, availH, rowFloor;
+  if (side) {
+    const card = victoryCardBox(W, H);
+    top = card.y; px = card.x; pw = card.w; availH = card.h; rowFloor = 9;
+  } else {
+    top = Math.max(H * 0.155, H * 0.08 + 56);
+    pw = Math.min(safeBandW(W) * 0.88, 600);
+    px = safeCenterX(W, pw);
+    availH = Math.min(H * 0.645, rects[0].y - 14) - top; // above the button
+    rowFloor = 13;
+  }
+  const rowH = Math.max(rowFloor, Math.min(27, (availH - 24) / (rows + 1.1)));
+  const fs = Math.max(side ? 9 : 10, Math.round(rowH * 0.62));
+  // the docked card fills its reserved box; the centred one hugs its rows
+  const ph = side ? availH : rowH * (rows + 1.1) + 24;
   ctx.fillStyle = 'rgba(20,12,6,0.82)';
   roundRectPath(ctx, px, top, pw, ph, 12);
   ctx.fill();
@@ -1827,7 +1876,6 @@ function drawVictory(ctx, W, H, o) {
   }
 
   // ---------- the way home ----------
-  const rects = victoryRects(W, H);
   drawButtons(ctx, rects, ['Back to Menu'], o.sel, o.hover, 1);
 
   const hint = o.touch
