@@ -4,8 +4,9 @@
 // building custom courses with a GUI. The working map is the exact level
 // shape js/levels.js uses — polygons (the playable area is the inside;
 // nested polygons are solid islands), start, burgers, goal, theme, plus
-// the special-terrain fields: `glass` x-spans (obsidian the tires barely
-// grip) and `wires` polygon indices (wheels-only terrain). Maps save to
+// the special-terrain fields: `glassEdges` [poly, edge] pairs (obsidian the
+// tires barely grip, painted on per-edge) and `wires` polygon indices
+// (wheels-only terrain). Maps save to
 // .bmm files: JSON whose body IS a LEVELS entry plus a format header, so
 // a finished map can be pasted straight into a track.
 //
@@ -15,7 +16,7 @@
 // hands the exported level back to game.js for a real ride.
 const EDITOR = (() => {
   const FORMAT = 'burger-mania-map';
-  const VERSION = 1;
+  const VERSION = 2;             // 2 = per-edge glassEdges; 1 = legacy x-spans
   const EXT = '.bmm';
   // passed through REPLAY's file-dialog plumbing (same API, map flavored)
   const PICKER = {
@@ -25,6 +26,7 @@ const EDITOR = (() => {
   };
   const AUTOSAVE_KEY = 'burger-mania-editor-map';
   const SNAP = 0.1;                  // placement grid (world units)
+  const BRUSH_R = 14;                // glass/erase brush reach (screen px)
   const ZOOM_MIN = 4, ZOOM_MAX = 140;
   const UNDO_MAX = 200;
   const FONT = '"Consolas","Courier New",monospace';
@@ -37,12 +39,11 @@ const EDITOR = (() => {
   let prepared = null;   // prepareLevel(map), rebuilt after every change
   let cam = { x: 0, y: 0 };
   let zoom = 36;         // screen px per world unit
-  let tool = 'select';   // select | poly | burger | glass
-  let sel = null;        // {kind: vertex|edge|burger|glass|start|goal, ...}
+  let tool = 'select';   // select | poly | burger | glass | erase
+  let sel = null;        // {kind: vertex|edge|burger|start|goal, ...}
   let hov = null;        // same shape, under the cursor (select tool only)
-  let drag = null;       // active mouse drag: pan | move | glassDraft
+  let drag = null;       // active mouse drag: pan | move | paint
   let draft = null;      // poly tool: vertices placed so far
-  let draftGlass = null; // glass tool: {x0, x1} while the button is down
   let naming = false, nameBuf = '';
   let undoStack = [], redoStack = [];
   let nudgeAt = 0;       // coalesces arrow-key nudges into one undo step
@@ -69,7 +70,7 @@ const EDITOR = (() => {
       start: { x: 2.5, y: 7.25 },
       burgers: [[20, 7.3], [40, 7.3]],
       goal: [55, 7.25],
-      glass: [],
+      glassEdges: [],
       wires: [],
     };
   }
@@ -87,7 +88,7 @@ const EDITOR = (() => {
       burgers: map.burgers.map(b => [round2(b[0]), round2(b[1])]),
       goal: [round2(map.goal[0]), round2(map.goal[1])],
     };
-    if (map.glass.length) L.glass = map.glass.map(g => [round2(g[0]), round2(g[1])]);
+    if (map.glassEdges.length) L.glassEdges = map.glassEdges.map(e => [e[0], e[1]]);
     if (map.wires.length) L.wires = map.wires.slice();
     return L;
   }
@@ -107,7 +108,8 @@ const EDITOR = (() => {
   function parse(text) {
     const d = JSON.parse(text);
     if (d.format !== FORMAT) throw new Error('not a Burger Mania map');
-    if (d.version !== VERSION) throw new Error('unsupported map version ' + d.version);
+    // version 1 maps store glass as x-spans; parseGlass migrates them
+    if (d.version !== 1 && d.version !== VERSION) throw new Error('unsupported map version ' + d.version);
     if (!Array.isArray(d.polygons) || !d.polygons.length ||
         !d.polygons.every(p => Array.isArray(p) && p.length >= 3 && p.every(isPt))) {
       throw new Error('map polygons are damaged');
@@ -119,22 +121,56 @@ const EDITOR = (() => {
       throw new Error('map burgers are damaged');
     }
     if (!isPt(d.goal)) throw new Error('map goal is damaged');
-    const glass = Array.isArray(d.glass) ? d.glass : [];
-    if (!glass.every(isPt)) throw new Error('map glass spans are damaged');
     const wires = Array.isArray(d.wires) ? d.wires : [];
     if (!wires.every(i => Number.isInteger(i) && i >= 0 && i < d.polygons.length)) {
       throw new Error('map wire indices are damaged');
     }
+    const polygons = d.polygons.map(p => p.map(v => [Number(v[0]), Number(v[1])]));
     return {
       name: typeof d.name === 'string' && d.name ? d.name : 'Mystery Map',
       theme: typeof d.theme === 'string' ? d.theme : 'meadow',
-      polygons: d.polygons.map(p => p.map(v => [Number(v[0]), Number(v[1])])),
+      polygons,
       start: { x: Number(d.start.x), y: Number(d.start.y) },
       burgers: d.burgers.map(b => [Number(b[0]), Number(b[1])]),
       goal: [Number(d.goal[0]), Number(d.goal[1])],
-      glass: glass.map(g => [Math.min(g[0], g[1]), Math.max(g[0], g[1])]),
+      glassEdges: parseGlass(d, polygons, wires),
       wires: wires.slice(),
     };
+  }
+
+  // glass is per-edge ([poly, edge] pairs). A version-1 map instead carries
+  // x-spans in d.glass; convert them with the same midpoint rule prepareLevel
+  // uses, so an old map loads to the exact edges it always rendered as glass.
+  function parseGlass(d, polygons, wires) {
+    if (Array.isArray(d.glassEdges)) {
+      const ok = d.glassEdges.every(e =>
+        Array.isArray(e) && e.length === 2 &&
+        Number.isInteger(e[0]) && e[0] >= 0 && e[0] < polygons.length &&
+        Number.isInteger(e[1]) && e[1] >= 0 && e[1] < polygons[e[0]].length);
+      if (!ok) throw new Error('map glass edges are damaged');
+      return d.glassEdges.map(e => [e[0], e[1]]);
+    }
+    const spans = Array.isArray(d.glass) ? d.glass : [];
+    if (!spans.every(isPt)) throw new Error('map glass spans are damaged');
+    return spansToEdges(polygons, wires,
+      spans.map(g => [Math.min(g[0], g[1]), Math.max(g[0], g[1])]));
+  }
+
+  // the midpoint rule prepareLevel classifies glass with — kept in step here
+  // so legacy x-spans migrate to exactly the edges they used to flag
+  function spansToEdges(polygons, wires, spans) {
+    if (!spans.length) return [];
+    const wire = new Set(wires);
+    const out = [];
+    polygons.forEach((poly, pi) => {
+      if (wire.has(pi)) return;
+      for (let i = 0; i < poly.length; i++) {
+        const a = poly[i], b = poly[(i + 1) % poly.length];
+        const mx = (a[0] + b[0]) / 2;
+        if (spans.some(r => mx >= r[0] && mx <= r[1])) out.push([pi, i]);
+      }
+    });
+    return out;
   }
 
   function commit(force) {
@@ -241,8 +277,37 @@ const EDITOR = (() => {
   function setTool(t) {
     tool = t;
     draft = null;
-    draftGlass = null;
     if (t !== 'select') { sel = null; hov = null; }
+  }
+
+  // ---------- glass edges ----------
+
+  // glass lives as [poly, edge] pairs. The three ops that renumber a
+  // polygon's edges keep these in step so a painted edge stays painted (and
+  // never points at the wrong segment): splitting an edge (inserting a
+  // vertex) glasses both halves, deleting a vertex drops glass from the two
+  // edges it merged, and removing a polygon renumbers the rest.
+  function remapGlassVertexInsert(pi, vi) {
+    const out = [];
+    for (const e of map.glassEdges) {
+      if (e[0] !== pi || e[1] < vi) out.push(e);
+      else if (e[1] > vi) out.push([e[0], e[1] + 1]);
+      else { out.push([pi, vi]); out.push([pi, vi + 1]); } // the split edge: both halves
+    }
+    map.glassEdges = out;
+  }
+
+  function remapGlassVertexDelete(pi, vi, n) {
+    const prev = (vi - 1 + n) % n;        // the other edge folded into the merge
+    map.glassEdges = map.glassEdges
+      .filter(e => e[0] !== pi || (e[1] !== vi && e[1] !== prev))
+      .map(e => (e[0] === pi && e[1] > vi ? [e[0], e[1] - 1] : e));
+  }
+
+  function remapGlassPolyDelete(pi) {
+    map.glassEdges = map.glassEdges
+      .filter(e => e[0] !== pi)
+      .map(e => (e[0] > pi ? [e[0] - 1, e[1]] : e));
   }
 
   function cycleTheme() {
@@ -312,6 +377,7 @@ const EDITOR = (() => {
       return;
     }
     pushUndo();
+    remapGlassVertexDelete(p.pi, p.vi, map.polygons[p.pi].length);
     map.polygons[p.pi].splice(p.vi, 1);
     sel = null;
     commit(true);
@@ -324,8 +390,9 @@ const EDITOR = (() => {
     }
     pushUndo();
     map.polygons.splice(pi, 1);
-    // wire indices shift down past the removed polygon
+    // wire and glass indices shift down past the removed polygon
     map.wires = map.wires.filter(i => i !== pi).map(i => (i > pi ? i - 1 : i));
+    remapGlassPolyDelete(pi);
     sel = null; hov = null;
     commit(true);
     note('Polygon removed');
@@ -345,12 +412,6 @@ const EDITOR = (() => {
       case 'burger':
         pushUndo();
         map.burgers.splice(sel.bi, 1);
-        sel = null;
-        commit(true);
-        return;
-      case 'glass':
-        pushUndo();
-        map.glass.splice(sel.gi, 1);
         sel = null;
         commit(true);
         return;
@@ -411,12 +472,6 @@ const EDITOR = (() => {
         map.goal[0] = round2(map.goal[0] + dx);
         map.goal[1] = round2(map.goal[1] + dy);
         break;
-      case 'glass': {
-        const g = map.glass[p.gi];
-        g[p.end] = round2(g[p.end] + dx);
-        if (g[0] > g[1]) { [g[0], g[1]] = [g[1], g[0]]; p.end = 1 - p.end; }
-        break;
-      }
     }
   }
 
@@ -451,7 +506,7 @@ const EDITOR = (() => {
       const loaded = parse(await REPLAY.openFile(PICKER));
       pushUndo();
       map = loaded;
-      sel = null; hov = null; draft = null; draftGlass = null;
+      sel = null; hov = null; draft = null;
       commit(true);
       dirty = false;
       fitView();
@@ -473,15 +528,6 @@ const EDITOR = (() => {
       if (d < bestD) { bestD = d; best = { kind: 'vertex', pi, vi }; }
     }));
     if (best) return best;
-    // glass span ends (their handles ride at the view's center height)
-    const gy = cam.y;
-    for (let gi = 0; gi < map.glass.length; gi++) {
-      for (const end of [0, 1]) {
-        if (Math.hypot(wx - map.glass[gi][end], wy - gy) < r * 1.4) {
-          return { kind: 'glass', gi, end };
-        }
-      }
-    }
     for (let bi = 0; bi < map.burgers.length; bi++) {
       const b = map.burgers[bi];
       if (Math.hypot(wx - b[0], wy - b[1]) < Math.max(r, 0.5)) return { kind: 'burger', bi };
@@ -489,16 +535,24 @@ const EDITOR = (() => {
     if (Math.hypot(wx - map.start.x, wy - map.start.y) < Math.max(r, 0.7)) return { kind: 'start' };
     if (Math.hypot(wx - map.goal[0], wy - map.goal[1]) < Math.max(r, 0.6)) return { kind: 'goal' };
     // edges last, so handles win where they overlap
-    let eBest = null, eD = 10 / zoom;
+    return pickEdge(wx, wy, 10 / zoom);
+  }
+
+  // the nearest polygon edge to (wx, wy) within reach, as {kind, pi, vi, px,
+  // py}, or null. Picks in 2D (closest point on the segment, not by x), so a
+  // brush hits the one edge under the cursor even where polygons stack at the
+  // same x — what the glass/erase tools paint.
+  function pickEdge(wx, wy, reach) {
+    let best = null, bestD = reach;
     map.polygons.forEach((poly, pi) => {
       for (let i = 0; i < poly.length; i++) {
         const a = poly[i], b = poly[(i + 1) % poly.length];
         const cp = closestOnSeg(wx, wy, { ax: a[0], ay: a[1], bx: b[0], by: b[1] });
         const d = Math.hypot(wx - cp.x, wy - cp.y);
-        if (d < eD) { eD = d; eBest = { kind: 'edge', pi, vi: i, px: cp.x, py: cp.y }; }
+        if (d < bestD) { bestD = d; best = { kind: 'edge', pi, vi: i, px: cp.x, py: cp.y }; }
       }
     });
-    return eBest;
+    return best;
   }
 
   function hitRect(r, x, y) {
@@ -520,9 +574,9 @@ const EDITOR = (() => {
     const w = s2w(x, y);
     if (tool === 'poly') { polyClick(w); return; }
     if (tool === 'burger') { addBurger(w); return; }
-    if (tool === 'glass') {
-      draftGlass = { x0: snap(w.x), x1: snap(w.x) };
-      drag = { kind: 'glassDraft' };
+    if (tool === 'glass' || tool === 'erase') {
+      drag = { kind: 'paint', erase: tool === 'erase', moved: false };
+      paintGlassAt(w);
       return;
     }
     // select tool
@@ -551,8 +605,8 @@ const EDITOR = (() => {
         cam.y = drag.cy - (y - drag.sy) / zoom;
         return;
       }
-      if (drag.kind === 'glassDraft') {
-        draftGlass.x1 = snap(w.x);
+      if (drag.kind === 'paint') {
+        paintGlassAt(w);
         return;
       }
       if (drag.kind === 'move' && sel) {
@@ -579,9 +633,6 @@ const EDITOR = (() => {
       case 'goal':
         map.goal = [snap(w.x), snap(w.y)];
         break;
-      case 'glass':
-        map.glass[p.gi][p.end] = snap(w.x);
-        break;
       case 'edge': {
         const dx = w.x - drag.grab.x, dy = w.y - drag.grab.y;
         const poly = map.polygons[p.pi];
@@ -592,28 +643,27 @@ const EDITOR = (() => {
     }
   }
 
+  // glass/erase brush: paint the one edge under the cursor. A whole stroke
+  // (down + drag) coalesces into a single undo step, and re-touching an
+  // already-(un)glassed edge is a no-op, so dragging back and forth is safe.
+  function paintGlassAt(w) {
+    const e = pickEdge(w.x, w.y, BRUSH_R / zoom);
+    if (!e) return;
+    const idx = map.glassEdges.findIndex(g => g[0] === e.pi && g[1] === e.vi);
+    if (drag.erase ? idx < 0 : idx >= 0) return;   // already in the wanted state
+    if (!drag.moved) { pushUndo(); drag.moved = true; }
+    if (drag.erase) map.glassEdges.splice(idx, 1);
+    else map.glassEdges.push([e.pi, e.vi]);
+    commit();
+  }
+
   function mouseUp(x, y) {
     if (x != null) { mx = x; my = y; }
-    if (drag && drag.kind === 'glassDraft' && draftGlass) {
-      const a = Math.min(draftGlass.x0, draftGlass.x1);
-      const b = Math.max(draftGlass.x0, draftGlass.x1);
-      if (b - a >= 1) {
-        pushUndo();
-        map.glass.push([round2(a), round2(b)]);
-        commit(true);
-        note('Glass span ' + a + '..' + b + ' - floor edges in it lose their grip');
-      } else {
-        note('Drag a wider span to lay glass (1+ units)');
-      }
-      draftGlass = null;
-    }
-    if (drag && drag.kind === 'move' && drag.moved) {
-      if (sel && sel.kind === 'glass') {
-        const g = map.glass[sel.gi];
-        if (g[0] > g[1]) { [g[0], g[1]] = [g[1], g[0]]; sel.end = 1 - sel.end; }
-      }
+    if (drag && drag.kind === 'paint' && drag.moved) {
       commit(true);
+      note(drag.erase ? 'Glass cleared' : 'Glass painted - the tires barely grip it');
     }
+    if (drag && drag.kind === 'move' && drag.moved) commit(true);
     drag = null;
   }
 
@@ -625,6 +675,7 @@ const EDITOR = (() => {
       deleteVertex(p);
     } else if (p && p.kind === 'edge') {
       pushUndo();
+      remapGlassVertexInsert(p.pi, p.vi);
       map.polygons[p.pi].splice(p.vi + 1, 0, [snap(p.px), snap(p.py)]);
       sel = { kind: 'vertex', pi: p.pi, vi: p.vi + 1 };
       commit(true);
@@ -656,7 +707,7 @@ const EDITOR = (() => {
     switch (k) {
       case 'Escape':
         if (helpOpen) helpOpen = false;
-        else if (draft || draftGlass) { draft = null; draftGlass = null; note('Cancelled'); }
+        else if (draft) { draft = null; note('Cancelled'); }
         else if (sel) sel = null;
         else hooks.exit();
         return;
@@ -664,6 +715,7 @@ const EDITOR = (() => {
       case '2': case 'p': case 'P': setTool('poly'); return;
       case '3': case 'b': case 'B': setTool('burger'); return;
       case '4': case 'g': case 'G': setTool('glass'); return;
+      case '5': case 'e': case 'E': setTool('erase'); return;
       case 't': case 'T': cycleTheme(); return;
       case 'n': case 'N': startNaming(); return;
       case 'w': case 'W': toggleWire(); return;
@@ -683,7 +735,7 @@ const EDITOR = (() => {
 
   function action(id) {
     switch (id) {
-      case 'select': case 'poly': case 'burger': case 'glass': setTool(id); break;
+      case 'select': case 'poly': case 'burger': case 'glass': case 'erase': setTool(id); break;
       case 'rider': toggleRider(); break;
       case 'theme': cycleTheme(); break;
       case 'name': startNaming(); break;
@@ -725,7 +777,7 @@ const EDITOR = (() => {
       fitView();
       note(fresh ? 'Welcome! H shows the controls' : 'Picked up where you left off - H shows the controls');
     }
-    sel = null; hov = null; drag = null; draft = null; draftGlass = null;
+    sel = null; hov = null; drag = null; draft = null;
     naming = false;
   }
 
@@ -749,7 +801,7 @@ const EDITOR = (() => {
     for (const b of map.burgers) drawBurger(ctx, b[0], b[1], rt);
     drawPopcorn(ctx, map.goal[0], map.goal[1], rt);
     drawStartMarker(ctx);
-    drawGlassGuides(ctx, view);
+    drawGlassEdges(ctx);
     drawPolyOverlay(ctx);
     if (showRider) drawRiderPreview(ctx);
     drawDrafts(ctx, rt);
@@ -941,43 +993,32 @@ const EDITOR = (() => {
     }
   }
 
-  function drawGlassGuides(ctx, view) {
-    const gy = cam.y;
-    const one = (x0, x1, color, gi) => {
+  // a glassy overlay tracing each painted edge, so glass shows exactly where
+  // it sits (the real obsidian sheen also renders, but only on up-facing
+  // tops). In the glass/erase tools the edge under the brush lights up — gold
+  // to paint, red to erase — for unambiguous aim where polygons stack.
+  function drawGlassEdges(ctx) {
+    const stroke = (pi, vi, color, w) => {
+      const poly = map.polygons[pi];
+      if (!poly) return;
+      const a = poly[vi], b = poly[(vi + 1) % poly.length];
+      if (!a || !b) return;
       ctx.strokeStyle = color;
-      ctx.lineWidth = 1.5 / zoom;
-      ctx.setLineDash([6 / zoom, 6 / zoom]);
+      ctx.lineWidth = w / zoom;
       ctx.beginPath();
-      for (const x of [x0, x1]) {
-        ctx.moveTo(x, view.y0);
-        ctx.lineTo(x, view.y1);
-      }
-      ctx.moveTo(x0, gy);
-      ctx.lineTo(x1, gy);
+      ctx.moveTo(a[0], a[1]);
+      ctx.lineTo(b[0], b[1]);
       ctx.stroke();
-      ctx.setLineDash([]);
-      if (gi == null) return;
-      // diamond drag handles on the span ends
-      for (const end of [0, 1]) {
-        const x = end ? x1 : x0;
-        const hot = (sel && sel.kind === 'glass' && sel.gi === gi && sel.end === end) ||
-                    (hov && hov.kind === 'glass' && hov.gi === gi && hov.end === end);
-        const r = (hot ? 8 : 6) / zoom;
-        ctx.fillStyle = hot ? '#f9c623' : 'rgba(170,215,235,0.95)';
-        ctx.beginPath();
-        ctx.moveTo(x, gy - r);
-        ctx.lineTo(x + r, gy);
-        ctx.lineTo(x, gy + r);
-        ctx.lineTo(x - r, gy);
-        ctx.closePath();
-        ctx.fill();
-      }
     };
-    map.glass.forEach((g, gi) => one(g[0], g[1], 'rgba(170,215,235,0.6)', gi));
-    if (draftGlass) {
-      one(Math.min(draftGlass.x0, draftGlass.x1),
-        Math.max(draftGlass.x0, draftGlass.x1), 'rgba(249,198,35,0.8)', null);
+    ctx.save();
+    ctx.lineCap = 'round';
+    for (const [pi, vi] of map.glassEdges) stroke(pi, vi, 'rgba(170,215,235,0.85)', 4);
+    if ((tool === 'glass' || tool === 'erase') && !overToolbar()) {
+      const w = s2w(mx, my);
+      const e = pickEdge(w.x, w.y, BRUSH_R / zoom);
+      if (e) stroke(e.pi, e.vi, tool === 'erase' ? 'rgba(255,120,90,0.95)' : '#f9c623', 6);
     }
+    ctx.restore();
   }
 
   function drawDrafts(ctx, rt) {
@@ -1066,8 +1107,6 @@ const EDITOR = (() => {
     };
     tag(map.start.x, map.start.y - 1.4, 'START', '#9be08a');
     tag(map.goal[0], map.goal[1] - 1.3, 'GOAL', '#ff8a5c');
-    map.glass.forEach(g => tag((g[0] + g[1]) / 2, cam.y - 18 / zoom,
-      'glass ' + g[0] + '..' + g[1], 'rgba(170,215,235,0.95)'));
     map.wires.forEach(pi => {
       const v = map.polygons[pi] && map.polygons[pi][0];
       if (v) tag(v[0], v[1] - 14 / zoom, 'wire', 'rgba(120,220,255,0.95)');
@@ -1087,6 +1126,7 @@ const EDITOR = (() => {
       { id: 'poly', label: '+Poly', on: tool === 'poly' },
       { id: 'burger', label: '+Burger', on: tool === 'burger' },
       { id: 'glass', label: '+Glass', on: tool === 'glass' },
+      { id: 'erase', label: '-Glass', on: tool === 'erase' },
       { id: 'rider', label: (showRider ? '[x]' : '[ ]') + ' Rider', on: showRider },
       { id: 'theme', label: 'Theme:' + map.theme },
       { id: 'name', label: (naming ? nameBuf + caret : map.name) + (dirty ? ' *' : ''), on: naming, min: 150 },
@@ -1139,10 +1179,11 @@ const EDITOR = (() => {
   }
 
   const TOOL_HINTS = {
-    select: 'drag vertices, edges, burgers, START, GOAL, glass ends - double-click an edge to add a vertex (a vertex to remove it) - Del removes - W wires a polygon',
+    select: 'drag vertices, edges, burgers, START, GOAL - double-click an edge to add a vertex (a vertex to remove it) - Del removes - W wires a polygon',
     poly: 'click to lay vertices - click the first one (or Enter) closes the polygon - Esc cancels',
     burger: 'click to drop a triple cheeseburger',
-    glass: 'drag along the floor to lay an obsidian span - the tires barely grip it',
+    glass: 'click or drag along an edge to glass it (obsidian the tires barely grip) - paints the one edge nearest the cursor',
+    erase: 'click or drag over a glassed edge to clear it',
   };
 
   function drawStatus(ctx, W, H) {
@@ -1173,10 +1214,11 @@ const EDITOR = (() => {
   }
 
   const HELP = [
-    ['1 / V', 'Select: drag vertices, edges (walls move whole), burgers, START, GOAL, glass ends'],
+    ['1 / V', 'Select: drag vertices, edges (walls move whole), burgers, START, GOAL'],
     ['2 / P', 'Polygon: click out a new shape, close on the first point - inside the play area it is a solid island'],
     ['3 / B', 'Burger: click to drop burgers'],
-    ['4 / G', 'Glass: drag an obsidian span along the floor (near-zero tire grip)'],
+    ['4 / G', 'Glass: paint obsidian onto edges (near-zero tire grip) - click or drag the nearest edge'],
+    ['5 / E', 'Erase: clear glass off edges - click or drag over them'],
     ['double-click', 'on an edge adds a vertex; on a vertex removes it'],
     ['Del', 'remove the selection (Shift+Del: its whole polygon)'],
     ['W', 'toggle the selected polygon solid <-> wire (only wheels collide)'],

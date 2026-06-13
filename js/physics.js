@@ -126,13 +126,18 @@ function pointInPoly(px, py, poly) {
 // the head pass straight through, so a wire can thread the rider's body
 // — and a bike tipping over a ledge gets shepherded around by the wire
 // until the wheels land on top of it, hanging the bike upside down.
-// Spans of the floor listed in L.glass ([[x0, x1], ...], matched on
-// segment midpoint) are obsidian glass: solid like rock, but the tires
-// get almost no grip on it, so glass is ridden on banked momentum.
+// Edges listed in L.glassEdges ([[polyIndex, edgeIndex], ...]) are obsidian
+// glass: solid like rock, but the tires get almost no grip on them, so glass
+// is ridden on banked momentum. The edge index is the segment from poly[i] to
+// poly[i+1] — painted per-edge so stacked polygons at the same x stay
+// distinct. L.glass ([[x0, x1], ...], glass wherever a segment's midpoint x
+// falls in a span) is the legacy form, still honoured so old maps and replays
+// play unchanged.
 function prepareLevel(L) {
   const segments = [], grass = [], glassTops = [];
   const wires = new Set(L.wires || []);
   const glassSpans = L.glass || [];
+  const glassEdges = new Set((L.glassEdges || []).map(e => e[0] + ':' + e[1]));
   L.polygons.forEach((poly, pi) => {
     const wire = wires.has(pi);
     // a polygon nested inside another is a solid island in the playable
@@ -143,7 +148,8 @@ function prepareLevel(L) {
       const a = poly[i], b = poly[(i + 1) % poly.length];
       const s = { ax: a[0], ay: a[1], bx: b[0], by: b[1], wire };
       const mx = (s.ax + s.bx) / 2, my = (s.ay + s.by) / 2;
-      s.glass = !wire && glassSpans.some(r => mx >= r[0] && mx <= r[1]);
+      s.glass = !wire && (glassEdges.has(pi + ':' + i) ||
+        glassSpans.some(r => mx >= r[0] && mx <= r[1]));
       segments.push(s);
       const dx = s.bx - s.ax, dy = s.by - s.ay;
       // grass grows on edges that are not too steep and face the playable

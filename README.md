@@ -75,8 +75,8 @@ still re-earns the points live, since the sim recomputes them).
   the replays folder handle persists in IndexedDB.
 - `js/editor.js` — the map editor: a pan/zoom world view rendered through
   the real renderer, with tools for terrain vertices and polygons,
-  burgers, the start and goal, glass spans, wire polygons, themes, and
-  undo/redo. Saves and loads `.bmm` map files; the working map autosaves
+  burgers, the start and goal, painted glass edges, wire polygons, themes,
+  and undo/redo. Saves and loads `.bmm` map files; the working map autosaves
   to localStorage between visits.
 - `js/game.js` — game loop, input, camera, WebAudio engine sound + effects,
   state machine (title / playing / dead / finished, plus the replay
@@ -106,14 +106,15 @@ look exactly as they will in play. Press **H** in the editor for the full
 control reference; the short version:
 
 - **Select** (1): drag terrain vertices, whole edges (that's how the map
-  bounds move), burgers, the START bike, the GOAL bucket, and glass span
-  ends. Double-click an edge to add a vertex, a vertex to remove it,
+  bounds move), burgers, the START bike, and the GOAL bucket.
+  Double-click an edge to add a vertex, a vertex to remove it,
   `Del` removes the selection (`Shift+Del`: its whole polygon), `W` flips
   the selected polygon between solid and wire (wheels-only) terrain.
 - **+Poly** (2): click out a new polygon and close it on its first point.
   A polygon inside the playable area is a solid island.
-- **+Burger** (3) drops burgers; **+Glass** (4) drags an obsidian
-  low-grip span along the floor.
+- **+Burger** (3) drops burgers; **+Glass** (4) paints obsidian onto
+  edges and **-Glass** (5) clears it — click or drag and the one edge
+  nearest the cursor takes the brush, so stacked polygons stay distinct.
 - **T** cycles the theme (the soundtrack follows along), **N** renames
   the map, `Ctrl+Z`/`Ctrl+Y` undo and redo, the wheel zooms, **0** fits
   the whole map.
@@ -143,6 +144,9 @@ its maps ride in silence (`node test/music_check.js` catches this).
 
 Two optional fields mark special terrain: `wires` lists polygon indices
 that only the wheels collide with (the body and head thread through —
-hang from them, Elasto Mania style), and `glass` lists `[x0, x1]` spans
-of the floor that are obsidian — volcanic glass the tires barely grip,
-where the engine and brakes are passengers and momentum is everything.
+hang from them, Elasto Mania style), and `glassEdges` lists `[poly, edge]`
+pairs that are obsidian — volcanic glass the tires barely grip, where the
+engine and brakes are passengers and momentum is everything. (`edge` is the
+segment from vertex `i` to `i+1`.) Pre-`v2` maps used a `glass` field of
+`[x0, x1]` floor x-spans; the editor still loads them, converting each span
+to the edges whose midpoint falls inside it.

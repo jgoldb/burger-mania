@@ -1,9 +1,9 @@
 // Map editor check: loads the full script stack under a stubbed DOM,
 // walks menu -> Map Editor, then exercises the editing surface with
 // synthetic mouse and key events — placing burgers, dragging vertices and
-// walls, laying glass, drawing an island polygon, wiring it, renaming,
-// undo/redo, theme cycling — and finally serializes the map, round-trips
-// it through the .bmm parser, and takes a test ride.
+// walls, painting and erasing glass edges, drawing an island polygon, wiring
+// it, renaming, undo/redo, theme cycling — and finally serializes the map,
+// round-trips it through the .bmm parser, and takes a test ride.
 // Run with: node test/editor_check.js
 const fs = require('fs');
 const path = require('path');
@@ -159,15 +159,23 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   key('y', { ctrlKey: true });
   if (EDITOR.map.burgers.length !== burgers0 + 1) bad('Ctrl+Y should redo the burger');
 
-  // ---- glass span: drag along the floor ----
+  // ---- glass: paint an edge, erase it, undo the erase ----
   key('4');
-  let s = w2s(10, 0), s2 = w2s(25, 0);
-  mouseDown(s.x, s.y); mouseMove(s2.x, s2.y); mouseUp(s2.x, s2.y);
-  if (EDITOR.map.glass.length !== 1) bad('a glass drag should lay one span');
-  else if (Math.abs(EDITOR.map.glass[0][0] - 10) > 0.2 ||
-           Math.abs(EDITOR.map.glass[0][1] - 25) > 0.2) {
-    bad('glass span landed at ' + JSON.stringify(EDITOR.map.glass[0]) + ', wanted ~[10,25]');
+  if (EDITOR.tool !== 'glass') bad('key 4 should pick the glass tool');
+  let s = w2s(25, 8), s2;                     // a point on the box floor (edge 2)
+  mouseDown(s.x, s.y); mouseUp(s.x, s.y);
+  if (EDITOR.map.glassEdges.length !== 1) {
+    bad('painting should glass one edge, got ' + JSON.stringify(EDITOR.map.glassEdges));
+  } else if (EDITOR.map.glassEdges[0][0] !== 0 || EDITOR.map.glassEdges[0][1] !== 2) {
+    bad('glass landed on edge ' + JSON.stringify(EDITOR.map.glassEdges[0]) + ', wanted [0,2] (the floor)');
   }
+  key('5');                                   // erase tool
+  if (EDITOR.tool !== 'erase') bad('key 5 should pick the erase tool');
+  s = w2s(25, 8);
+  mouseDown(s.x, s.y); mouseUp(s.x, s.y);
+  if (EDITOR.map.glassEdges.length !== 0) bad('erase should clear the glass edge');
+  key('z', { ctrlKey: true });                // undo the erase: the glass returns
+  if (EDITOR.map.glassEdges.length !== 1) bad('undo should restore the erased glass');
 
   // ---- vertex drag: pull the floor-right corner (the map bounds) ----
   key('1');
@@ -233,7 +241,11 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   if (back.theme !== 'volcano') bad('round trip lost the theme');
   if (back.polygons.length !== 2) bad('round trip lost a polygon');
   if (back.burgers.length !== EDITOR.map.burgers.length) bad('round trip lost burgers');
-  if (!back.glass || back.glass.length !== 1) bad('round trip lost the glass span');
+  if (!back.glassEdges || back.glassEdges.length !== 1) bad('round trip lost the glass edge');
+  // the ceiling vertex inserted above split edge 0, bumping the floor to edge 3
+  else if (back.glassEdges[0][1] !== 3) {
+    bad('glass edge should track the vertex insert to [0,3], got ' + JSON.stringify(back.glassEdges[0]));
+  }
   if (!back.wires || back.wires[0] !== 1) bad('round trip lost the wire flag');
   if (JSON.stringify(back.goal) !== JSON.stringify(EDITOR.map.goal)) bad('round trip moved the goal');
   for (const junk of ['{"format":"nope"}', '{"format":"burger-mania-map","version":1}']) {
