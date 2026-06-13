@@ -57,6 +57,10 @@
   <div class="phone"></div>
   <p>Rotate your device<br>to landscape to play</p>
 </div>
+<!-- These URLs stay query-free in source. The Pages deploy workflow
+     (.github/workflows/deploy.yml) stamps a ?v=<commit> cache-busting token
+     onto them in the published build, so a new deploy never serves stale
+     cached JS. To stamp a build by hand: node tools/stamp-version.js -->
 <script src="js/assets.js"></script>
 <script src="js/levels.js"></script>
 <script src="js/physics.js"></script>

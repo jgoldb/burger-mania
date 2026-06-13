@@ -1,0 +1,53 @@
+name: Deploy to GitHub Pages
+
+# Publishes the static game to GitHub Pages on every push to main. The build
+# step stamps a ?v=<commit> cache-busting token onto the <script src="js/*.js">
+# URLs (see tools/stamp-version.js) so returning visitors never run stale
+# cached JS. Committed source stays query-free; only the published artifact is
+# stamped.
+#
+# One-time setup: repo Settings -> Pages -> Build and deployment -> Source =
+# "GitHub Actions".
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Allow the deploy job to publish to Pages via OIDC.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time; let a newer push supersede an in-flight run.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stamp cache-busting version onto the script URLs
+        run: node tools/stamp-version.js "${GITHUB_SHA::10}"
+
+      - name: Assemble the published site (only what the game needs)
+        run: |
+          mkdir -p _site
+          cp index.html _site/
+          cp -r js assets _site/
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

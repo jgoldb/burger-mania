@@ -10,6 +10,30 @@ hit anything — but if your head touches the ground, you crash.
 
 Open `index.html` in any modern browser (no build step, no server needed).
 
+## Deploying
+
+The game is a static site published to GitHub Pages by a GitHub Actions
+workflow (`.github/workflows/deploy.yml`) on every push to `main` — just push
+and the live site updates; there's nothing to run by hand.
+
+Browsers cache JS by URL, so a fresh build could otherwise keep serving the old
+`js/*.js` to returning visitors. The workflow prevents that: it stamps a
+cache-busting token (the commit SHA) onto every `<script src="js/*.js">` URL in
+the published copy, e.g. `js/game.js?v=ad15825e4c`. A changed URL forces the
+browser to refetch. The committed source stays query-free, so opening
+`index.html` off disk keeps working; only the deployed artifact is stamped
+(`tools/stamp-version.js` does the rewrite — run it by hand only to preview a
+stamped build).
+
+`index.html` itself can't be URL-versioned — its address is fixed — but GitHub
+Pages serves it with a short cache TTL plus an ETag, so returning visitors
+revalidate the HTML within minutes and then pull the freshly stamped `?v=…`
+JS URLs.
+
+**One-time setup:** in the repo's **Settings → Pages → Build and deployment**,
+set **Source** to **GitHub Actions** (instead of "Deploy from a branch") so the
+workflow can publish.
+
 ## Controls
 
 | Key         | Action                                  |
