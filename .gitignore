@@ -2,3 +2,6 @@
 
 # Throwaway physics-probe harnesses (see headless test convention)
 _scratch_*
+
+# Claude Code local state: personal settings + nested worktrees
+.claude/
