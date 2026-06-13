@@ -15,12 +15,17 @@
 
   // loading -> intro -> menu -> difficulty -> ready -> playing ->
   // dead | finished (dead -> continue once lives run out), with paused
-  // overlaying any in-game state
+  // overlaying any in-game state. Finishing a track's LAST map goes to
+  // victoryFade instead of finished: a slow dissolve into the victory
+  // feast ('victory'), which routes back to the menu
   let state = 'loading';
   let bike = null, time = 0, burgers = [], headBody = null;
   let currentTrack = null, levelIndex = 0;
   const MAX_CONTINUES = 2;
   let lives = 3, continues = MAX_CONTINUES, checkpointIndex = 0;
+  // this campaign's outcome per map ({ time, style, record flags } by map
+  // index) — the victory scorecard; sparse where the skip cheat jumped past
+  let runResults = [];
   let currentRaw = LEVELS[0]; // unprepared level data (what a saved replay embeds)
   let level = prepareLevel(LEVELS[0]);
   let bestKey = 'burger-mania-best-' + level.name;
@@ -33,6 +38,8 @@
   if (!isFinite(styleBest)) styleBest = null;
   let stylePts = 0;     // this run's total
   let spinAcc = 0;      // net rotation accumulated toward the next full lap
+  let wheelieT = 0;     // seconds the current unbroken wheelie has been held
+  let stoppieT = 0;     // same, for an unbroken stoppie (front down, rear up)
   let stylePopups = []; // floating "+N" toasts riding above the biker
   let popupSeq = 0;     // cycles spawn lanes so stacked toasts stay legible
   let cam = { x: level.start.x, y: level.start.y };
@@ -48,7 +55,7 @@
   let loadFrac = 0, loadDone = false;
   let introT = 0, menuT = 0, diffT = 0, contT = 0;
   let introLaunched = 0, introLanded = 0, fanfared = false;
-  const menuItems = ['Play', 'Replays', 'Audio'];
+  const menuItems = ['Play', 'Map Editor', 'Replays', 'Audio'];
   let menuSel = 0, diffSel = 0, contSel = 0;
   const pauseItems = ['Continue', 'Audio', 'Return to Menu'];
   let pauseSel = 0, pausedFrom = 'playing';
@@ -65,6 +72,8 @@
     headBody = null;
     stylePts = 0;
     spinAcc = 0;
+    wheelieT = 0;
+    stoppieT = 0;
     stylePopups = [];
     popupSeq = 0;
     camLead = bike.facing * CAM_LEAD;
@@ -148,6 +157,24 @@
     } catch (e) { /* no audio available */ }
   }
 
+  // best-effort: ask the browser to keep a phone in landscape (the world,
+  // menus, and HUD are all built for a wide view). Works on Android Chrome,
+  // usually only in fullscreen / an installed PWA; iOS Safari has no such
+  // API, so the CSS "rotate your device" overlay in index.html is the real
+  // guarantee. Guarded so an unsupported or rejected call never throws.
+  let triedLock = false;
+  function lockLandscape() {
+    if (triedLock) return;
+    triedLock = true;
+    try {
+      const o = window.screen && window.screen.orientation;
+      if (o && o.lock) {
+        const r = o.lock('landscape');
+        if (r && r.catch) r.catch(() => {});
+      }
+    } catch (e) { /* orientation lock unsupported */ }
+  }
+
   // picks the soundtrack for the current screen: the menu and difficulty
   // screens share the title theme, the continue screen mourns on its own,
   // and every in-game state plays the current world's song (a name MUSIC
@@ -164,9 +191,17 @@
       // music slider is tuned against the level it'll actually play at
       want = audioFrom === 'paused' ? level.theme : 'menu';
     }
+    // the editor plays the song of the theme being edited, so picking a
+    // theme auditions its whole world
+    else if (state === 'editor') want = EDITOR.themeName;
+    // the win sequence: the world's song dips to silence under the long
+    // dissolve, then the victory tune blooms in with the feast
+    else if (state === 'victoryFade') want = victoryAlpha() < 0.5 ? null : 'victory';
+    else if (state === 'victory') want = 'victory';
     else if (state === 'ready' || state === 'playing' || state === 'dead' ||
              state === 'finished' || state === 'paused' ||
-             state === 'replay' || state === 'replayEnd') {
+             state === 'replay' || state === 'replayEnd' ||
+             state === 'editorTest' || state === 'editorTestEnd') {
       want = level.theme;
     }
     MUSIC.play(want);
@@ -176,7 +211,8 @@
   function updateEngineSound() {
     if (!engineSnd) return;
     let g = 0, f = 40;
-    if (!muted && (state === 'playing' || state === 'replay')) {
+    if (!muted && (state === 'playing' || state === 'replay' ||
+                   state === 'editorTest')) {
       const rear = bike.wheels[bike.rearIndex];
       f = 34 + Math.abs(rear.spin) * 1.25 + (simInput.throttle ? 18 : 0);
       g = simInput.throttle ? 0.085 : 0.045;
@@ -275,6 +311,7 @@
     lives = 3;
     continues = MAX_CONTINUES;
     checkpointIndex = 0;
+    runResults = [];
     enterLevel(0);
     state = 'ready';
   }
@@ -512,7 +549,9 @@
   // S on the crash/finish screen: write the recorded run to disk
   async function saveReplay() {
     if (saveBusy || !REPLAY.hasRun()) return;
-    const outcome = state === 'finished' ? 'finished' : 'crashed';
+    // the victory screens hold the last map's finished tape; only the
+    // crash screen saves a crash
+    const outcome = state === 'dead' ? 'crashed' : 'finished';
     saveBusy = true;
     saveNote = 'Saving...';
     try {
@@ -590,6 +629,7 @@
       currentTrack = skipTrack;
       lives = 3;
       continues = MAX_CONTINUES;
+      runResults = []; // a fresh campaign, even if entered sideways
     }
     // skipping counts as having beaten everything before the target, so a
     // continue restarts from the checkpoint the player would hold having
@@ -607,10 +647,77 @@
     goMenu();
   }
 
+  // ---------- map editor ----------
+  // The editor itself lives in js/editor.js; game.js owns the states
+  // around it. 'editor' is the editing screen, 'editorTest' rides the
+  // working map through the real sim, and 'editorTestEnd' is its
+  // crash/finish screen — test rides bank nothing (no best times, no
+  // checkpoints), they only answer "does this map ride?".
+  let testOutcome = null;
+
+  function goEditor() {
+    EDITOR.open(W, H);
+    state = 'editor';
+    hoverIdx = -1;
+  }
+
+  function startEditorTest() {
+    loadLevel(EDITOR.exportLevel());
+    testOutcome = null;
+    state = 'editorTest';
+  }
+
+  function endEditorTest() {
+    state = 'editor';
+    blip(440, 0.08);
+  }
+
+  EDITOR.init({
+    exit: () => { blip(880, 0.08); goMenu(); },
+    test: () => { blip(880, 0.08); startEditorTest(); },
+    blip: () => blip(880, 0.06),
+  });
+
+  // ---------- victory ----------
+  // Clearing a track's last map crossfades from the frozen finish pose
+  // into the victory feast: a hold while the fanfare rings, then a long
+  // dissolve ('victoryFade'), then the screen itself ('victory')
+  const VICTORY_HOLD = 1.4; // s the finish pose lingers before fading
+  const VICTORY_FADE = 4.2; // s the dissolve takes
+  let victoryT = 0;
+
+  function victoryAlpha() {
+    return Math.max(0, Math.min(1, (victoryT - VICTORY_HOLD) / VICTORY_FADE));
+  }
+
+  function skipVictoryFade() {
+    victoryT = VICTORY_HOLD + VICTORY_FADE;
+    state = 'victory';
+    hoverIdx = -1;
+  }
+
+  // everything drawVictory needs; results may be sparse (the skip cheat)
+  function victoryView(rt) {
+    return {
+      t: rt,
+      pat: patterns.meadow, // the celebration basks in meadow sunshine
+      label: currentTrack ? currentTrack.label : '',
+      names: currentTrack ? currentTrack.levels.map(l => l.name) : [],
+      results: runResults,
+      sel: 0,
+      hover: hoverIdx,
+      touch: TOUCH.active,
+      saveNote: TOUCH.active && saveNote === 'S: save replay' ? '' : saveNote,
+    };
+  }
+
   function activateMenu(i) {
     if (menuItems[i] === 'Play') {
       blip(880, 0.08);
       goDifficulty();
+    } else if (menuItems[i] === 'Map Editor') {
+      blip(880, 0.08);
+      goEditor();
     } else if (menuItems[i] === 'Replays') {
       blip(880, 0.08);
       goReplays();
@@ -676,10 +783,14 @@
     if (state === 'audio' && audioT > 0.15) {
       return audioRects(W, H);
     }
+    if (state === 'victory') {
+      return victoryRects(W, H);
+    }
     return null;
   }
 
   function updateHover() {
+    if (state === 'editor') return; // the editor manages its own cursor
     const rects = currentRects();
     hoverIdx = -1;
     if (rects) {
@@ -697,15 +808,28 @@
     }
     ensureAudio();
     if (AC && AC.state === 'suspended') AC.resume();
+    // the editor owns the keyboard while it's up; M still mutes unless
+    // the map name is being typed
+    if (state === 'editor') {
+      if (!EDITOR.naming && (e.key === 'm' || e.key === 'M')) {
+        muted = !muted;
+        MUSIC.setMuted(muted);
+        return;
+      }
+      EDITOR.key(e);
+      return;
+    }
     if (e.key === 'm' || e.key === 'M') {
       muted = !muted;
       MUSIC.setMuted(muted);
       return;
     }
     // the cheat would clobber the replay tape mid-watch via reset(); while
-    // the picker is already open, typing must not re-summon it
+    // the picker is already open, typing must not re-summon it. A test
+    // ride stays out too: jumping tracks would abandon the editor's level
     if (state !== 'loading' && state !== 'replay' && state !== 'replayEnd' &&
-        state !== 'skip' && checkCheat(e.key)) return;
+        state !== 'skip' && state !== 'editorTest' && state !== 'editorTestEnd' &&
+        checkCheat(e.key)) return;
 
     switch (state) {
       case 'loading':
@@ -821,6 +945,20 @@
           else goContinue();
         } else if (e.key === 'Escape') openPause();
         return;
+      case 'victoryFade':
+        // let the impatient cut to the feast (held-down keys don't count,
+        // so a throttle finger still on UP can't blow through the dissolve)
+        if (!e.repeat && (e.key === 'Enter' || e.key === ' ' || e.key === 'Escape')) {
+          skipVictoryFade();
+        }
+        return;
+      case 'victory':
+        if (e.key === 's' || e.key === 'S') { saveReplay(); return; }
+        if (e.key === 'Enter' || e.key === ' ' || e.key === 'Escape') {
+          blip(880, 0.08);
+          goMenu();
+        }
+        return;
       case 'continue':
         if (e.key === 'Escape') { goMenu(); return; }
         if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
@@ -838,8 +976,15 @@
         break;
       case 'playing':
         if (e.key === 'Escape') { openPause(); return; }
-        if (e.key === 'Enter') { reset(); return; }
         break;
+      case 'editorTest':
+        if (e.key === 'Escape') { endEditorTest(); return; }
+        if (e.key === 'Enter') { reset(); return; } // instant retry while iterating
+        break;
+      case 'editorTestEnd':
+        if (e.key === 'Escape') { endEditorTest(); return; }
+        if (e.key === 'Enter') { reset(); state = 'editorTest'; }
+        return;
     }
 
     switch (e.key) {
@@ -861,6 +1006,7 @@
   window.addEventListener('blur', () => {
     keys.up = keys.down = keys.left = keys.right = false;
     if (state === 'playing') openPause();
+    if (state === 'editor') EDITOR.mouseUp(); // a drag can't survive alt-tab
   });
 
   // fire the menu item under the cursor/finger; shared by mouse clicks
@@ -885,17 +1031,34 @@
     } else if (state === 'paused') {
       pauseSel = hoverIdx;
       activatePause(hoverIdx);
+    } else if (state === 'victory') {
+      blip(880, 0.08);
+      goMenu(); // the screen's one button
     }
   }
 
   canvas.addEventListener('mousemove', e => {
     mouse.x = e.clientX;
     mouse.y = e.clientY;
+    if (state === 'editor') {
+      EDITOR.mouseMove(e.clientX, e.clientY);
+      canvas.style.cursor = EDITOR.cursor();
+      return;
+    }
     if (audioDrag >= 0 && state === 'audio') dragVolume(e.clientX);
     updateHover();
   });
-  // the audio sliders want press-and-drag, which click alone can't express
+  // the audio sliders want press-and-drag, which click alone can't
+  // express; the editor wants the same for its handles and panning
   canvas.addEventListener('mousedown', e => {
+    if (state === 'editor') {
+      ensureAudio();
+      if (AC && AC.state === 'suspended') AC.resume();
+      mouse.x = e.clientX;
+      mouse.y = e.clientY;
+      if (e.button === 0) EDITOR.mouseDown(e.clientX, e.clientY, e);
+      return;
+    }
     if (state !== 'audio') return;
     ensureAudio();
     if (AC && AC.state === 'suspended') AC.resume();
@@ -909,8 +1072,21 @@
       dragVolume(e.clientX);
     }
   });
-  window.addEventListener('mouseup', () => { audioDrag = -1; });
+  window.addEventListener('mouseup', e => {
+    if (state === 'editor') EDITOR.mouseUp(e.clientX, e.clientY);
+    audioDrag = -1;
+  });
+  canvas.addEventListener('dblclick', e => {
+    if (state !== 'editor') return;
+    EDITOR.dblClick(e.clientX, e.clientY);
+  });
+  canvas.addEventListener('wheel', e => {
+    if (state !== 'editor') return;
+    e.preventDefault();
+    EDITOR.wheel(e);
+  }, { passive: false });
   canvas.addEventListener('click', e => {
+    if (state === 'editor') return; // mousedown/up already handled it
     ensureAudio();
     if (AC && AC.state === 'suspended') AC.resume();
     mouse.x = e.clientX;
@@ -962,8 +1138,12 @@
         return;
       case 'replays': {
         if (TOUCH.hit(k.back, x, y)) { blip(880, 0.08); goMenu(); return; }
-        // the "- more -" rows above and below the list window scroll it
-        const y0 = H * 0.22, bot = y0 + REPLAY_VIS * 64 - 12;
+        // the "- more -" rows above and below the list window scroll it;
+        // derive the bottom row from replayRects so the tap zone tracks the
+        // responsive row height instead of a fixed pitch
+        const y0 = H * 0.22;
+        const rs = replayRects(W, H, Math.min(REPLAY_VIS, repItems.length - repScroll), y0);
+        const bot = rs.length ? rs[rs.length - 1].y + rs[rs.length - 1].h + 6 : y0;
         const maxScroll = Math.max(0, repItems.length - REPLAY_VIS);
         if (repScroll > 0 && y > y0 - 50 && y < y0) {
           repScroll--;
@@ -980,7 +1160,9 @@
       }
       case 'skip': {
         if (TOUCH.hit(k.back, x, y)) { closeSkip(); return; }
-        const y0 = H * 0.24, bot = y0 + SKIP_VIS * 64 - 12;
+        const y0 = H * 0.24;
+        const rs = replayRects(W, H, Math.min(SKIP_VIS, skipItems.length - skipScroll), y0);
+        const bot = rs.length ? rs[rs.length - 1].y + rs[rs.length - 1].h + 6 : y0;
         const maxScroll = Math.max(0, skipItems.length - SKIP_VIS);
         if (skipScroll > 0 && y > y0 - 50 && y < y0) {
           skipScroll--;
@@ -1011,7 +1193,6 @@
         return;
       case 'playing':
         if (TOUCH.hit(k.pause, x, y)) { openPause(); return; }
-        if (TOUCH.hit(k.restart, x, y)) { reset(); return; }
         return;
       case 'dead':
       case 'finished':
@@ -1028,9 +1209,26 @@
           goMenu();
         }
         return;
+      case 'victoryFade':
+        if (performance.now() < tapGuardUntil) return;
+        skipVictoryFade(); // a tap cuts straight to the feast
+        return;
+      case 'victory':
+        activateHover();
+        return;
       case 'replay':
       case 'replayEnd':
         endReplayView();
+        return;
+      case 'editorTest':
+        if (TOUCH.hit(k.pause, x, y)) { endEditorTest(); return; }
+        if (TOUCH.hit(k.restart, x, y)) { reset(); return; }
+        return;
+      case 'editorTestEnd':
+        if (TOUCH.hit(k.pause, x, y)) { endEditorTest(); return; }
+        if (performance.now() < tapGuardUntil) return;
+        reset();
+        state = 'editorTest';
         return;
     }
   }
@@ -1038,15 +1236,21 @@
   canvas.addEventListener('touchstart', e => {
     e.preventDefault();
     TOUCH.activate();
+    lockLandscape();
     ensureAudio();
     if (AC && AC.state === 'suspended') AC.resume();
     const t = e.changedTouches[0];
     mouse.x = t.clientX;
     mouse.y = t.clientY;
+    // the editor reads a finger as a mouse: press, drag, release
+    if (state === 'editor') {
+      EDITOR.mouseDown(t.clientX, t.clientY, e);
+      return;
+    }
     updateHover();
     // a fresh finger on the turn-around button queues a flip (one-shot,
     // like the space bar — a held finger doesn't repeat it)
-    if (state === 'playing' || state === 'ready') {
+    if (state === 'playing' || state === 'ready' || state === 'editorTest') {
       const L = TOUCH.layout(W, H);
       for (const c of e.changedTouches) {
         if (TOUCH.hit(L.flip, c.clientX, c.clientY)) flipQueued = true;
@@ -1061,6 +1265,10 @@
     const t = e.changedTouches[0];
     mouse.x = t.clientX;
     mouse.y = t.clientY;
+    if (state === 'editor') {
+      EDITOR.mouseMove(t.clientX, t.clientY);
+      return;
+    }
     if (audioDrag >= 0 && state === 'audio') dragVolume(t.clientX);
     updateHover();
     TOUCH.sync(e.touches, W, H);
@@ -1068,6 +1276,11 @@
 
   function touchEnd(e) {
     e.preventDefault();
+    if (state === 'editor') {
+      const t = e.changedTouches[0];
+      EDITOR.mouseUp(t ? t.clientX : undefined, t ? t.clientY : undefined);
+      return;
+    }
     TOUCH.sync(e.touches, W, H);
     if (!e.touches.length) audioDrag = -1;
   }
@@ -1085,11 +1298,42 @@
   // playback recompute the same totals and old tapes stay in sync.
   const STYLE_FLIP = 100; // turning around (space) while fully airborne
   const STYLE_SPIN = 250; // each full rotation, in the air or on the ground
+  const STYLE_WHEELIE = 25;      // full-speed ceiling per interval held in a wheelie
+  const STYLE_STOPPIE = 150;     // stoppie ceiling: far harder to hold, so worth more
+  const STYLE_TRICK_EVERY = 1;   // seconds of unbroken balance per payout
+  const TRICK_SLACK = 0.4;       // gap (m) under a wheel still scored as planted
+  const TRICK_FULL_SPEED = 8;    // m/s at/above which a trick pays its full ceiling
 
   // true only once a physics step has run (onGround starts undefined), so
   // a flip queued on the very first frame of a run can't read as airborne
   function bikeAirborne() {
     return bike.wheels.every(w => w.onGround === false);
+  }
+
+  // Whether a wheel is "planted" for trick scoring. The strict onGround flag
+  // only trips while the tire is penetrating a segment, but the bike chatters
+  // and bounces over terrain constantly, so a hair of daylight under the
+  // balancing wheel would flicker the flag off and break a wheelie/stoppie.
+  // Instead we measure the gap to the nearest segment and count anything
+  // within TRICK_SLACK as still down — a read-only test, like the rest of the
+  // style detection, so live play and replay stay in sync.
+  function wheelPlanted(w) {
+    for (const s of level.segments) {
+      const cp = closestOnSeg(w.pos.x, w.pos.y, s);
+      if (Math.hypot(w.pos.x - cp.x, w.pos.y - cp.y) < PHYS.wheelR + TRICK_SLACK) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // fraction of a trick's ceiling earned at the current speed: full value at
+  // TRICK_FULL_SPEED and above, falling off steeply (squared) toward a crawl,
+  // so a fast wheelie banks the ceiling and a near-stationary balance earns
+  // almost nothing. read-only on velocity, so replays recompute identically
+  function trickSpeedScale() {
+    const f = Math.min(1, Math.hypot(bike.vel.x, bike.vel.y) / TRICK_FULL_SPEED);
+    return f * f;
   }
 
   function awardStyle(pts) {
@@ -1146,7 +1390,16 @@
       setTimeout(() => blip(1320, 0.22), 260);
       return;
     }
-    state = 'finished';
+    if (state === 'editorTest') {
+      // a test ride proves the map, it banks nothing
+      testOutcome = 'finished';
+      state = 'editorTestEnd';
+      tapGuardUntil = performance.now() + 600;
+      blip(660, 0.12);
+      setTimeout(() => blip(880, 0.12), 130);
+      setTimeout(() => blip(1320, 0.22), 260);
+      return;
+    }
     saveNote = 'S: save replay';
     tapGuardUntil = performance.now() + 600;
     // completing every 5th map of a track (1-5, 1-10, ...) banks a
@@ -1155,13 +1408,29 @@
     if (currentTrack && (levelIndex + 1) % 5 === 0) {
       checkpointIndex = Math.min(levelIndex + 1, currentTrack.levels.length - 1);
     }
-    if (best === null || time < best) {
+    const timeRecord = best === null || time < best;
+    if (timeRecord) {
       best = time;
       localStorage.setItem(bestKey, String(best));
     }
-    if (stylePts > 0 && (styleBest === null || stylePts > styleBest)) {
+    const styleRecord = stylePts > 0 && (styleBest === null || stylePts > styleBest);
+    if (styleRecord) {
       styleBest = stylePts;
       localStorage.setItem(styleKey, String(styleBest));
+    }
+    if (currentTrack) {
+      // log the run for the victory scorecard; the flags mark scores that
+      // just became (and so now are) the all-time records
+      runResults[levelIndex] = { time, style: stylePts, timeRecord, styleRecord };
+    }
+    if (currentTrack && !hasNextLevel()) {
+      // the whole track is beaten: no finished screen, the frozen finish
+      // pose hangs a beat and then dissolves into the victory feast
+      state = 'victoryFade';
+      victoryT = 0;
+      hoverIdx = -1;
+    } else {
+      state = 'finished';
     }
     blip(660, 0.12);
     setTimeout(() => blip(880, 0.12), 130);
@@ -1172,6 +1441,10 @@
     if (state === 'replay') {
       replayOutcome = 'crashed';
       state = 'replayEnd';
+    } else if (state === 'editorTest') {
+      testOutcome = 'crashed';
+      state = 'editorTestEnd';
+      tapGuardUntil = performance.now() + 600;
     } else {
       state = 'dead';
       lives = Math.max(0, lives - 1);
@@ -1254,6 +1527,34 @@
         spinAcc -= Math.sign(spinAcc) * Math.PI * 2;
         awardStyle(STYLE_SPIN);
       }
+      // balance tricks trickle style for every STYLE_TRICK_EVERY they're
+      // held: a wheelie (rear planted, front lifted) pays a little, a stoppie
+      // (front planted, rear lifted) is far harder to hold so it pays a lot.
+      // each clock keeps awarding while its pose lasts and zeroes the instant
+      // it breaks, so only sustained, unbroken balance scores. "planted" is
+      // lenient (see wheelPlanted) so terrain chatter doesn't break the hold
+      const rearDown = wheelPlanted(bike.wheels[bike.rearIndex]);
+      const frontDown = wheelPlanted(bike.wheels[1 - bike.rearIndex]);
+      if (rearDown && !frontDown) {
+        wheelieT += FDT;
+        if (wheelieT >= STYLE_TRICK_EVERY) {
+          wheelieT -= STYLE_TRICK_EVERY;
+          const pts = Math.round(STYLE_WHEELIE * trickSpeedScale());
+          if (pts > 0) awardStyle(pts); // a crawling wheelie scores nothing
+        }
+      } else {
+        wheelieT = 0;
+      }
+      if (frontDown && !rearDown) {
+        stoppieT += FDT;
+        if (stoppieT >= STYLE_TRICK_EVERY) {
+          stoppieT -= STYLE_TRICK_EVERY;
+          const pts = Math.round(STYLE_STOPPIE * trickSpeedScale());
+          if (pts > 0) awardStyle(pts);
+        }
+      } else {
+        stoppieT = 0;
+      }
       checkPickups();
     }
   }
@@ -1280,7 +1581,13 @@
         skipT += FDT;
       } else if (state === 'audio') {
         audioT += FDT;
-      } else if (state === 'playing') {
+      } else if (state === 'victoryFade' || state === 'victory') {
+        victoryT += FDT;
+        if (state === 'victoryFade' && victoryAlpha() >= 1) {
+          state = 'victory';
+          hoverIdx = -1;
+        }
+      } else if (state === 'playing' || state === 'editorTest') {
         // keyboard and the on-screen touch cluster merge into one mask;
         // the tape gets one mask per frame: exactly what the sim consumes
         const up = keys.up || TOUCH.input.up;
@@ -1303,13 +1610,17 @@
         if (state === 'replay' && (!replayCursor || replayCursor.done())) {
           state = 'replayEnd';
         }
-      } else if (state === 'dead' || state === 'replayEnd') {
+      } else if (state === 'dead' || state === 'replayEnd' ||
+                 state === 'editorTestEnd') {
         for (let i = 0; i < SUB; i++) stepHead(FDT / SUB);
       }
       flipQueued = false;
+      // victoryFade stays in this list: the frozen finish frame under the
+      // dissolve keeps its settling camera and rising toasts
       if (state !== 'loading' && state !== 'intro' && state !== 'menu' &&
           state !== 'difficulty' && state !== 'continue' && state !== 'replays' &&
-          state !== 'audio' && state !== 'skip') {
+          state !== 'audio' && state !== 'skip' && state !== 'editor' &&
+          state !== 'victory') {
         updateCamera(FDT);
         // toasts keep rising over the crash/finish screens, but a pause
         // freezes them along with everything else
@@ -1377,6 +1688,18 @@
     // audio opened from the pause menu falls through: the frozen level
     // stays visible behind it, just like the pause screen itself
 
+    if (state === 'editor') {
+      EDITOR.draw(ctx, W, H, patterns, rt);
+      return;
+    }
+
+    // the feast owns the whole screen; victoryFade instead falls through,
+    // so the frozen finish frame can sit under the dissolve
+    if (state === 'victory') {
+      drawVictory(ctx, W, H, victoryView(rt));
+      return;
+    }
+
     const theme = patterns[level.theme] || patterns.meadow;
     const Z = Math.min(W / 26, H / 13.5);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -1414,6 +1737,7 @@
     });
 
     const watching = state === 'replay' || state === 'replayEnd';
+    const testing = state === 'editorTest' || state === 'editorTestEnd';
     drawHUD(ctx, W, H, {
       time,
       t: rt,
@@ -1424,13 +1748,17 @@
       style: stylePts,
       styleBest,
       state,
-      lives: watching ? null : lives,
+      lives: watching || testing ? null : lives,
       hasNext: hasNextLevel(),
-      mapLabel: mapLabel(),
+      mapLabel: testing ? level.name : mapLabel(),
       replay: watching ? {
         label: (replayData && replayData.label) || level.name,
         done: state === 'replayEnd',
         outcome: replayOutcome,
+      } : null,
+      test: testing ? {
+        done: state === 'editorTestEnd',
+        outcome: testOutcome,
       } : null,
       // the keyboard hint is redundant next to the touch save button;
       // save status messages still show either way
@@ -1451,6 +1779,9 @@
         items: skipItems, sel: skipSel, scroll: skipScroll, hover: hoverIdx,
         label: skipTrack ? skipTrack.label : '', touch: TOUCH.active,
       });
+    }
+    if (state === 'victoryFade') {
+      drawVictoryFade(ctx, W, H, victoryAlpha(), victoryView(rt));
     }
   }
 

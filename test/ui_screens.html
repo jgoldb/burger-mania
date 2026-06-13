@@ -15,7 +15,7 @@
 <script src="../js/render.js"></script>
 <script>
   // statically renders one UI screen
-  // (?ui=menu|difficulty|continue|pause|audio|audio-pause|skip|skip-game|...)
+  // (?ui=menu|difficulty|continue|pause|audio|audio-pause|skip|skip-game|victory|...)
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
   const W = canvas.width = window.innerWidth;
@@ -151,6 +151,19 @@
     }
     drawLevelSelect(ctx, W, H, 1, {
       items, sel: 2, scroll: 0, hover: -1, label: track.label, touch: false,
+    });
+  } else if (ui === 'victory') {
+    // the track-cleared feast; ?t= scrubs the shovel/scenery clock
+    const t = params.get('t') ? parseFloat(params.get('t')) : 2.0;
+    const track = TRACKS[0];
+    const results = track.levels.map((raw, i) => ({
+      time: 20 + i * 13.37, style: 250 * i,
+      timeRecord: i % 3 === 0, styleRecord: i % 4 === 2,
+    }));
+    drawVictory(ctx, W, H, {
+      t, pat: menuPat, label: track.label,
+      names: track.levels.map(l => l.name),
+      results, sel: 0, hover: -1, touch: false, saveNote: 'S: save replay',
     });
   }
   });

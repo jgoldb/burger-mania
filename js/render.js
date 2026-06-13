@@ -411,6 +411,45 @@ function roundRectPath(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
+// ---------- text fitting (so nothing clips on a narrow phone) ----------
+
+// All HUD/menu lettering is monospace, so a string's width scales linearly
+// with the font size: shrink the size until `text` fits in maxW, down to a
+// floor, and set it on the context. `weight` is '' for normal, 'bold' for
+// bold. Returns the chosen px so callers can lay out around it.
+function fitFont(ctx, text, maxW, px, weight, floor) {
+  const pre = weight ? weight + ' ' : '';
+  const fam = 'px "Consolas","Courier New",monospace';
+  ctx.font = pre + px + fam;
+  const w = ctx.measureText(text).width;
+  if (w > maxW) px = Math.max(floor || 9, Math.floor(px * maxW / w));
+  ctx.font = pre + px + fam;
+  return px;
+}
+
+// Greedy word-wrap to lines no wider than maxW at the *current* font; a lone
+// word wider than maxW is kept whole (callers size the font to fit first).
+function wrapLines(ctx, text, maxW) {
+  const words = text.split(' ');
+  const lines = [];
+  let cur = '';
+  for (const word of words) {
+    const next = cur ? cur + ' ' + word : word;
+    if (cur && ctx.measureText(next).width > maxW) { lines.push(cur); cur = word; }
+    else cur = next;
+  }
+  if (cur) lines.push(cur);
+  return lines;
+}
+
+// trim `text` with a trailing ellipsis so it fits maxW at the current font
+function ellipsize(ctx, text, maxW) {
+  if (ctx.measureText(text).width <= maxW) return text;
+  let s = text;
+  while (s.length > 1 && ctx.measureText(s + '…').width > maxW) s = s.slice(0, -1);
+  return s + '…';
+}
+
 function drawBurger(ctx, x, y, t) {
   t = t || 0;
   const phase = x * 1.7;
@@ -878,77 +917,137 @@ function drawStylePopup(ctx, x, y, text, age, zoom) {
   ctx.restore();
 }
 
+// the floating crash/finish panel. The sub line carries time/style and a
+// what-to-do hint, which is long, so it wraps to as many lines as it needs
+// and the panel grows upward from a fixed bottom — keeping the touch SAVE
+// REPLAY button (anchored just below) clear no matter how tall it gets.
 function centerMsg(ctx, W, H, title, sub, sub2) {
   ctx.save();
-  const pw = Math.min(W * 0.8, 640), ph = sub2 ? 142 : 110;
-  const px = (W - pw) / 2, py = H * 0.36;
-  ctx.fillStyle = 'rgba(20,12,6,0.78)';
-  roundRectPath(ctx, px, py, pw, ph, 12);
-  ctx.fill();
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillStyle = '#f9c623';
-  ctx.font = 'bold 30px "Consolas","Courier New",monospace';
-  ctx.fillText(title, W / 2, py + 38);
-  ctx.fillStyle = '#f0e8da';
-  ctx.font = '17px "Consolas","Courier New",monospace';
-  ctx.fillText(sub, W / 2, py + 76);
-  if (sub2) {
-    ctx.fillStyle = '#9be08a';
-    ctx.font = 'bold 15px "Consolas","Courier New",monospace';
-    ctx.fillText(sub2, W / 2, py + 112);
+  const mono = 'px "Consolas","Courier New",monospace';
+  const pw = Math.min(W * 0.9, 560), innerW = pw - 40;
+
+  const titlePx = fitFont(ctx, title, innerW, 30, 'bold', 16);
+  ctx.font = '16' + mono;
+  const subLines = sub ? wrapLines(ctx, sub, innerW) : [];
+  const sub2Px = sub2 ? fitFont(ctx, sub2, innerW, 15, 'bold', 11) : 0;
+
+  const rows = [{ text: title, font: 'bold ' + titlePx + mono, fill: '#f9c623', h: titlePx + 14 }];
+  for (const line of subLines) rows.push({ text: line, font: '16' + mono, fill: '#f0e8da', h: 24 });
+  if (sub2) rows.push({ text: sub2, font: 'bold ' + sub2Px + mono, fill: '#9be08a', h: sub2Px + 12 });
+
+  const ph = rows.reduce((s, r) => s + r.h, 0) + 28;
+  const py = Math.max(8, H * 0.36 + 142 - ph);
+  ctx.fillStyle = 'rgba(20,12,6,0.78)';
+  roundRectPath(ctx, (W - pw) / 2, py, pw, ph, 12);
+  ctx.fill();
+
+  let y = py + 14;
+  for (const r of rows) {
+    ctx.fillStyle = r.fill;
+    ctx.font = r.font;
+    ctx.fillText(r.text, W / 2, y + r.h / 2);
+    y += r.h;
   }
   ctx.restore();
 }
 
+// The pre-ride briefing. Title, map name, a hovering burger, the controls,
+// and the go hint — all measured first so the panel is sized to its contents
+// and the long instruction sentences wrap (instead of clipping) on a narrow
+// phone, with the whole panel kept on-screen even in short landscape.
 function drawReady(ctx, W, H, mapLabel, touch) {
   ctx.save();
-  const pw = Math.min(W * 0.86, 720), ph = 330;
-  const px = (W - pw) / 2, py = H * 0.18;
-  ctx.fillStyle = 'rgba(20,12,6,0.82)';
-  roundRectPath(ctx, px, py, pw, ph, 16);
-  ctx.fill();
-
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillStyle = '#5d2f17';
-  ctx.font = 'bold 52px "Consolas","Courier New",monospace';
-  ctx.fillText('GET READY!', W / 2 + 3, py + 58 + 3);
-  ctx.fillStyle = '#f9c623';
-  ctx.fillText('GET READY!', W / 2, py + 58);
+  const mono = 'px "Consolas","Courier New",monospace';
+  const pw = Math.min(W * 0.92, 600), innerW = pw - 48;
 
-  if (mapLabel) {
-    ctx.fillStyle = '#9be08a';
-    ctx.font = 'bold 18px "Consolas","Courier New",monospace';
-    ctx.fillText(mapLabel, W / 2, py + 96);
-  }
-
-  // burger icon beside the title
-  ctx.save();
-  ctx.translate(W / 2, py + 130);
-  ctx.scale(42, 42);
-  drawBurger(ctx, 0, 0.4, performance.now() / 1000);
-  ctx.restore();
-
-  ctx.fillStyle = '#f0e8da';
-  ctx.font = '17px "Consolas","Courier New",monospace';
-  const lines = touch ? [
-    'Collect every triple cheeseburger, then ride to the popcorn.',
-    '',
+  const titlePx = fitFont(ctx, 'GET READY!', innerW, Math.min(52, W * 0.14), 'bold', 26);
+  const mapPx = mapLabel ? fitFont(ctx, mapLabel, innerW, 18, 'bold', 12) : 0;
+  const goText = touch ? 'Tap anywhere to ride' : 'Press any key to ride';
+  const footPx = fitFont(ctx, goText, innerW, 19, 'bold', 13);
+  const raw = touch ? [
+    'Collect every triple cheeseburger, then ride to the popcorn.', '',
     'Right thumb: gas and brake - left thumb: lean',
     'Double arrow turns around - top buttons pause and restart',
   ] : [
-    'Collect every triple cheeseburger, then ride to the popcorn.',
-    '',
+    'Collect every triple cheeseburger, then ride to the popcorn.', '',
     'UP gas   DOWN brake   LEFT / RIGHT rotate',
-    'SPACE turn around   ENTER restart   ESC pause   M sound',
+    'SPACE turn around   ESC pause   M sound',
   ];
-  lines.forEach((t, i) => ctx.fillText(t, W / 2, py + 192 + i * 26));
+  const instrPx = 16, lineH = 23;
+  ctx.font = instrPx + mono;
+  const lines = [];
+  for (const t of raw) {
+    if (!t) { lines.push(''); continue; }
+    for (const w of wrapLines(ctx, t, innerW)) lines.push(w);
+  }
+  let iconS = Math.max(18, Math.min(42, W * 0.1, H * 0.07));
 
+  // vertical stack: title, [map], burger, instructions, footer. Sized to
+  // its contents; if even that overruns a short screen, the blank spacer
+  // and then the (decorative) burger are dropped so nothing clips.
+  const padTop = 20, padBot = 20, g = 12;
+  let blankH = 10, iconH = iconS * 1.5;
+  const measure = () => {
+    const instrH = lines.reduce((s, t) => s + (t ? lineH : blankH), 0);
+    const hs = [titlePx, mapLabel ? mapPx + 4 : 0, iconH, instrH, footPx + 6];
+    const n = hs.filter(h => h > 0).length;
+    return padTop + padBot + g * (n - 1) + hs.reduce((a, b) => a + b, 0);
+  };
+  let ph = measure();
+  if (ph > H - 16) { blankH = 2; ph = measure(); }
+  if (ph > H - 16) { iconH = 0; ph = measure(); }
+
+  let py = Math.min(H * 0.16, (H - ph) / 2);
+  py = Math.max(8, Math.min(py, H - ph - 8));
+  ctx.fillStyle = 'rgba(20,12,6,0.82)';
+  roundRectPath(ctx, (W - pw) / 2, py, pw, ph, 16);
+  ctx.fill();
+
+  let y = py + padTop;
+  const block = h => { const cy = y + h / 2; y += h + g; return cy; };
+
+  let cy = block(titlePx);
+  ctx.font = 'bold ' + titlePx + mono;
+  ctx.fillStyle = '#5d2f17';
+  ctx.fillText('GET READY!', W / 2 + 3, cy + 3);
+  ctx.fillStyle = '#f9c623';
+  ctx.fillText('GET READY!', W / 2, cy);
+
+  if (mapLabel) {
+    cy = block(mapPx + 4);
+    ctx.font = 'bold ' + mapPx + mono;
+    ctx.fillStyle = '#9be08a';
+    ctx.fillText(mapLabel, W / 2, cy);
+  }
+
+  if (iconH > 0) {
+    cy = block(iconH);
+    ctx.save();
+    ctx.translate(W / 2, cy);
+    ctx.scale(iconS, iconS);
+    drawBurger(ctx, 0, 0.1, performance.now() / 1000);
+    ctx.restore();
+  }
+
+  const instrH = lines.reduce((s, t) => s + (t ? lineH : blankH), 0);
+  const instrTop = y;
+  block(instrH);
+  ctx.font = instrPx + mono;
+  ctx.fillStyle = '#f0e8da';
+  let ly = instrTop;
+  for (const t of lines) {
+    if (t) ctx.fillText(t, W / 2, ly + lineH / 2);
+    ly += t ? lineH : blankH;
+  }
+
+  cy = block(footPx + 6);
+  ctx.font = 'bold ' + footPx + mono;
   ctx.fillStyle = '#9be08a';
-  ctx.font = 'bold 19px "Consolas","Courier New",monospace';
-  ctx.fillText(touch ? 'Tap anywhere to ride' : 'Press any key to ride',
-    W / 2, py + ph - 24);
+  ctx.fillText(goText, W / 2, cy);
   ctx.restore();
 }
 
@@ -1133,18 +1232,12 @@ function drawMenuAstro(ctx, w, h, t) {
   ctx.restore();
 }
 
-// animated scene behind the intro and menu: drifting clouds, tumbling
-// burgers, a grassy floor, and the popcorn bucket waiting on the right.
-// showAstro adds the rising-astronaut gag (menu only, never the continue
-// screen)
-function drawMenuBackdrop(ctx, W, H, t, pat, showAstro) {
-  const Z = Math.min(W / 26, H / 13.5);
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.save();
-  ctx.scale(Z, Z);
-  const w = W / Z, h = H / Z;
-
-  const gy = h * 0.84;
+// shared stage for the full-screen scene screens (the menu family and the
+// victory feast): sky gradient, panning parallax scenery, drifting haze,
+// and the grassy floor. Painted in world units onto an already-scaled
+// context (w by h, ground top at gy); callers stage their own props over
+// it. showAstro adds the rising-astronaut gag (menu only)
+function drawBackdropStage(ctx, w, h, gy, t, pat, showAstro) {
   ctx.fillStyle = skyGradient(ctx, pat, 0, gy);
   ctx.fillRect(0, 0, w, h);
 
@@ -1167,14 +1260,11 @@ function drawMenuBackdrop(ctx, W, H, t, pat, showAstro) {
   ctx.fillStyle = pat.ground;
   ctx.fillRect(0, gy, w, h - gy);
   pat.edge(ctx, { ax: 0, ay: gy, bx: w, by: gy }, pat, t);
+}
 
-  ctx.save();
-  ctx.translate(w * 0.86, gy - 1.05);
-  ctx.scale(1.8, 1.8);
-  drawPopcorn(ctx, 0, 0, t);
-  ctx.restore();
-
-  for (let i = 0; i < 6; i++) {
+// tumbling burgers drifting across the sky — the scene screens' confetti
+function drawDriftingBurgers(ctx, w, h, t, n) {
+  for (let i = 0; i < n; i++) {
     const sp = 1.2 + srand(i * 9.7) * 1.8;
     const span = w + 4;
     const x = ((t * sp + srand(i * 3.3) * span) % span) - 2;
@@ -1187,15 +1277,47 @@ function drawMenuBackdrop(ctx, W, H, t, pat, showAstro) {
     drawBurger(ctx, 0, 0, t + i);
     ctx.restore();
   }
+}
+
+// animated scene behind the intro and menu: drifting clouds, tumbling
+// burgers, a grassy floor, and the popcorn bucket waiting on the right.
+// showAstro adds the rising-astronaut gag (menu only, never the continue
+// screen)
+function drawMenuBackdrop(ctx, W, H, t, pat, showAstro) {
+  const Z = Math.min(W / 26, H / 13.5);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.save();
+  ctx.scale(Z, Z);
+  const w = W / Z, h = H / Z;
+
+  const gy = h * 0.84;
+  drawBackdropStage(ctx, w, h, gy, t, pat, showAstro);
+
+  ctx.save();
+  ctx.translate(w * 0.86, gy - 1.05);
+  ctx.scale(1.8, 1.8);
+  drawPopcorn(ctx, 0, 0, t);
+  ctx.restore();
+
+  drawDriftingBurgers(ctx, w, h, t, 6);
   ctx.restore();
 }
 
-// button hitboxes, shared by rendering (here) and hit-testing (game.js)
+// button hitboxes, shared by rendering (here) and hit-testing (game.js).
+// Rows are 56 tall with an 18 gap where there's room, but shrink to fit so
+// a tall stack (e.g. the 4-item menu) never runs off a short phone; only if
+// even the floor height overruns do we slide the stack up to avoid a clip.
 function menuRects(W, H, n, y0) {
-  const bw = Math.min(300, W * 0.7), bh = 56, gap = 18;
+  const bw = Math.min(300, W * 0.7);
   const x = (W - bw) / 2;
+  const m = Math.max(12, H * 0.04);
+  const avail = H - y0 - m;                       // room below the start
+  let bh = Math.max(28, Math.min(56, avail / (n + (n - 1) * 0.32)));
+  const gap = bh * 0.32;
+  const total = n * bh + (n - 1) * gap;
+  const top = total > avail ? Math.max(m, H - m - total) : y0;
   const rects = [];
-  for (let i = 0; i < n; i++) rects.push({ x, y: y0 + i * (bh + gap), w: bw, h: bh });
+  for (let i = 0; i < n; i++) rects.push({ x, y: top + i * (bh + gap), w: bw, h: bh });
   return rects;
 }
 
@@ -1222,15 +1344,18 @@ function drawButtons(ctx, rects, items, sel, hover, alpha) {
     ctx.strokeStyle = hot ? '#f9c623' : 'rgba(249,198,35,0.45)';
     ctx.stroke();
     const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+    const innerW = r.w - 24; // keep the lettering off the rounded corners
     ctx.fillStyle = hot ? '#ffe27a' : (it.color || '#f0e8da');
     if (it.sub) {
-      ctx.font = 'bold 22px "Consolas","Courier New",monospace';
-      ctx.fillText(it.label, cx, cy - 8);
+      // size and stack label/sub relative to the row so two-line buttons
+      // stay inside even when the row is shrunk on a short screen
+      fitFont(ctx, it.label, innerW, Math.min(22, r.h * 0.42), 'bold', 11);
+      ctx.fillText(it.label, cx, cy - r.h * 0.16);
       ctx.fillStyle = hot ? '#f0e8da' : 'rgba(240,232,218,0.7)';
-      ctx.font = '13px "Consolas","Courier New",monospace';
-      ctx.fillText(it.sub, cx, cy + 15);
+      fitFont(ctx, it.sub, innerW, Math.min(13, r.h * 0.28), '', 9);
+      ctx.fillText(it.sub, cx, cy + r.h * 0.22);
     } else {
-      ctx.font = 'bold 24px "Consolas","Courier New",monospace';
+      fitFont(ctx, it.label, innerW, Math.min(24, r.h * 0.5), 'bold', 12);
       ctx.fillText(it.label, cx, cy + 1);
     }
     ctx.restore();
@@ -1250,7 +1375,7 @@ function drawDifficulty(ctx, W, H, alpha, tracks, sel, hover, touch) {
   ctx.globalAlpha = alpha;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.font = 'bold 44px "Consolas","Courier New",monospace';
+  fitFont(ctx, 'CHOOSE DIFFICULTY', W * 0.9, 44, 'bold', 18);
   ctx.fillStyle = 'rgba(40,16,4,0.85)';
   ctx.fillText('CHOOSE DIFFICULTY', W / 2 + 3, H * 0.20 + 3);
   ctx.fillStyle = '#f9c623';
@@ -1358,24 +1483,355 @@ function drawContinue(ctx, W, H, alpha, t, continuesLeft, sel, hover) {
   drawButtons(ctx, menuRects(W, H, 2, H * 0.62), items, sel, hover, alpha);
 }
 
+// ---------- victory screen ----------
+
+// the trusty bike parked beside the feast, leaning on its stand — the
+// same frame the dejected pose uses, minus the rider
+function drawParkedBike(ctx, x, y, scale) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(scale, scale);
+  ctx.rotate(-0.05);
+  ctx.translate(0, -PHYS.wheelR);
+
+  const wheels = [
+    { pos: { x: -0.62, y: 0 }, rot: 2.1 },
+    { pos: { x: 0.62, y: 0 }, rot: 0.6 },
+  ];
+  const P = (lx, ly) => ({ x: lx, y: ly - 0.40 });
+  const pedal = P(0.02, 0.06), seatB = P(-0.45, -0.45), seatF = P(-0.02, -0.43);
+  const handle = P(0.46, -0.44), engine = P(0.06, -0.12);
+
+  ctx.lineCap = 'round';
+  // kickstand first so it tucks behind the frame
+  strokeSeg(ctx, pedal, { x: 0.20, y: PHYS.wheelR }, 0.05, '#7d7d7d');
+  for (const w of wheels) drawWheel(ctx, w);
+  strokeSeg(ctx, pedal, wheels[0].pos, 0.09, '#b9b9b9');
+  strokeSeg(ctx, handle, wheels[1].pos, 0.07, '#b9b9b9');
+  strokeSeg(ctx, pedal, seatF, 0.07, '#b9b9b9');
+  strokeSeg(ctx, pedal, handle, 0.06, '#a5a5a5');
+  strokeSeg(ctx, seatB, seatF, 0.13, '#d9d9d9');
+  ctx.fillStyle = '#8d8d8d';
+  ctx.beginPath();
+  ctx.arc(engine.x, engine.y, 0.14, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+// The champion: sat low on the ground among the spoils, contently
+// shoveling fistful after fistful of popcorn into his mouth, forever.
+// (x, y) is the ground under his seat; he faces right, feast bucket over
+// his ankles.
+function drawVictoryBiker(ctx, x, y, scale, t) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(scale, scale);
+
+  // soft seat shadow
+  ctx.fillStyle = 'rgba(40,20,8,0.20)';
+  ctx.beginPath();
+  ctx.ellipse(0.12, 0.01, 0.78, 0.085, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  const breathe = Math.sin(t * 1.9) * 0.012; // full and happy
+  ctx.lineCap = 'round';
+
+  // seated low on the ground: hips by the dirt, legs stretched out with
+  // the knees easing up and apart, feet resting on the ground ahead
+  const hip = { x: -0.12, y: -0.10 };
+  for (const [kx, ky, fx, fy] of [[0.22, -0.24, 0.54, -0.05],
+                                  [0.16, -0.18, 0.48, -0.02]]) {
+    strokeSeg(ctx, hip, { x: kx, y: ky }, 0.11, '#15151a');
+    strokeSeg(ctx, { x: kx, y: ky }, { x: fx, y: fy }, 0.09, '#15151a');
+  }
+
+  // the feast bucket, planted on the ground over his ankles
+  ctx.save();
+  ctx.translate(0.60, -0.44);
+  ctx.scale(0.9, 0.9);
+  drawPopcorn(ctx, 0, 0, t + 4.2);
+  ctx.restore();
+
+  // torso leaning back at ease, with a well-earned belly
+  const shoulder = { x: -0.24, y: -0.50 + breathe };
+  strokeSeg(ctx, hip, shoulder, 0.14, '#15151a');
+  ctx.fillStyle = '#15151a';
+  ctx.beginPath();
+  ctx.arc(-0.02, -0.26 + breathe * 0.5, 0.17, 0, Math.PI * 2);
+  ctx.fill();
+
+  // the off arm, short and bent, props him up on the ground behind
+  const propEl = { x: -0.42, y: -0.30 };
+  strokeSeg(ctx, shoulder, propEl, 0.08, '#15151a');
+  strokeSeg(ctx, propEl, { x: -0.50, y: -0.04 }, 0.08, '#15151a');
+
+  // the shovel cycle: scoop off the rim, swing up, stuff, swing back —
+  // a fistful and a half every second, continuously
+  const p = (t * 1.4) % 1;
+  const scoop = { x: 0.38, y: -0.42 };
+  const mouth = { x: -0.02, y: -0.64 + breathe };
+  const ease = q => q * q * (3 - 2 * q);
+  let f; // 0 with the hand in the bucket, 1 at the mouth
+  if (p < 0.4) f = ease(p / 0.4);                       // rise
+  else if (p < 0.6) f = 1;                              // stuff it in
+  else f = 1 - ease(Math.min(1, (p - 0.6) / 0.32));     // back for more
+  // the forearm swings through an arc that bows outward
+  const hand = {
+    x: scoop.x + (mouth.x - scoop.x) * f + Math.sin(f * Math.PI) * 0.10,
+    y: scoop.y + (mouth.y - scoop.y) * f - Math.sin(f * Math.PI) * 0.06,
+  };
+  const elbow = {
+    x: (shoulder.x + hand.x) / 2 + 0.12,
+    y: (shoulder.y + hand.y) / 2 + 0.16,
+  };
+
+  // the head goes down before the feeding arm, so the arm, the glove and
+  // the fistful it carries all pass in FRONT of the face to the mouth
+  const chew = f > 0.7 ? Math.sin(t * 26) * 0.05 : 0;
+  drawHead(ctx, -0.15, -0.74 + breathe, 1, -0.14 + chew);
+
+  strokeSeg(ctx, shoulder, elbow, 0.09, '#15151a');
+  strokeSeg(ctx, elbow, hand, 0.08, '#15151a');
+
+  // the fistful rides the hand up, then shrinks away as it's eaten
+  const sz = p < 0.4 ? 0.075 : 0.075 * (0.55 - p) / 0.15;
+  if (sz > 0.012) {
+    drawKernel(ctx, hand.x + 0.02, hand.y - 0.06, sz, 3.1);
+    drawKernel(ctx, hand.x - 0.05, hand.y - 0.02, sz * 0.8, 5.7);
+  }
+  // glove over the popcorn
+  ctx.fillStyle = '#15151a';
+  ctx.beginPath();
+  ctx.arc(hand.x, hand.y, 0.065, 0, Math.PI * 2);
+  ctx.fill();
+
+  // a stray puff tumbles from the mouthful back into the grass
+  if (p >= 0.42 && p < 0.92) {
+    const q = (p - 0.42) / 0.5;
+    drawKernel(ctx, mouth.x + 0.10 + q * 0.12, mouth.y + q * q * 0.85, 0.035, 9.3);
+  }
+
+  ctx.restore();
+}
+
+// the victory screen's single button, shared with game.js for hit-testing
+function victoryRects(W, H) {
+  return menuRects(W, H, 1, H * 0.68);
+}
+
+// The big one: every map of a difficulty track cleared. A sunny feast —
+// the champion sat among buckets of popcorn, working through them — under
+// the track scorecard (this run's time and style per map, with all-time
+// records starred) and the way back to the menu.
+// o: { t, pat, label, names, results, sel, hover, touch, saveNote }
+function drawVictory(ctx, W, H, o) {
+  const t = o.t || 0;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+  // ---------- the feast ----------
+  const Z = Math.min(W / 26, H / 13.5);
+  ctx.save();
+  ctx.scale(Z, Z);
+  const w = W / Z, h = H / Z, gy = h * 0.84;
+  drawBackdropStage(ctx, w, h, gy, t, o.pat);
+  drawDriftingBurgers(ctx, w, h, t, 4);
+
+  // popcorn strewn across the whole meadow floor
+  for (let i = 0; i < 70; i++) {
+    const kx = srand(i * 3.17 + 0.7) * w;
+    const ky = gy + 0.12 + srand(i * 7.31 + 2.1) * (h - gy - 0.3);
+    drawKernel(ctx, kx, ky, 0.04 + srand(i * 5.7 + 1.3) * 0.05, i * 1.3);
+  }
+
+  // the bike parked off to the side, done for the season
+  drawParkedBike(ctx, w * 0.86, gy, 1.5);
+
+  // buckets surrounding the champion (x fraction, scale)
+  const buckets = [[0.05, 1.5], [0.13, 1.9], [0.40, 1.55],
+                   [0.56, 1.35], [0.67, 1.8], [0.95, 1.65]];
+  for (let i = 0; i < buckets.length; i++) {
+    const [fx, s] = buckets[i];
+    ctx.save();
+    ctx.translate(w * fx, gy - 0.59 * s);
+    ctx.scale(s, s);
+    drawPopcorn(ctx, 0, 0, t + i * 2.6);
+    ctx.restore();
+  }
+
+  // one bucket tipped over mid-binge, its spill trailing toward the rider
+  ctx.save();
+  ctx.translate(w * 0.47, gy - 0.30);
+  ctx.rotate(1.9);
+  ctx.scale(1.3, 1.3);
+  drawPopcorn(ctx, 0, -0.28, 2.0); // frozen: a downed bucket lies dead still
+  ctx.restore();
+  for (let i = 0; i < 8; i++) {
+    drawKernel(ctx, w * 0.45 - i * 0.30 - srand(i * 8.1) * 0.2,
+      gy + 0.10 + srand(i * 6.3) * 0.10, 0.05 + srand(i * 2.9) * 0.035, i * 7.7);
+  }
+
+  // the champion himself
+  drawVictoryBiker(ctx, w * 0.27, gy + 0.02, 2.1, t);
+  ctx.restore();
+
+  // ---------- lettering ----------
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.save();
+  const beat = 1 + Math.sin(t * 2.6) * 0.018; // swells with the song
+  ctx.translate(W / 2, H * 0.08);
+  ctx.scale(beat, beat);
+  ctx.font = 'bold 52px "Consolas","Courier New",monospace';
+  ctx.fillStyle = 'rgba(40,16,4,0.85)';
+  ctx.fillText('VICTORY!', 3, 3);
+  ctx.fillStyle = '#f9c623';
+  ctx.fillText('VICTORY!', 0, 0);
+  ctx.restore();
+
+  ctx.fillStyle = '#9be08a';
+  fitFont(ctx, `Every ${o.label} map cleared!`, W * 0.9, 19, 'bold', 12);
+  ctx.fillText(`Every ${o.label} map cleared!`, W / 2, H * 0.08 + 42);
+
+  // ---------- the scorecard ----------
+  const names = o.names || [], results = o.results || [];
+  const complete = names.length > 0 && names.every((_, i) => results[i]);
+  const rows = names.length + 1 + (complete ? 1 : 0); // + header (+ total)
+  // below the subtitle even on short screens, above the button always
+  const top = Math.max(H * 0.155, H * 0.08 + 56), bottom = H * 0.645;
+  const rowH = Math.max(13, Math.min(27, (bottom - top - 24) / (rows + 1.1)));
+  const fs = Math.max(10, Math.round(rowH * 0.62));
+  const pw = Math.min(W * 0.88, 600);
+  const px = (W - pw) / 2;
+  const ph = rowH * (rows + 1.1) + 24;
+  ctx.fillStyle = 'rgba(20,12,6,0.82)';
+  roundRectPath(ctx, px, top, pw, ph, 12);
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = 'rgba(249,198,35,0.45)';
+  ctx.stroke();
+
+  ctx.font = `bold ${fs}px "Consolas","Courier New",monospace`;
+  const nameX = px + 18;
+  const styleR = px + pw - 18;     // right edge of the style column
+  const timeR = styleR - fs * 4.6; // right edge of the time column
+  let y = top + 12 + rowH / 2;
+
+  ctx.fillStyle = 'rgba(240,232,218,0.55)';
+  ctx.textAlign = 'left';
+  ctx.fillText('map', nameX, y);
+  ctx.textAlign = 'right';
+  ctx.fillText('time', timeR, y);
+  ctx.fillText('style', styleR, y);
+
+  let sumT = 0, sumS = 0;
+  for (let i = 0; i < names.length; i++) {
+    y += rowH;
+    const r = results[i];
+    ctx.textAlign = 'left';
+    ctx.fillStyle = r ? '#f0e8da' : 'rgba(240,232,218,0.4)';
+    // clip the name to its column so a long map title can't run into the
+    // time/star figures on a narrow phone
+    ctx.fillText(ellipsize(ctx, `${String(i + 1).padStart(2)}  ${names[i]}`,
+      timeR - fs * 6.3 - nameX), nameX, y);
+    ctx.textAlign = 'right';
+    if (!r) {
+      // skipped past (the dev cheat): nothing to report for this map
+      ctx.fillText('--:--,--', timeR, y);
+      ctx.fillText('---', styleR, y);
+      continue;
+    }
+    sumT += r.time;
+    sumS += r.style;
+    // all-time records ride in starred gold; ordinary scores in parchment
+    ctx.fillStyle = r.timeRecord ? '#f9c623' : '#f0e8da';
+    ctx.fillText((r.timeRecord ? '★ ' : '') + fmt(r.time), timeR, y);
+    ctx.fillStyle = r.styleRecord ? '#f9c623' : '#f0e8da';
+    ctx.fillText((r.styleRecord ? '★ ' : '') + r.style, styleR, y);
+  }
+
+  if (complete) {
+    y += rowH;
+    ctx.strokeStyle = 'rgba(240,232,218,0.25)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(nameX, y - rowH / 2);
+    ctx.lineTo(styleR, y - rowH / 2);
+    ctx.stroke();
+    ctx.fillStyle = '#ffe27a';
+    ctx.textAlign = 'left';
+    ctx.fillText('total', nameX, y);
+    ctx.textAlign = 'right';
+    ctx.fillText(fmt(sumT), timeR, y);
+    ctx.fillText(String(sumS), styleR, y);
+  }
+
+  // legend, only when there's a star on the board to explain
+  if (results.some(r => r && (r.timeRecord || r.styleRecord))) {
+    y += rowH * 0.9;
+    ctx.fillStyle = 'rgba(249,198,35,0.75)';
+    ctx.font = `${Math.max(9, fs - 3)}px "Consolas","Courier New",monospace`;
+    ctx.textAlign = 'right';
+    ctx.fillText('★ all-time best', styleR, y);
+  }
+
+  // ---------- the way home ----------
+  const rects = victoryRects(W, H);
+  drawButtons(ctx, rects, ['Back to Menu'], o.sel, o.hover, 1);
+
+  const hint = o.touch
+    ? (o.saveNote || '')
+    : 'Enter for the menu' + (o.saveNote ? ' - ' + o.saveNote : '');
+  if (hint) {
+    ctx.fillStyle = 'rgba(40,20,8,0.85)';
+    ctx.font = '15px "Consolas","Courier New",monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(hint, W / 2, rects[0].y + rects[0].h + 26);
+  }
+  ctx.textAlign = 'left';
+}
+
+// The slow, dramatic crossfade from the frozen final frame of the last
+// map into the victory feast. The scene renders into an offscreen buffer
+// and blits at the fade alpha — pieces like drawPopcorn reset
+// globalAlpha internally, so painting it directly would pop to opaque.
+let _victoryBuf = null;
+function drawVictoryFade(ctx, W, H, alpha, o) {
+  if (alpha <= 0) return;
+  if (!_victoryBuf) _victoryBuf = document.createElement('canvas');
+  if (_victoryBuf.width !== W || _victoryBuf.height !== H) {
+    _victoryBuf.width = W;
+    _victoryBuf.height = H;
+  }
+  drawVictory(_victoryBuf.getContext('2d'), W, H, o);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.drawImage(_victoryBuf, 0, 0);
+  ctx.restore();
+}
+
 function drawPause(ctx, W, H, items, sel, hover) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = 'rgba(8,5,2,0.55)';
   ctx.fillRect(0, 0, W, H);
 
+  // the panel wraps the title and the button stack, which menuRects may
+  // have shrunk or slid up on a short screen — so derive it from the rects
+  // rather than a fixed fraction, keeping the title clear of the buttons
   const rects = menuRects(W, H, items.length, H * 0.46);
-  const last = rects[rects.length - 1];
+  const first = rects[0], last = rects[rects.length - 1];
   const pw = Math.min(W * 0.7, 460);
-  const py = H * 0.32, ph = last.y + last.h + 30 - py;
+  const top = Math.max(8, first.y - 66);
+  const bottom = Math.min(H - 8, last.y + last.h + 22);
   ctx.fillStyle = 'rgba(20,12,6,0.85)';
-  roundRectPath(ctx, (W - pw) / 2, py, pw, ph, 16);
+  roundRectPath(ctx, (W - pw) / 2, top, pw, bottom - top, 16);
   ctx.fill();
 
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillStyle = '#f9c623';
-  ctx.font = 'bold 36px "Consolas","Courier New",monospace';
-  ctx.fillText('PAUSED', W / 2, py + 44);
+  fitFont(ctx, 'PAUSED', pw - 40, 36, 'bold', 20);
+  ctx.fillText('PAUSED', W / 2, first.y - 24);
   drawButtons(ctx, rects, items, sel, hover, 1);
 }
 
@@ -1385,16 +1841,24 @@ function drawPause(ctx, W, H, items, sel, hover) {
 // plus a Back button. Each row rect is the hover/click target and its
 // `bar` is the slider track inside it.
 function audioRects(W, H) {
-  const bw = Math.min(520, W * 0.86), bh = 68, gap = 16;
+  const bw = Math.min(520, W * 0.86);
   const x = (W - bw) / 2;
-  let y = H * 0.30;
+  const m = Math.max(12, H * 0.04);
+  const top = H * (H < 360 ? 0.20 : H < 430 ? 0.24 : 0.30); // higher on short screens
+  const backH = Math.min(56, Math.max(44, H * 0.1));
+  const reserve = backH + 46;              // gap to Back + the hint line below
+  // shrink the three slider rows so they plus the Back button and hint fit
+  const bh = Math.max(46, Math.min(68, (H - top - m - reserve - 2 * 12) / 3));
+  const gap = Math.max(10, Math.min(16, bh * 0.2));
+  let y = top;
   const rects = [];
   for (let i = 0; i < 3; i++) {
     rects.push({ x, y, w: bw, h: bh,
-      bar: { x: x + 24, y: y + 46, w: bw - 48, h: 8 } });
+      bar: { x: x + 24, y: y + bh - 15, w: bw - 48, h: 8 } });
     y += bh + gap;
   }
-  rects.push({ x: (W - 240) / 2, y: y + 6, w: 240, h: 56 }); // Back
+  const backW = Math.min(240, W * 0.7);
+  rects.push({ x: (W - backW) / 2, y: y + 6, w: backW, h: backH }); // Back
   return rects;
 }
 
@@ -1416,7 +1880,7 @@ function drawAudio(ctx, W, H, alpha, o) {
   ctx.globalAlpha = alpha;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.font = 'bold 44px "Consolas","Courier New",monospace';
+  fitFont(ctx, 'AUDIO', W * 0.9, 44, 'bold', 18);
   ctx.fillStyle = 'rgba(40,16,4,0.85)';
   ctx.fillText('AUDIO', W / 2 + 3, H * 0.16 + 3);
   ctx.fillStyle = '#f9c623';
@@ -1440,9 +1904,9 @@ function drawAudio(ctx, W, H, alpha, o) {
     ctx.font = 'bold 18px "Consolas","Courier New",monospace';
     ctx.textAlign = 'left';
     ctx.fillStyle = hot ? '#ffe27a' : '#f0e8da';
-    ctx.fillText(AUDIO_LABELS[i], r.bar.x, r.y + 22);
+    ctx.fillText(AUDIO_LABELS[i], r.bar.x, r.y + 19);
     ctx.textAlign = 'right';
-    ctx.fillText(Math.round(vols[i] * 100) + '%', r.bar.x + r.bar.w, r.y + 22);
+    ctx.fillText(Math.round(vols[i] * 100) + '%', r.bar.x + r.bar.w, r.y + 19);
 
     const b = r.bar; // track, filled to the volume, with a knob on top
     ctx.fillStyle = 'rgba(240,232,218,0.25)';
@@ -1471,9 +1935,10 @@ function drawAudio(ctx, W, H, alpha, o) {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillStyle = o.dim ? 'rgba(240,232,218,0.75)' : 'rgba(40,20,8,0.85)';
-  ctx.font = '15px "Consolas","Courier New",monospace';
-  ctx.fillText(o.touch ? 'Drag the sliders - tap Back when done'
-    : 'Arrows adjust - M mutes - Esc to go back', W / 2, back.y + back.h + 34);
+  const hint = o.touch ? 'Drag the sliders - tap Back when done'
+    : 'Arrows adjust - M mutes - Esc to go back';
+  fitFont(ctx, hint, W * 0.92, 15, '', 11);
+  ctx.fillText(hint, W / 2, Math.min(back.y + back.h + 22, H - 10));
   ctx.restore();
 }
 
@@ -1483,8 +1948,13 @@ const REPLAY_VIS = 6; // list rows visible at once
 const SKIP_VIS = 6;   // skip-cheat level-picker rows visible at once
 
 function replayRects(W, H, n, y0) {
-  const bw = Math.min(560, W * 0.86), bh = 52, gap = 12;
+  const bw = Math.min(560, W * 0.86);
   const x = (W - bw) / 2;
+  const m = Math.max(12, H * 0.1);  // room below for the bottom hints / back
+  // rows are 52 tall where there's room, shrinking so the window fits a
+  // short (landscape) screen instead of running its last rows off the edge
+  const bh = Math.max(30, Math.min(52, (H - y0 - m) / (n + (n - 1) * 0.23)));
+  const gap = bh * 0.23;
   const rects = [];
   for (let i = 0; i < n; i++) rects.push({ x, y: y0 + i * (bh + gap), w: bw, h: bh });
   return rects;
@@ -1498,7 +1968,7 @@ function drawReplays(ctx, W, H, alpha, items, sel, scroll, hover, note, touch) {
   ctx.globalAlpha = alpha;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.font = 'bold 44px "Consolas","Courier New",monospace';
+  fitFont(ctx, 'REPLAYS', W * 0.9, 44, 'bold', 18);
   ctx.fillStyle = 'rgba(40,16,4,0.85)';
   ctx.fillText('REPLAYS', W / 2 + 3, H * 0.13 + 3);
   ctx.fillStyle = '#f9c623';
@@ -1519,7 +1989,7 @@ function drawReplays(ctx, W, H, alpha, items, sel, scroll, hover, note, touch) {
   if (scroll > 0) ctx.fillText('- more -', W / 2, y0 - 16);
   if (scroll + REPLAY_VIS < items.length && rects.length) {
     const last = rects[rects.length - 1];
-    ctx.fillText('- more -', W / 2, last.y + last.h + 18);
+    ctx.fillText('- more -', W / 2, last.y + last.h + 14);
   }
   if (note) {
     ctx.fillStyle = '#f0e8da';
@@ -1551,13 +2021,13 @@ function drawLevelSelect(ctx, W, H, alpha, o) {
   ctx.globalAlpha = alpha;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.font = 'bold 44px "Consolas","Courier New",monospace';
+  fitFont(ctx, 'SKIP TO MAP', W * 0.9, 44, 'bold', 18);
   ctx.fillStyle = 'rgba(40,16,4,0.85)';
   ctx.fillText('SKIP TO MAP', W / 2 + 3, H * 0.13 + 3);
   ctx.fillStyle = '#f9c623';
   ctx.fillText('SKIP TO MAP', W / 2, H * 0.13);
   if (o.label) {
-    ctx.font = 'bold 18px "Consolas","Courier New",monospace';
+    fitFont(ctx, o.label + ' track', W * 0.9, 18, 'bold', 11);
     ctx.fillStyle = '#f0e8da';
     ctx.fillText(o.label + ' track', W / 2, H * 0.13 + 40);
   }
@@ -1577,7 +2047,7 @@ function drawLevelSelect(ctx, W, H, alpha, o) {
   if (o.scroll > 0) ctx.fillText('- more -', W / 2, y0 - 16);
   if (o.scroll + SKIP_VIS < o.items.length && rects.length) {
     const last = rects[rects.length - 1];
-    ctx.fillText('- more -', W / 2, last.y + last.h + 18);
+    ctx.fillText('- more -', W / 2, last.y + last.h + 14);
   }
   if (!o.touch) {
     ctx.fillStyle = 'rgba(240,232,218,0.85)';
@@ -1610,13 +2080,19 @@ function levelBounds(level) {
 // and the rider.
 const MAP_VIEW = { w: 64, h: 30 }; // world units the window always covers
 
-function drawMinimap(ctx, W, H, level, o) {
-  const b = levelBounds(level);
-  const pad = 1; // world units of breathing room at the level edges
+// the minimap's screen box, shared so the HUD can tuck the level label
+// directly beneath it without overlapping the panel
+function minimapRect(W, H) {
   const s = Math.min(Math.min(W * 0.32, 320) / MAP_VIEW.w,
                      Math.min(H * 0.26, 150) / MAP_VIEW.h);
   const mw = MAP_VIEW.w * s, mh = MAP_VIEW.h * s;
-  const mx = W - mw - 14, my = 12;
+  return { s, mw, mh, mx: W - mw - 14, my: 12 };
+}
+
+function drawMinimap(ctx, W, H, level, o) {
+  const b = levelBounds(level);
+  const pad = 1; // world units of breathing room at the level edges
+  const { s, mw, mh, mx, my } = minimapRect(W, H);
 
   // window origin: centered on the rider, clamped to the level bounds;
   // a level smaller than the window sits centered inside it instead
@@ -1797,7 +2273,49 @@ function drawHUD(ctx, W, H, o) {
   }
   ctx.shadowBlur = 0;
 
-  if (o.replay) {
+  // level name and number tucked under the minimap, right-aligned to its
+  // edge so it never crowds the left metrics; the replay and test-ride
+  // banners own this role on their screens, so it only shows for live
+  // riding. Small type keeps it clear of the HUD even on a narrow phone
+  if (o.mapLabel && !o.replay && !o.test) {
+    const m = minimapRect(W, H);
+    const lf = Math.max(10, Math.round(H / 56));
+    ctx.font = `bold ${lf}px "Consolas","Courier New",monospace`;
+    ctx.textAlign = 'right';
+    ctx.fillStyle = ink.text;
+    ctx.shadowColor = ink.halo;
+    ctx.shadowBlur = Math.max(2, Math.round(lf * 0.3));
+    ctx.fillText(o.mapLabel, m.mx + m.mw, m.my + m.mh + 6);
+    ctx.shadowBlur = 0;
+    ctx.textAlign = 'left';
+  }
+
+  if (o.test) {
+    // banner so an editor test ride can't be mistaken for a real run
+    const bf = Math.max(13, Math.round(fs * 0.8));
+    ctx.textAlign = 'center';
+    ctx.font = `bold ${bf}px "Consolas","Courier New",monospace`;
+    const text = 'TEST RIDE - ' + (o.mapLabel || 'untitled');
+    const tw = ctx.measureText(text).width;
+    // the touch pause/restart buttons own the top centre, so the banner
+    // ducks under them on touch screens
+    const by = o.touch ? 76 : 10;
+    ctx.fillStyle = 'rgba(20,12,6,0.78)';
+    roundRectPath(ctx, W / 2 - tw / 2 - 14, by, tw + 28, bf * 1.9, 9);
+    ctx.fill();
+    ctx.fillStyle = '#9be08a';
+    ctx.fillText(text, W / 2, by + bf * 0.45);
+    ctx.textAlign = 'left';
+    if (o.test.done) {
+      const back = o.touch ? 'tap to retry - pause button for the editor'
+        : 'Enter retries - Esc back to the editor';
+      if (o.test.outcome === 'finished') {
+        centerMsg(ctx, W, H, 'Course completed!', `Time ${fmt(o.time)} - ` + back);
+      } else {
+        centerMsg(ctx, W, H, 'The rider crashed!', back);
+      }
+    }
+  } else if (o.replay) {
     // banner so a playback can't be mistaken for live riding
     const bf = Math.max(13, Math.round(fs * 0.8));
     ctx.textAlign = 'center';

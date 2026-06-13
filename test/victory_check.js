@@ -1,8 +1,10 @@
-// Drives the "skip" cheat's level-select overlay black-box: opens it from
-// the menu, observes the captured fillText headings and the song the music
-// module plays to check it scrolls, dismisses on Escape, and jumps to the
-// picked map. Complements game_smoke.js (which opens it mid-game).
-// Run with: node test/skip_check.js
+// End-to-end victory-flow test: swaps the Easy track for two trivial maps
+// (goal on the start pad, no burgers) so each finishes on its first sim
+// frame, then drives menu -> map 1 -> finished -> map 2 -> victoryFade ->
+// victory -> menu, asserting the music handoff (world song -> silence ->
+// victory tune -> menu), the scorecard contents (map rows, record stars,
+// Back to Menu) and that best times were banked for both maps.
+// Run with: node test/victory_check.js
 const fs = require('fs');
 const path = require('path');
 const root = path.join(__dirname, '..');
@@ -60,7 +62,12 @@ global.window = {
 };
 let lastAC = null;
 global.document = { getElementById: () => gameCanvas, createElement: () => makeCanvas() };
-global.localStorage = { getItem: () => null, setItem() {} };
+// a recording localStorage so banked best times can be asserted
+const store = {};
+global.localStorage = {
+  getItem: k => (k in store ? store[k] : null),
+  setItem: (k, v) => { store[k] = String(v); },
+};
 global.performance = { now: () => clock.t * 1000 };
 const rafQueue = [];
 global.requestAnimationFrame = fn => { rafQueue.push(fn); };
@@ -80,7 +87,10 @@ function pumpFrames(n, dt) {
 function key(k) {
   for (const fn of windowHandlers.keydown || []) fn({ key: k, preventDefault() {}, repeat: false });
 }
-// clear the heading log, render a few frames, return the texts drawn
+function keyUp(k) {
+  for (const fn of windowHandlers.keyup || []) fn({ key: k, preventDefault() {}, repeat: false });
+}
+// clear the lettering log, render a few frames, return the texts drawn
 function frameTexts(n) {
   textLog.length = 0;
   pumpFrames(n || 3, 1 / 60);
@@ -94,45 +104,75 @@ let playedNow = null;
 const origPlay = MUSIC.play;
 MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(name); };
 
+// a map the spawn pose immediately finishes: no burgers, goal on the pad
+const tiny = name => ({
+  name, theme: 'meadow',
+  polygons: [[[-5, 0], [40, 0], [40, 9.2], [-5, 9.2]]],
+  start: { x: 4, y: 8.3 },
+  burgers: [],
+  goal: [4, 8.6],
+});
+TRACKS[0].levels = [tiny('Test A'), tiny('Test B')];
+TRACKS[0].length = 2;
+
 (async () => {
   await new Promise(r => setImmediate(r));
   pumpFrames(5, 1 / 60);
-  key('Enter');           // loading -> intro
+  key('Enter');            // loading -> intro
   pumpFrames(3, 1 / 60);
-  key('Enter');           // intro -> menu
+  key('Enter');            // intro -> menu
+  pumpFrames(3, 1 / 60);
+  key('Enter');            // Play -> difficulty
+  pumpFrames(3, 1 / 60);
+  key('Enter');            // Easy -> ready (Test A)
+  pumpFrames(3, 1 / 60);
+  if (playedNow !== 'meadow') bad('ready should play meadow, got ' + playedNow);
+
+  key('ArrowUp');          // ride: the spawn pose finishes on frame one
+  pumpFrames(5, 1 / 60);
+  keyUp('ArrowUp');
+  if (playedNow !== 'meadow') bad('mid-track finish should keep meadow, got ' + playedNow);
   let texts = frameTexts(3);
-  if (!texts.includes('Play')) bad('menu should show Play button, got: ' + texts.join('|'));
-  if (texts.includes('SKIP TO MAP')) bad('skip overlay should not be up at the menu');
+  if (!texts.includes('Course completed!')) {
+    bad('map 1 should land on the plain finished screen, got: ' + texts.join('|'));
+  }
+  if (texts.includes('VICTORY!')) bad('no victory screen after a mid-track map');
 
-  // open the picker from the menu (no track active yet)
-  key('s'); key('k'); key('i'); key('p');
+  key('Enter');            // -> ready (Test B, the last map)
+  pumpFrames(3, 1 / 60);
+  key('ArrowUp');          // ride: finishes instantly -> victoryFade
+  pumpFrames(5, 1 / 60);
+  keyUp('ArrowUp');
+  pumpFrames(10, 1 / 60);  // a beat into the hold
+  if (playedNow !== null) {
+    bad('the dissolve should dip the music to silence, got ' + playedNow);
+  }
   texts = frameTexts(3);
-  if (!texts.includes('SKIP TO MAP')) bad('skip overlay heading missing after cheat');
-  if (playedNow !== 'menu') bad('skip from menu should play menu song, got ' + playedNow);
+  if (texts.includes('Course completed!')) {
+    bad('the last map must skip the finished screen for the dissolve');
+  }
+  if (texts.includes('VICTORY!')) {
+    bad('mid-dissolve the feast should still be on the buffer, not the screen');
+  }
 
-  // navigate down past the visible window (10 maps, 6 visible -> scrolls),
-  // then back up; must not throw and overlay stays up
-  for (let i = 0; i < 7; i++) key('ArrowDown');
-  for (let i = 0; i < 2; i++) key('ArrowUp');
+  pumpFrames(340, 1 / 60); // ride out the hold + dissolve (~5.6s)
   texts = frameTexts(3);
-  if (!texts.includes('SKIP TO MAP')) bad('overlay should stay up while navigating');
-  if (!texts.includes('- more -')) bad('a 10-map list scrolled down should show a -more- marker');
+  if (!texts.includes('VICTORY!')) bad('victory heading missing, got: ' + texts.join('|'));
+  if (!texts.some(t => t.includes('Test A'))) bad('scorecard should list Test A');
+  if (!texts.some(t => t.includes('Test B'))) bad('scorecard should list Test B');
+  if (!texts.includes('Back to Menu')) bad('victory screen should offer Back to Menu');
+  if (!texts.some(t => t.includes('\\u2605'))) bad('fresh records should be starred');
+  if (playedNow !== 'victory') bad('victory screen should play victory, got ' + playedNow);
+  for (const name of ['Test A', 'Test B']) {
+    if (store['burger-mania-best-' + name] == null) {
+      bad('best time for ' + name + ' was never banked');
+    }
+  }
 
-  // Escape dismisses the overlay back to the menu it came from
-  key('Escape');
+  key('Enter');            // Back to Menu
   texts = frameTexts(3);
-  if (texts.includes('SKIP TO MAP')) bad('Escape should close the skip overlay');
-  if (!texts.includes('Play')) bad('Escape from skip(menu) should return to the menu');
-  if (playedNow !== 'menu') bad('after Escape should still play menu, got ' + playedNow);
-
-  // re-open and pick map 6 (index 5 = first volcano map)
-  key('s'); key('k'); key('i'); key('p');
-  frameTexts(3);
-  for (let i = 0; i < 5; i++) key('ArrowDown');
-  key('Enter');
-  texts = frameTexts(3);
-  if (texts.includes('SKIP TO MAP')) bad('selecting a map should close the overlay');
-  if (playedNow !== 'volcano') bad('map 6 (Habanero Heights) should play volcano, got ' + playedNow);
+  if (playedNow !== 'menu') bad('back at the menu should play menu, got ' + playedNow);
+  if (!texts.includes('Play')) bad('should be back on the menu, got: ' + texts.join('|'));
 
   console.log(fail ? 'FAILED (' + fail + ')' : 'OK');
   process.exit(fail ? 1 : 0);

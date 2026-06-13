@@ -147,7 +147,7 @@ const TOUCH = (() => {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    if (s === 'ready' || s === 'playing') {
+    if (s === 'ready' || s === 'playing' || s === 'editorTest') {
       arrowBtn(ctx, L.left, Math.PI, input.left);
       arrowBtn(ctx, L.right, 0, input.right);
       arrowBtn(ctx, L.brake, Math.PI / 2, input.down);
@@ -156,10 +156,17 @@ const TOUCH = (() => {
       turnIcon(ctx, L.flip);
       btnBox(ctx, L.pause, false);
       pauseIcon(ctx, L.pause);
-      if (s === 'playing') {
+      // restart belongs to the editor's test ride only; in the real game the
+      // pause button (which opens the menu) is the sole top control, matching
+      // the ready/dead/finished screens
+      if (s === 'editorTest') {
         btnBox(ctx, L.restart, false);
         loopIcon(ctx, L.restart);
       }
+    } else if (s === 'editorTestEnd') {
+      // the pause button doubles as "back to the editor" here
+      btnBox(ctx, L.pause, false);
+      pauseIcon(ctx, L.pause);
     } else if (s === 'dead' || s === 'finished') {
       btnBox(ctx, L.pause, false);
       pauseIcon(ctx, L.pause);

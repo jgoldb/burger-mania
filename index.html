@@ -14,10 +14,44 @@
            -webkit-user-select: none; user-select: none;
            -webkit-touch-callout: none;
            -webkit-tap-highlight-color: transparent; }
+
+  /* The game is built for a wide view, so on a phone held upright we cover
+     it with a "rotate to landscape" prompt. Gated on a coarse pointer so it
+     only ever shows on touch devices, never a portrait desktop window. */
+  #rotate { display: none; }
+  @media (orientation: portrait) and (pointer: coarse) {
+    #rotate {
+      display: flex; position: fixed; inset: 0; z-index: 10;
+      flex-direction: column; align-items: center; justify-content: center;
+      gap: 24px; background: #1a0f06; color: #f9c623;
+      font: bold 21px/1.5 "Consolas","Courier New",monospace;
+      text-align: center; padding: 0 28px;
+      -webkit-user-select: none; user-select: none;
+    }
+    #rotate .phone {
+      width: 54px; height: 96px; border: 5px solid #f9c623; border-radius: 13px;
+      position: relative; animation: bm-rotate 2.4s ease-in-out infinite;
+    }
+    /* speaker slit, to read as a phone rather than a plain box */
+    #rotate .phone::before {
+      content: ''; position: absolute; top: 7px; left: 50%;
+      width: 16px; height: 4px; margin-left: -8px; border-radius: 2px;
+      background: #f9c623;
+    }
+    #rotate p { margin: 0; color: #f0e8da; }
+  }
+  @keyframes bm-rotate {
+    0%, 28%   { transform: rotate(0deg); }
+    55%, 100% { transform: rotate(90deg); }
+  }
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
+<div id="rotate">
+  <div class="phone"></div>
+  <p>Rotate your device<br>to landscape to play</p>
+</div>
 <script src="js/assets.js"></script>
 <script src="js/levels.js"></script>
 <script src="js/physics.js"></script>
@@ -25,6 +59,7 @@
 <script src="js/music.js"></script>
 <script src="js/replay.js"></script>
 <script src="js/touch.js"></script>
+<script src="js/editor.js"></script>
 <script src="js/game.js"></script>
 </body>
 </html>

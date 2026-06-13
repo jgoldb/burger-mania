@@ -153,7 +153,7 @@ function lastFrameTexts() {
 }
 
 const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
-  'js/music.js', 'js/replay.js', 'js/touch.js', 'js/game.js']
+  'js/music.js', 'js/replay.js', 'js/touch.js', 'js/editor.js', 'js/game.js']
   .map(f => fs.readFileSync(path.join(root, f), 'utf8')).join('\n') + `
 (async () => {
   // ---- tape encoding round trip on a deterministic pseudo-random stream ----
@@ -249,7 +249,8 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
   key('ArrowUp');                            // wrap to Return to Menu (last item)
   key('Enter');
   pumpFrames(3, 1 / 60);
-  key('ArrowDown');                          // menu: Play -> Replays
+  key('ArrowDown');                          // menu: Play -> Map Editor
+  key('ArrowDown');                          // menu: Map Editor -> Replays
   key('Enter');                              // -> replays screen
   await settle();
   if (!lastFrameTexts().some(t => t.includes('Choose Replays Folder'))) {

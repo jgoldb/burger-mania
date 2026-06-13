@@ -139,7 +139,7 @@ function pumpUntilText(maxFrames, needle) {
 }
 
 const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
-  'js/music.js', 'js/replay.js', 'js/touch.js', 'js/game.js']
+  'js/music.js', 'js/replay.js', 'js/touch.js', 'js/editor.js', 'js/game.js']
   .map(f => fs.readFileSync(path.join(root, f), 'utf8')).join('\n') + `
 (async () => {
   await new Promise(r => setImmediate(r));   // let loadAssets settle
@@ -204,7 +204,17 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
     bad('tap after the guard did not restart the run');
   }
 
-  // pause button (top centre, left of the restart button)
+  // the in-game restart button is gone: a tap where it used to sit (right of
+  // the pause button) must not reset the run, so the clock keeps climbing
+  pumpFrames(60, 1 / 60);                     // let the timer pass a second
+  const before = lastFrameTexts().find(t => /^time /.test(t));
+  tap(434, 36);                              // old restart-button location
+  const after = lastFrameTexts().find(t => /^time /.test(t));
+  if (before && after && !/00:00,0/.test(before) && /00:00,0/.test(after)) {
+    bad('tapping the old restart location reset the run');
+  }
+
+  // pause button (the lone top-centre control; no restart button in-game)
   tap(366, 36);
   pumpFrames(3, 1 / 60);
   if (!lastFrameTexts().some(t => t.includes('PAUSED'))) bad('pause button missed');

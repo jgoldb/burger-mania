@@ -128,12 +128,14 @@ const REPLAY = (() => {
     typeof window.showSaveFilePicker === 'function' &&
     typeof window.showDirectoryPicker === 'function';
 
-  async function saveAs(text, suggestedName, startIn) {
+  // `picker` overrides the dialog flavor ({types, id, accept}); the map
+  // editor saves its .bmm files through here with its own types
+  async function saveAs(text, suggestedName, startIn, picker) {
     if (fsSupported) {
       const opts = {
         suggestedName,
-        types: PICKER_TYPES,
-        id: 'burger-mania-replays',
+        types: (picker && picker.types) || PICKER_TYPES,
+        id: (picker && picker.id) || 'burger-mania-replays',
       };
       if (startIn) opts.startIn = startIn;
       const h = await window.showSaveFilePicker(opts);
@@ -151,19 +153,19 @@ const REPLAY = (() => {
     return suggestedName + ' (check your downloads)';
   }
 
-  async function openFile() {
+  async function openFile(picker) {
     if (typeof window !== 'undefined' &&
         typeof window.showOpenFilePicker === 'function') {
       const [h] = await window.showOpenFilePicker({
-        types: PICKER_TYPES,
-        id: 'burger-mania-replays',
+        types: (picker && picker.types) || PICKER_TYPES,
+        id: (picker && picker.id) || 'burger-mania-replays',
       });
       return (await h.getFile()).text();
     }
     return new Promise((resolve, reject) => {
       const inp = document.createElement('input');
       inp.type = 'file';
-      inp.accept = EXT + ',application/json';
+      inp.accept = (picker && picker.accept) || EXT + ',application/json';
       inp.onchange = () => {
         if (inp.files && inp.files[0]) inp.files[0].text().then(resolve, reject);
         else reject(new Error('no file chosen'));

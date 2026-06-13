@@ -73,6 +73,11 @@ still re-earns the points live, since the sim recomputes them).
   per-frame input tape plus the raw level data, saved as `.bmr` JSON via
   the File System Access API (download/open dialogs where unsupported);
   the replays folder handle persists in IndexedDB.
+- `js/editor.js` — the map editor: a pan/zoom world view rendered through
+  the real renderer, with tools for terrain vertices and polygons,
+  burgers, the start and goal, glass spans, wire polygons, themes, and
+  undo/redo. Saves and loads `.bmm` map files; the working map autosaves
+  to localStorage between visits.
 - `js/game.js` — game loop, input, camera, WebAudio engine sound + effects,
   state machine (title / playing / dead / finished, plus the replay
   browser and playback screens), picks the soundtrack for the current
@@ -89,11 +94,47 @@ node test/music_engine_check.js  # every scheduled note/envelope is valid
 node test/game_smoke.js     # full stack under a stub DOM: right song per screen
 node test/replay_check.js   # tape encoding + record/save/playback determinism
 node test/style_check.js    # style points: airborne flip/rotation awards
+node test/editor_check.js   # map editor: tools, undo, .bmm round trip, test ride
+node test/mobile_ui_check.js # every screen fits a phone: no text/buttons clip off
 ```
+
+## Map editor
+
+Pick **Map Editor** on the main menu to build custom courses with a GUI.
+The view is the real renderer, so the terrain, theme, grass, and glass
+look exactly as they will in play. Press **H** in the editor for the full
+control reference; the short version:
+
+- **Select** (1): drag terrain vertices, whole edges (that's how the map
+  bounds move), burgers, the START bike, the GOAL bucket, and glass span
+  ends. Double-click an edge to add a vertex, a vertex to remove it,
+  `Del` removes the selection (`Shift+Del`: its whole polygon), `W` flips
+  the selected polygon between solid and wire (wheels-only) terrain.
+- **+Poly** (2): click out a new polygon and close it on its first point.
+  A polygon inside the playable area is a solid island.
+- **+Burger** (3) drops burgers; **+Glass** (4) drags an obsidian
+  low-grip span along the floor.
+- **T** cycles the theme (the soundtrack follows along), **N** renames
+  the map, `Ctrl+Z`/`Ctrl+Y` undo and redo, the wheel zooms, **0** fits
+  the whole map.
+- **Test** (`Ctrl+Enter`) rides the map through the real sim — `Enter`
+  retries instantly, `Esc` returns to the editor. Test rides bank no best
+  times or checkpoints.
+- **Save**/**Load** (`Ctrl+S`/`Ctrl+O`) write and read `.bmm` map files.
+  The working map also autosaves to localStorage, so a closed tab picks
+  up where it left off.
+
+A `.bmm` file is JSON: a format header (`format`, `version`, `savedAt`)
+plus exactly the fields of a `LEVELS` entry (below). To put a finished
+map into a single-player track, strip the three header fields and paste
+the rest into `LEVELS` in `js/levels.js`, then add it to the right
+`TRACKS` entry — this is the pipeline for authoring the medium and hard
+tracks.
 
 ## Adding levels
 
-Append an entry to `LEVELS` in `js/levels.js`: a polygon vertex list
+Append an entry to `LEVELS` in `js/levels.js` (or build one in the map
+editor and paste its `.bmm` body): a polygon vertex list
 (y grows downward), a `start` position, `burgers` coordinates, a
 `goal` position (the popcorn bucket), and a `theme` (a key of `THEMES`
 in `js/render.js` — every 5-map block between checkpoints shares one).

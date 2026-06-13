@@ -322,17 +322,27 @@ class Bike {
 
     for (const w of this.wheels) this.wheelContacts(w, segs, dt, input.brake);
 
-    // the frame body collides with the ground too: on a slammed landing
-    // the wheels splay sideways and the frame dives between them, so the
-    // belly is what actually meets the ground — and it bounces off (the
-    // elastic bars fire the whole bike back up) instead of letting the
-    // head carry on through. Wires touch wheels only: the body threads past
+    // the belly collider runs from the wheel-top line downward only: it is a
+    // floor-and-wall backstop, not a full body collider. On a slammed landing
+    // the wheels splay sideways and the frame dives between them, so the belly
+    // is what meets the ground — and it bounces off (the elastic bars fire the
+    // whole bike back up) instead of letting the head carry through. Ramming a
+    // wall, it stops the frame so it can't plow past and drag a stuck wheel
+    // out the far side. But everything ABOVE the wheel tops (toward the head,
+    // in the bike's own frame) is passthrough, so the body threads obstacles
+    // in the wheel↔head gap, Elasto Mania style — only the wheels and the head
+    // collide there. Wires touch wheels only too: the body threads past them.
     for (const seg of segs) {
       if (seg.wire) continue;
       const cp = closestOnSeg(this.pos.x, this.pos.y, seg);
       let nx = this.pos.x - cp.x, ny = this.pos.y - cp.y;
       const d = Math.hypot(nx, ny);
       if (d >= P.frameR || d === 0) continue;
+      // contact height in the bike's frame (+y is toward the wheels). Skip
+      // anything above the wheel tops — that band is the wheel↔head gap the
+      // body threads; catching it would wall the body off in mid-gap
+      const ly = -(cp.x - this.pos.x) * s2 + (cp.y - this.pos.y) * c2;
+      if (ly < P.anchorY - P.wheelR) continue;
       nx /= d; ny /= d;
       this.pos.x += nx * (P.frameR - d);
       this.pos.y += ny * (P.frameR - d);

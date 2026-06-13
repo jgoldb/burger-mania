@@ -148,12 +148,15 @@ for (let i = 0; i < 480 * 60; i++) {
       if (Math.hypot(o.p.x - bg.x, o.p.y - bg.y) < o.r + 0.45) { bg.got = true; break; }
     }
   }
-  if (reachedGoal === null &&
+  // the game finishes only when EVERY burger is collected AND a body point
+  // is on the goal at that instant (game.js checkPickups) -- so a goal touch
+  // with burgers still out doesn't count, and a map can demand a return trip
+  // to the goal after the last burger
+  if (burgers.every(g => g.got) &&
       pts.some(o => Math.hypot(o.p.x - level.goal[0], o.p.y - level.goal[1]) < o.r + 0.5)) {
-    reachedGoal = i * dt;
+    if (reachedGoal === null) reachedGoal = i * dt;
+    break;
   }
-  // the game ends the run here, so the bot should stop riding too
-  if (reachedGoal !== null && burgers.every(g => g.got)) break;
 }
 const ok = reachedGoal !== null && burgers.every(g => g.got) && !b.dead;
 console.log((ok ? 'PASS' : 'FAIL') + ' level "' + level.name + '"' +
