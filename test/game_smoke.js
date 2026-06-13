@@ -133,7 +133,7 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   key('Enter');                              // Play -> difficulty
   pumpFrames(3, 1 / 60);
   if (playedNow !== 'menu') bad('difficulty should keep menu, got ' + playedNow);
-  key('Enter');                              // Easy -> ready (Burger Hill, meadow)
+  key('Enter');                              // Beginner -> ready (Burger Hill, meadow)
   pumpFrames(3, 1 / 60);
   if (playedNow !== 'meadow') bad('ready should play meadow, got ' + playedNow);
   key('ArrowUp');                            // ready -> playing, throttle held
@@ -157,10 +157,10 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   if (playedNow !== 'meadow') bad('after using a continue should be meadow, got ' + playedNow);
   key('s'); key('k'); key('i'); key('p');    // open the skip-cheat level picker
   pumpFrames(3, 1 / 60);
-  key('ArrowUp');                            // wrap up to the last Easy map (volcano)
+  key('ArrowUp');                            // wrap up to the last Beginner map (volcano)
   key('Enter');                              // jump to the picked map
   pumpFrames(3, 1 / 60);
-  if (playedNow !== 'volcano') bad('last Easy map should play volcano, got ' + playedNow);
+  if (playedNow !== 'volcano') bad('last Beginner map should play volcano, got ' + playedNow);
   key('ArrowUp');                            // ready -> playing
   pumpFrames(3, 1 / 60);
   keyUp('ArrowUp');

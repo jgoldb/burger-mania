@@ -96,7 +96,7 @@ const MUSIC = (function () {
         ] },
       ],
     },
-    // sunny meadow cruise: easy-rolling G major (Easy 1-5) that lifts into
+    // sunny meadow cruise: easy-rolling G major (Beginner 1-5) that lifts into
     // a soaring variation, an anthemic drop, then a long dreamy synthwave
     // coda that cruises a while before looping back to the top
     meadow: {
@@ -219,7 +219,7 @@ const MUSIC = (function () {
         ] },
       ],
     },
-    // volcano: galloping E minor under a wailing lead (Easy 6-10); the
+    // volcano: galloping E minor under a wailing lead (Beginner 6-10); the
     // gallop cuts out for a breakdown, then the heaviest drop in the game,
     // and finally a long midnight-outrun synthwave coda before it loops
     volcano: {

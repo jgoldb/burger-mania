@@ -89,8 +89,8 @@ const code = ['js/assets.js', 'js/physics.js', 'js/render.js', 'js/touch.js']
   .map(f => fs.readFileSync(path.join(root, f), 'utf8')).join('\n')
   + '\nglobal.__R = { drawLoading, drawMenu, drawDifficulty, drawReady, drawPause,'
   + ' drawAudio, drawContinue, drawReplays, drawLevelSelect, drawVictory, drawHUD,'
-  + ' drawTitleLetters, makePatterns, TOUCH, setSafeInsets, saveButtonRect,'
-  + ' menuRects, audioRects, replayRects, minimapRect,'
+  + ' drawRecords, drawTitleLetters, makePatterns, TOUCH, setSafeInsets, saveButtonRect,'
+  + ' menuRects, audioRects, replayRects, recordsRects, minimapRect,'
   + ' victoryRects, victoryCardBox, victoryLandscape };';
 eval(code);
 
@@ -99,9 +99,9 @@ R.TOUCH.activate(); // pretend we're on a touch device for the on-screen control
 const pat = R.makePatterns(makeCtx(800, 600, []));
 
 const TRACKS = [
-  { id: 'easy', label: 'Easy', color: '#9be08a', length: 10, levels: new Array(10).fill(0) },
-  { id: 'medium', label: 'Medium', color: '#f9c623', length: 20, levels: [] },
-  { id: 'hard', label: 'Hard', color: '#ff6038', length: 30, levels: [] },
+  { id: 'beginner', label: 'Beginner', color: '#9be08a', length: 10, levels: new Array(10).fill(0) },
+  { id: 'advanced', label: 'Advanced', color: '#f9c623', length: 20, levels: [] },
+  { id: 'expert', label: 'Expert', color: '#ff6038', length: 30, levels: [] },
 ];
 const NAMES = ['Burger Hill', 'Cheddar Canyon', 'Onion Underpass', 'Patty Bridge',
   'Skewer Gorge', 'Habanero Heights', 'Scoville Switchback', 'Cayenne Coil',
@@ -114,8 +114,11 @@ const SCENES = {
   loading: (c, W, H) => R.drawLoading(c, W, H, 0.4, 0, false, true),
   'loading-ready': (c, W, H) => R.drawLoading(c, W, H, 1, 0, true, true),
   menu: (c, W, H) => { R.drawTitleLetters(c, W, H, 3);
-    R.drawMenu(c, W, H, 1, ['Play', 'Map Editor', 'Replays', 'Audio'], 0, -1); },
+    R.drawMenu(c, W, H, 1, ['Play', 'Map Editor', 'Replays', 'Records', 'Audio'], 0, -1); },
   difficulty: (c, W, H) => R.drawDifficulty(c, W, H, 1, TRACKS, 0, -1, true),
+  'records-diff': (c, W, H) => R.drawDifficulty(c, W, H, 1, TRACKS, 0, -1, true, 'BEST RECORDS'),
+  records: (c, W, H) => R.drawRecords(c, W, H, 1, { label: 'Beginner', names: NAMES,
+    results, sel: 0, hover: -1, touch: true }),
   ready: (c, W, H) => R.drawReady(c, W, H, '09  Sriracha Spiral', true),
   pause: (c, W, H) => R.drawPause(c, W, H, ['Continue', 'Audio', 'Return to Menu'], 0, -1),
   audio: (c, W, H) => R.drawAudio(c, W, H, 1, { volume: { master: 0.8, music: 0.6, sfx: 1 },
@@ -126,10 +129,10 @@ const SCENES = {
     [{ label: 'Scoville Switchback', sub: 'style 1234 - 01:23,45' },
      { label: 'Choose a Different Folder...' }], 0, 0, -1,
     'Reopen the folder to load replays', true),
-  skip: (c, W, H) => R.drawLevelSelect(c, W, H, 1, { label: 'Easy', touch: true,
+  skip: (c, W, H) => R.drawLevelSelect(c, W, H, 1, { label: 'Beginner', touch: true,
     sel: 0, scroll: 0, hover: -1,
     items: NAMES.map((n, i) => ({ label: (i + 1) + '  ' + n, sub: 'Map ' + (i + 1) + '/10' })) }),
-  victory: (c, W, H) => R.drawVictory(c, W, H, { t: 0, pat: pat.meadow, label: 'Easy',
+  victory: (c, W, H) => R.drawVictory(c, W, H, { t: 0, pat: pat.meadow, label: 'Beginner',
     names: NAMES, results, sel: 0, hover: -1, touch: true, saveNote: 'Saved reaper-rim.bmr' }),
   'hud-finished': (c, W, H) => R.drawHUD(c, W, H, { time: 83.45, best: 80, style: 1234,
     styleBest: 2000, got: 3, total: 3, lives: 3, theme: pat.meadow, state: 'finished',

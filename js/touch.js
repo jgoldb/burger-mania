@@ -181,7 +181,8 @@ const TOUCH = (() => {
       ctx.font = 'bold 18px "Consolas","Courier New",monospace';
       ctx.fillText('SAVE REPLAY', L.save.x + L.save.w / 2, L.save.y + L.save.h / 2 + 1);
       ctx.globalAlpha = 1;
-    } else if (s === 'difficulty' || s === 'replays' || s === 'skip') {
+    } else if (s === 'difficulty' || s === 'recordsDiff' ||
+               s === 'replays' || s === 'skip') {
       btnBox(ctx, L.back, false);
       tri(ctx, L.back.x + 24, L.back.y + L.back.h / 2, 9, Math.PI, ink(false));
       ctx.fillStyle = ink(false);

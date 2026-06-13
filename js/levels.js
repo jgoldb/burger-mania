@@ -35,7 +35,7 @@ const LEVELS = [
     goal: [90, 4.75], // the popcorn bucket
   },
   {
-    // Easy #2: introduces a gap jump — clear the canyon with speed, or
+    // Beginner #2: introduces a gap jump — clear the canyon with speed, or
     // drop in and ride out the far side — plus slightly steeper hills.
     name: 'Cheddar Canyon',
     theme: 'meadow',
@@ -69,7 +69,7 @@ const LEVELS = [
     goal: [100, 5.75],
   },
   {
-    // Easy #3: introduces the ceiling as a hazard — a low tunnel bored
+    // Beginner #3: introduces the ceiling as a hazard — a low tunnel bored
     // through a cliff. Stay low and keep the front wheel down; a wheelie
     // (or a bounced landing) puts your head into the rock. The hills
     // after the tunnel are a notch steeper than Cheddar Canyon's.
@@ -112,7 +112,7 @@ const LEVELS = [
     goal: [100, 5.75],
   },
   {
-    // Easy #4: introduces a solid island — a giant patty floating over a
+    // Beginner #4: introduces a solid island — a giant patty floating over a
     // valley. Hit the launch ramp with speed to land on top (a burger
     // waits there); undershooting drops you into the valley, which is
     // rideable under the patty and out the far side. Restart with Enter
@@ -162,7 +162,7 @@ const LEVELS = [
     goal: [100, 5.55],
   },
   {
-    // Easy #5, the first checkpoint map: introduces the speed window — a
+    // Beginner #5, the first checkpoint map: introduces the speed window — a
     // giant skewer hangs over the gorge jump, and since launch arcs
     // balloon higher with speed, hitting the ramp too fast drives your
     // head into its point while too slow drops you short of the
@@ -214,7 +214,7 @@ const LEVELS = [
     goal: [98, 5.65],
   },
   {
-    // Easy #6, the volcano world opener and the biggest difficulty spike
+    // Beginner #6, the volcano world opener and the biggest difficulty spike
     // yet — a three-act gauntlet:
     //  1. dive through the cinder pit to bank speed, then hammer up the
     //     lava tube: a 28-degree momentum climb under a basalt roof
@@ -278,7 +278,7 @@ const LEVELS = [
     goal: [76.5, 7.65],
   },
   {
-    // Easy #7: introduces the turn-around (Space flips the bike) with a
+    // Beginner #7: introduces the turn-around (Space flips the bike) with a
     // two-storey switchback, Elasto Mania style. Ride right across the
     // rim — rollers, a cinder plateau, the 28-degree climb to the high
     // rim, then stair-steps down to a diving-board lip — and drop into
@@ -553,7 +553,7 @@ const LEVELS = [
     goal: [45.6, 15.35],
   },
   {
-    // Easy #10, the volcano finale: one ride over the whole mountain,
+    // Beginner #10, the volcano finale: one ride over the whole mountain,
     // and the block's mechanics on the way to a new one. Warmup rollers,
     // then the flank: two 28-degree pitches, the second bored under a
     // basalt roof (feather the throttle or wheelie into the rock), onto
@@ -718,7 +718,7 @@ const LEVELS = [
 // series; `levels` holds the maps that exist so far. A track with no
 // levels yet shows up disabled on the difficulty screen.
 const TRACKS = [
-  { id: 'easy',   label: 'Easy',   color: '#9be08a', length: 10, levels: [LEVELS[0], LEVELS[1], LEVELS[2], LEVELS[3], LEVELS[4], LEVELS[5], LEVELS[6], LEVELS[7], LEVELS[8], LEVELS[9]] },
-  { id: 'medium', label: 'Medium', color: '#f9c623', length: 20, levels: [] },
-  { id: 'hard',   label: 'Hard',   color: '#ff6038', length: 30, levels: [] },
+  { id: 'beginner', label: 'Beginner', color: '#9be08a', length: 10, levels: [LEVELS[0], LEVELS[1], LEVELS[2], LEVELS[3], LEVELS[4], LEVELS[5], LEVELS[6], LEVELS[7], LEVELS[8], LEVELS[9]] },
+  { id: 'advanced', label: 'Advanced', color: '#f9c623', length: 20, levels: [] },
+  { id: 'expert',   label: 'Expert',   color: '#ff6038', length: 30, levels: [] },
 ];

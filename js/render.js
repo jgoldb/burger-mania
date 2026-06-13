@@ -15,7 +15,7 @@ function srand(n) {
 // gradient.
 const THEMES = {
   // sunny meadow: dirt, blue sky over rolling green hills, grass
-  // (Easy 1-5)
+  // (Beginner 1-5)
   meadow: {
     ground: { base: '#8c5e35', layers: [
       { n: 240, rMin: 2, rMax: 9, colors: ['rgba(60,38,18,0.25)',
@@ -33,7 +33,7 @@ const THEMES = {
     miniGround: '#6b4a24', miniSky: '#a7c4de',
   },
   // volcano: basalt flecked with embers, a lava-lit sky over erupting
-  // cones, molten crust with fire instead of grass (Easy 6-10)
+  // cones, molten crust with fire instead of grass (Beginner 6-10)
   volcano: {
     ground: { base: '#3a3034', layers: [
       { n: 240, rMin: 2, rMax: 9, colors: ['rgba(16,10,14,0.35)',
@@ -1421,17 +1421,21 @@ function drawMenu(ctx, W, H, alpha, items, sel, hover) {
   drawButtons(ctx, rects, items, sel, hover, alpha);
 }
 
-function drawDifficulty(ctx, W, H, alpha, tracks, sel, hover, touch) {
+// the same track picker drives "Play" (title 'CHOOSE DIFFICULTY') and the
+// Best Records screen (title 'BEST RECORDS'); tracks with no maps yet show
+// disabled either way
+function drawDifficulty(ctx, W, H, alpha, tracks, sel, hover, touch, title) {
+  title = title || 'CHOOSE DIFFICULTY';
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.save();
   ctx.globalAlpha = alpha;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  fitFont(ctx, 'CHOOSE DIFFICULTY', safeBandW(W) * 0.9, 44, 'bold', 18);
+  fitFont(ctx, title, safeBandW(W) * 0.9, 44, 'bold', 18);
   ctx.fillStyle = 'rgba(40,16,4,0.85)';
-  ctx.fillText('CHOOSE DIFFICULTY', W / 2 + 3, H * 0.20 + 3);
+  ctx.fillText(title, W / 2 + 3, H * 0.20 + 3);
   ctx.fillStyle = '#f9c623';
-  ctx.fillText('CHOOSE DIFFICULTY', W / 2, H * 0.20);
+  ctx.fillText(title, W / 2, H * 0.20);
   ctx.restore();
 
   const items = tracks.map(t => ({
@@ -1698,6 +1702,88 @@ function victoryRects(W, H) {
   return menuRects(W, H, 1, H * 0.68);
 }
 
+// The per-map time/style table shared by the victory screen and the Best
+// Records screen: a bordered panel `box`, a header row, one row per map
+// (time/style right-aligned, the name clipped to its column), a summed total
+// row once every map has a result, and the star legend when any score carries
+// a record star. results[i] is { time, style, timeRecord?, styleRecord? } or
+// null for a map with no score yet (shown as dashes). The caller sizes the box
+// and picks rowH/fs so the same table fits the feast or a plain menu screen.
+function drawScorecard(ctx, box, rowH, fs, names, results) {
+  const complete = names.length > 0 && names.every((_, i) => results[i]);
+  ctx.fillStyle = 'rgba(20,12,6,0.82)';
+  roundRectPath(ctx, box.x, box.y, box.w, box.h, 12);
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = 'rgba(249,198,35,0.45)';
+  ctx.stroke();
+
+  ctx.textBaseline = 'middle';
+  ctx.font = `bold ${fs}px "Consolas","Courier New",monospace`;
+  const nameX = box.x + 18;
+  const styleR = box.x + box.w - 18;     // right edge of the style column
+  const timeR = styleR - fs * 4.6;       // right edge of the time column
+  let y = box.y + 12 + rowH / 2;
+
+  ctx.fillStyle = 'rgba(240,232,218,0.55)';
+  ctx.textAlign = 'left';
+  ctx.fillText('map', nameX, y);
+  ctx.textAlign = 'right';
+  ctx.fillText('time', timeR, y);
+  ctx.fillText('style', styleR, y);
+
+  let sumT = 0, sumS = 0;
+  for (let i = 0; i < names.length; i++) {
+    y += rowH;
+    const r = results[i];
+    ctx.textAlign = 'left';
+    ctx.fillStyle = r ? '#f0e8da' : 'rgba(240,232,218,0.4)';
+    // clip the name to its column so a long map title can't run into the
+    // time/star figures on a narrow phone
+    ctx.fillText(ellipsize(ctx, `${String(i + 1).padStart(2)}  ${names[i]}`,
+      timeR - fs * 6.3 - nameX), nameX, y);
+    ctx.textAlign = 'right';
+    if (!r) {
+      // never cleared (skipped past, or a map without a record yet)
+      ctx.fillText('--:--,--', timeR, y);
+      ctx.fillText('---', styleR, y);
+      continue;
+    }
+    sumT += r.time;
+    sumS += r.style;
+    // all-time records ride in starred gold; ordinary scores in parchment
+    ctx.fillStyle = r.timeRecord ? '#f9c623' : '#f0e8da';
+    ctx.fillText((r.timeRecord ? '★ ' : '') + fmt(r.time), timeR, y);
+    ctx.fillStyle = r.styleRecord ? '#f9c623' : '#f0e8da';
+    ctx.fillText((r.styleRecord ? '★ ' : '') + r.style, styleR, y);
+  }
+
+  if (complete) {
+    y += rowH;
+    ctx.strokeStyle = 'rgba(240,232,218,0.25)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(nameX, y - rowH / 2);
+    ctx.lineTo(styleR, y - rowH / 2);
+    ctx.stroke();
+    ctx.fillStyle = '#ffe27a';
+    ctx.textAlign = 'left';
+    ctx.fillText('total', nameX, y);
+    ctx.textAlign = 'right';
+    ctx.fillText(fmt(sumT), timeR, y);
+    ctx.fillText(String(sumS), styleR, y);
+  }
+
+  // legend, only when there's a star on the board to explain
+  if (results.some(r => r && (r.timeRecord || r.styleRecord))) {
+    y += rowH * 0.9;
+    ctx.fillStyle = 'rgba(249,198,35,0.75)';
+    ctx.font = `${Math.max(9, fs - 3)}px "Consolas","Courier New",monospace`;
+    ctx.textAlign = 'right';
+    ctx.fillText('★ all-time best', styleR, y);
+  }
+}
+
 // The big one: every map of a difficulty track cleared. A sunny feast —
 // the champion sat among buckets of popcorn, working through them — under
 // the track scorecard (this run's time and style per map, with all-time
@@ -1804,76 +1890,7 @@ function drawVictory(ctx, W, H, o) {
   const fs = Math.max(side ? 9 : 10, Math.round(rowH * 0.62));
   // the docked card fills its reserved box; the centred one hugs its rows
   const ph = side ? availH : rowH * (rows + 1.1) + 24;
-  ctx.fillStyle = 'rgba(20,12,6,0.82)';
-  roundRectPath(ctx, px, top, pw, ph, 12);
-  ctx.fill();
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = 'rgba(249,198,35,0.45)';
-  ctx.stroke();
-
-  ctx.font = `bold ${fs}px "Consolas","Courier New",monospace`;
-  const nameX = px + 18;
-  const styleR = px + pw - 18;     // right edge of the style column
-  const timeR = styleR - fs * 4.6; // right edge of the time column
-  let y = top + 12 + rowH / 2;
-
-  ctx.fillStyle = 'rgba(240,232,218,0.55)';
-  ctx.textAlign = 'left';
-  ctx.fillText('map', nameX, y);
-  ctx.textAlign = 'right';
-  ctx.fillText('time', timeR, y);
-  ctx.fillText('style', styleR, y);
-
-  let sumT = 0, sumS = 0;
-  for (let i = 0; i < names.length; i++) {
-    y += rowH;
-    const r = results[i];
-    ctx.textAlign = 'left';
-    ctx.fillStyle = r ? '#f0e8da' : 'rgba(240,232,218,0.4)';
-    // clip the name to its column so a long map title can't run into the
-    // time/star figures on a narrow phone
-    ctx.fillText(ellipsize(ctx, `${String(i + 1).padStart(2)}  ${names[i]}`,
-      timeR - fs * 6.3 - nameX), nameX, y);
-    ctx.textAlign = 'right';
-    if (!r) {
-      // skipped past (the dev cheat): nothing to report for this map
-      ctx.fillText('--:--,--', timeR, y);
-      ctx.fillText('---', styleR, y);
-      continue;
-    }
-    sumT += r.time;
-    sumS += r.style;
-    // all-time records ride in starred gold; ordinary scores in parchment
-    ctx.fillStyle = r.timeRecord ? '#f9c623' : '#f0e8da';
-    ctx.fillText((r.timeRecord ? '★ ' : '') + fmt(r.time), timeR, y);
-    ctx.fillStyle = r.styleRecord ? '#f9c623' : '#f0e8da';
-    ctx.fillText((r.styleRecord ? '★ ' : '') + r.style, styleR, y);
-  }
-
-  if (complete) {
-    y += rowH;
-    ctx.strokeStyle = 'rgba(240,232,218,0.25)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(nameX, y - rowH / 2);
-    ctx.lineTo(styleR, y - rowH / 2);
-    ctx.stroke();
-    ctx.fillStyle = '#ffe27a';
-    ctx.textAlign = 'left';
-    ctx.fillText('total', nameX, y);
-    ctx.textAlign = 'right';
-    ctx.fillText(fmt(sumT), timeR, y);
-    ctx.fillText(String(sumS), styleR, y);
-  }
-
-  // legend, only when there's a star on the board to explain
-  if (results.some(r => r && (r.timeRecord || r.styleRecord))) {
-    y += rowH * 0.9;
-    ctx.fillStyle = 'rgba(249,198,35,0.75)';
-    ctx.font = `${Math.max(9, fs - 3)}px "Consolas","Courier New",monospace`;
-    ctx.textAlign = 'right';
-    ctx.fillText('★ all-time best', styleR, y);
-  }
+  drawScorecard(ctx, { x: px, y: top, w: pw, h: ph }, rowH, fs, names, results);
 
   // ---------- the way home ----------
   drawButtons(ctx, rects, ['Back to Menu'], o.sel, o.hover, 1);
@@ -1909,6 +1926,76 @@ function drawVictoryFade(ctx, W, H, alpha, o) {
   ctx.globalAlpha = alpha;
   ctx.drawImage(_victoryBuf, 0, 0);
   ctx.restore();
+}
+
+// ---------- best records screen ----------
+
+// The Best Records scorecard's single Back button, pinned low so the table
+// above it has room. Shared with game.js for hit-testing.
+function recordsRects(W, H) {
+  const bw = Math.min(300, safeBandW(W) * 0.7);
+  const x = safeCenterX(W, bw);
+  const m = Math.max(12, H * 0.04) + SAFE.bottom;
+  const h = Math.max(34, Math.min(48, H * 0.1));
+  return [{ x, y: H - m - h, w: bw, h }];
+}
+
+// The Best Records screen for one track: the player's all-time best time and
+// style for every map, in the same scorecard the victory feast shows (no stars
+// here — every figure already IS the all-time best). The backdrop is drawn by
+// the caller, like the difficulty screen.
+// o: { label, names, results, sel, hover, touch }
+function drawRecords(ctx, W, H, alpha, o) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  fitFont(ctx, 'BEST RECORDS', safeBandW(W) * 0.9, 44, 'bold', 18);
+  ctx.fillStyle = 'rgba(40,16,4,0.85)';
+  ctx.fillText('BEST RECORDS', W / 2 + 3, H * 0.12 + 3);
+  ctx.fillStyle = '#f9c623';
+  ctx.fillText('BEST RECORDS', W / 2, H * 0.12);
+  if (o.label) {
+    fitFont(ctx, o.label + ' track', safeBandW(W) * 0.9, 18, 'bold', 11);
+    ctx.fillStyle = '#f0e8da';
+    ctx.fillText(o.label + ' track', W / 2, H * 0.12 + 38);
+  }
+  ctx.restore();
+
+  const names = o.names || [], results = o.results || [];
+  const complete = names.length > 0 && names.every((_, i) => results[i]);
+  const rows = names.length + 1 + (complete ? 1 : 0); // + header (+ total)
+  const rects = recordsRects(W, H);
+
+  // a centred card between the title and the Back button. Sizing mirrors the
+  // victory scorecard: rows shrink to fit, with a smaller floor on a short
+  // landscape phone so a full 12-row track still fits above the button.
+  const short = W > H && H < 520;
+  const top = Math.max(H * 0.24, H * 0.12 + 56);
+  const pw = Math.min(safeBandW(W) * 0.88, 600);
+  const px = safeCenterX(W, pw);
+  const availH = (rects[0].y - 14) - top;
+  const rowH = Math.max(short ? 9 : 13, Math.min(27, (availH - 24) / (rows + 1.1)));
+  const fs = Math.max(short ? 9 : 10, Math.round(rowH * 0.62));
+  const ph = Math.min(availH, rowH * (rows + 1.1) + 24);
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  drawScorecard(ctx, { x: px, y: top, w: pw, h: ph }, rowH, fs, names, results);
+  ctx.restore();
+
+  drawButtons(ctx, rects, ['Back'], o.sel, o.hover, alpha);
+  if (!o.touch) {
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(40,20,8,0.85)';
+    ctx.font = '15px "Consolas","Courier New",monospace';
+    ctx.fillText('Esc to go back', W / 2,
+      Math.min(rects[0].y + rects[0].h + 24, H - SAFE.bottom - 8));
+    ctx.restore();
+  }
 }
 
 function drawPause(ctx, W, H, items, sel, hover) {

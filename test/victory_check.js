@@ -1,4 +1,4 @@
-// End-to-end victory-flow test: swaps the Easy track for two trivial maps
+// End-to-end victory-flow test: swaps the Beginner track for two trivial maps
 // (goal on the start pad, no burgers) so each finishes on its first sim
 // frame, then drives menu -> map 1 -> finished -> map 2 -> victoryFade ->
 // victory -> menu, asserting the music handoff (world song -> silence ->
@@ -124,7 +124,7 @@ TRACKS[0].length = 2;
   pumpFrames(3, 1 / 60);
   key('Enter');            // Play -> difficulty
   pumpFrames(3, 1 / 60);
-  key('Enter');            // Easy -> ready (Test A)
+  key('Enter');            // Beginner -> ready (Test A)
   pumpFrames(3, 1 / 60);
   if (playedNow !== 'meadow') bad('ready should play meadow, got ' + playedNow);
 

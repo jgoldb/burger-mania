@@ -2,7 +2,7 @@
 
 // Tuning constants for the bike. Units: meters, seconds, radians.
 const PHYS = {
-  g: 5.6,
+  g: 4,
 
   wheelR: 0.4,
   wheelM: 0.22,
@@ -11,7 +11,10 @@ const PHYS = {
   frameM: 1.0,
   frameI: 0.35,
 
-  springK: 100,
+  springK: 60,     // soft suspension: low rate so the bike gives a lot per
+                   // bump. Static sag is still tiny (frameM*g/2K ~ 5cm), so
+                   // the frame never rests on its belly collider; the lower
+                   // rate also raises the damping ratio, so it's less bouncy
   springC: 5.0,
   springCFade: 5,  // relative speed (m/s) where damper force fades to half:
                    // slow squat stays controlled, hard hits stay elastic

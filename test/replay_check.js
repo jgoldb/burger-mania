@@ -169,7 +169,7 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
   }
   const rt = REPLAY.parse(REPLAY.serialize({
     level: LEVELS[0], label: 'rt', outcome: 'crashed', time: 1,
-    trackId: 'easy', levelIndex: 0,
+    trackId: 'beginner', levelIndex: 0,
   }));
   if (rt.frames !== 500) bad('round trip frame count: ' + rt.frames);
   const cur = REPLAY.cursor(rt);
@@ -188,7 +188,7 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
   try {
     const broken = JSON.parse(REPLAY.serialize({
       level: LEVELS[0], label: 'x', outcome: 'crashed', time: 1,
-      trackId: 'easy', levelIndex: 0 }));
+      trackId: 'beginner', levelIndex: 0 }));
     broken.frames += 7;
     REPLAY.parse(JSON.stringify(broken));
   } catch (e) { threw = true; }
@@ -199,7 +199,7 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
   try {
     const old = JSON.parse(REPLAY.serialize({
       level: LEVELS[0], label: 'old', outcome: 'crashed', time: 1,
-      trackId: 'easy', levelIndex: 0 }));
+      trackId: 'beginner', levelIndex: 0 }));
     old.version = 0; // any version that isn't the current one
     REPLAY.parse(JSON.stringify(old));
   } catch (e) { flagged = e.versionMismatch === true; }
@@ -207,7 +207,7 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
   // style metadata: round-trips when present, null (shown as N/A) when not
   const styled = REPLAY.parse(REPLAY.serialize({
     level: LEVELS[0], label: 'st', outcome: 'finished', time: 2,
-    trackId: 'easy', levelIndex: 0, style: 350,
+    trackId: 'beginner', levelIndex: 0, style: 350,
   }));
   if (styled.style !== 350) bad('style total did not round trip: ' + styled.style);
   if (rt.style !== null) bad('absent style should parse as null, got ' + rt.style);
@@ -220,7 +220,7 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
   pumpFrames(3, 1 / 60);
   key('Enter');                              // Play -> difficulty
   pumpFrames(3, 1 / 60);
-  key('Enter');                              // Easy -> ready (Burger Hill)
+  key('Enter');                              // Beginner -> ready (Burger Hill)
   pumpFrames(3, 1 / 60);
   key('ArrowUp');                            // ride: full throttle, doomed
   if (!pumpUntilText(2400, 'You crashed!')) {

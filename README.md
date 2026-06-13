@@ -129,7 +129,7 @@ A `.bmm` file is JSON: a format header (`format`, `version`, `savedAt`)
 plus exactly the fields of a `LEVELS` entry (below). To put a finished
 map into a single-player track, strip the three header fields and paste
 the rest into `LEVELS` in `js/levels.js`, then add it to the right
-`TRACKS` entry — this is the pipeline for authoring the medium and hard
+`TRACKS` entry — this is the pipeline for authoring the Advanced and Expert
 tracks.
 
 ## Adding levels

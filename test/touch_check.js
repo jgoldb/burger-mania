@@ -170,10 +170,10 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
   if (!lastFrameTexts().some(t => t === 'Play')) bad('corner back button did not return to menu');
   tap(400, 376);                             // Play
   pumpFrames(12, 1 / 60);
-  tap(400, 230);                             // Easy (difficulty rows start at y=204)
+  tap(400, 230);                             // Beginner (difficulty rows start at y=204)
   pumpFrames(3, 1 / 60);
   texts = lastFrameTexts();
-  if (!texts.some(t => t.includes('GET READY!'))) bad('tap on Easy missed');
+  if (!texts.some(t => t.includes('GET READY!'))) bad('tap on Beginner missed');
   if (!texts.some(t => t.includes('Tap anywhere to ride'))) {
     bad('ready screen is not showing the touch hint');
   }

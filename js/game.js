@@ -105,7 +105,7 @@
   let menuClock0 = -1;
   let introT = 0, menuT = 0, diffT = 0, contT = 0;
   let introLaunched = 0, introLanded = 0, fanfared = false;
-  const menuItems = ['Play', 'Map Editor', 'Replays', 'Audio'];
+  const menuItems = ['Play', 'Map Editor', 'Replays', 'Records', 'Audio'];
   let menuSel = 0, diffSel = 0, contSel = 0;
   const pauseItems = ['Continue', 'Audio', 'Return to Menu'];
   let pauseSel = 0, pausedFrom = 'playing';
@@ -231,7 +231,8 @@
   // doesn't know, like the silent loading/intro screens' null, fades out)
   function updateMusic() {
     let want = null;
-    if (state === 'menu' || state === 'difficulty' || state === 'replays') want = 'menu';
+    if (state === 'menu' || state === 'difficulty' || state === 'replays' ||
+        state === 'recordsDiff' || state === 'records') want = 'menu';
     else if (state === 'continue') want = 'continue';
     // the picker keeps the summoning screen's song: the frozen world's
     // theme mid-game, the menu theme otherwise
@@ -403,6 +404,50 @@
     state = 'difficulty';
     diffT = 0;
     diffSel = 0;
+    hoverIdx = -1;
+  }
+
+  // ---------- best records ----------
+  // 'recordsDiff' picks a track (the same disabled-when-empty selector Play
+  // uses); 'records' then shows that track's all-time best time and style per
+  // map in the victory-style scorecard. Both read straight from the per-map
+  // best-time / best-style localStorage keys, so nothing new is persisted.
+  let recDiffSel = 0, recDiffT = 0, recT = 0;
+  let recTrack = null, recNames = [], recResults = [];
+
+  function goRecordsDiff() {
+    state = 'recordsDiff';
+    recDiffT = 0;
+    // land on the first track that actually has maps (Beginner, today)
+    recDiffSel = Math.max(0, TRACKS.findIndex(t => t.levels.length));
+    hoverIdx = -1;
+  }
+
+  function activateRecordsDiff(i) {
+    const track = TRACKS[i];
+    if (!track.levels.length) {
+      blip(180, 0.12); // no maps yet, so no records to show
+      return;
+    }
+    blip(880, 0.08);
+    showRecords(track);
+  }
+
+  // gather a track's stored bests into the scorecard's results shape. A map
+  // with no banked time was never cleared (shown as dashes); a cleared map
+  // that never scored style reads as 0. No record flags — every figure here
+  // already is the all-time best, so the scorecard draws them unstarred.
+  function showRecords(track) {
+    recTrack = track;
+    recNames = track.levels.map(l => l.name);
+    recResults = track.levels.map(raw => {
+      const t = parseFloat(localStorage.getItem('burger-mania-best-' + raw.name) || '');
+      if (!isFinite(t)) return null;
+      const s = parseInt(localStorage.getItem('burger-mania-style-' + raw.name) || '', 10);
+      return { time: t, style: isFinite(s) ? s : 0 };
+    });
+    state = 'records';
+    recT = 0;
     hoverIdx = -1;
   }
 
@@ -839,6 +884,9 @@
     } else if (menuItems[i] === 'Replays') {
       blip(880, 0.08);
       goReplays();
+    } else if (menuItems[i] === 'Records') {
+      blip(880, 0.08);
+      goRecordsDiff();
     } else if (menuItems[i] === 'Audio') {
       blip(880, 0.08);
       goAudio();
@@ -881,6 +929,12 @@
     }
     if (state === 'difficulty' && diffT > 0.15) {
       return menuRects(W, H, TRACKS.length, H * 0.34);
+    }
+    if (state === 'recordsDiff' && recDiffT > 0.15) {
+      return menuRects(W, H, TRACKS.length, H * 0.34);
+    }
+    if (state === 'records') {
+      return recordsRects(W, H);
     }
     if (state === 'continue' && contT > 0.15) {
       return menuRects(W, H, 2, H * 0.62);
@@ -970,7 +1024,7 @@
         if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
           const d = e.key === 'ArrowUp' ? -1 : 1;
           // step to the next enabled track, skipping any that are disabled;
-          // if Easy is the only one unlocked, this stays put on it
+          // if Beginner is the only one unlocked, this stays put on it
           let next = diffSel;
           for (let k = 0; k < TRACKS.length; k++) {
             next = (next + d + TRACKS.length) % TRACKS.length;
@@ -979,6 +1033,29 @@
           if (next !== diffSel) { diffSel = next; blip(520, 0.05); }
         } else if (e.key === 'Enter' || e.key === ' ') {
           activateDifficulty(diffSel);
+        }
+        return;
+      case 'recordsDiff':
+        if (e.key === 'Escape') { goMenu(); return; }
+        if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+          const d = e.key === 'ArrowUp' ? -1 : 1;
+          // step to the next enabled track, skipping disabled ones (same as
+          // the Play selector)
+          let next = recDiffSel;
+          for (let k = 0; k < TRACKS.length; k++) {
+            next = (next + d + TRACKS.length) % TRACKS.length;
+            if (TRACKS[next].levels.length) break;
+          }
+          if (next !== recDiffSel) { recDiffSel = next; blip(520, 0.05); }
+        } else if (e.key === 'Enter' || e.key === ' ') {
+          activateRecordsDiff(recDiffSel);
+        }
+        return;
+      case 'records':
+        // a single Back button: any confirm/cancel returns to the track picker
+        if (e.key === 'Enter' || e.key === ' ' || e.key === 'Escape') {
+          blip(440, 0.08);
+          goRecordsDiff();
         }
         return;
       case 'paused':
@@ -1137,6 +1214,12 @@
     } else if (state === 'difficulty') {
       if (TRACKS[hoverIdx].levels.length) diffSel = hoverIdx;
       activateDifficulty(hoverIdx);
+    } else if (state === 'recordsDiff') {
+      if (TRACKS[hoverIdx].levels.length) recDiffSel = hoverIdx;
+      activateRecordsDiff(hoverIdx);
+    } else if (state === 'records') {
+      blip(440, 0.08);
+      goRecordsDiff(); // the screen's one button: Back to the track picker
     } else if (state === 'continue') {
       contSel = hoverIdx;
       activateContinue(hoverIdx);
@@ -1253,6 +1336,13 @@
       case 'difficulty':
         if (TOUCH.hit(k.back, x, y)) { blip(880, 0.08); goMenu(); return; }
         activateHover();
+        return;
+      case 'recordsDiff':
+        if (TOUCH.hit(k.back, x, y)) { blip(880, 0.08); goMenu(); return; }
+        activateHover();
+        return;
+      case 'records':
+        activateHover(); // the on-screen Back button
         return;
       case 'replays': {
         if (TOUCH.hit(k.back, x, y)) { blip(880, 0.08); goMenu(); return; }
@@ -1691,6 +1781,10 @@
         menuT += FDT;
       } else if (state === 'difficulty') {
         diffT += FDT;
+      } else if (state === 'recordsDiff') {
+        recDiffT += FDT;
+      } else if (state === 'records') {
+        recT += FDT;
       } else if (state === 'continue') {
         contT += FDT;
       } else if (state === 'replays') {
@@ -1738,6 +1832,7 @@
       if (state !== 'loading' && state !== 'intro' && state !== 'menu' &&
           state !== 'difficulty' && state !== 'continue' && state !== 'replays' &&
           state !== 'audio' && state !== 'skip' && state !== 'editor' &&
+          state !== 'recordsDiff' && state !== 'records' &&
           state !== 'victory') {
         updateCamera(FDT);
         // toasts keep rising over the crash/finish screens, but a pause
@@ -1775,6 +1870,21 @@
       drawMenuBackdrop(ctx, W, H, mt, patterns.meadow);
       drawDifficulty(ctx, W, H, Math.min(1, diffT / 0.4), TRACKS, diffSel, hoverIdx,
         TOUCH.active);
+      return;
+    }
+    if (state === 'recordsDiff') {
+      drawMenuBackdrop(ctx, W, H, mt, patterns.meadow);
+      drawDifficulty(ctx, W, H, Math.min(1, recDiffT / 0.4), TRACKS, recDiffSel,
+        hoverIdx, TOUCH.active, 'BEST RECORDS');
+      return;
+    }
+    if (state === 'records') {
+      drawMenuBackdrop(ctx, W, H, mt, patterns.meadow);
+      drawRecords(ctx, W, H, Math.min(1, recT / 0.4), {
+        label: recTrack ? recTrack.label : '',
+        names: recNames, results: recResults, sel: 0, hover: hoverIdx,
+        touch: TOUCH.active,
+      });
       return;
     }
     if (state === 'continue') {

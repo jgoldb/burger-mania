@@ -183,7 +183,7 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
   pumpFrames(3, 1 / 60);
   key('Enter');                              // Play -> difficulty
   pumpFrames(3, 1 / 60);
-  key('Enter');                              // Easy -> ready (Burger Hill)
+  key('Enter');                              // Beginner -> ready (Burger Hill)
   pumpFrames(3, 1 / 60);
   key('ArrowUp');                            // ride: full throttle, doomed
   if (!pumpUntilText(2400, 'You crashed!')) bad('blind full-throttle run never crashed');
