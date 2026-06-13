@@ -5,11 +5,17 @@
 // one run: the physics is deterministic (fixed 60 Hz step, no randomness),
 // so feeding the recorded inputs back through the same sim reproduces the
 // run exactly. The raw level data rides along in the file, so a replay
-// stays faithful even if the level is later retuned (physics changes can
-// still desync old replays; playback then just ends where the tape does).
+// stays faithful even if the level is later retuned.
+//
+// But a replay is only the INPUTS, not the trajectory, so any change to the
+// sim (physics constants, step logic, or a new input bit) desyncs every tape
+// saved before it: the recorded inputs replay against the new physics and the
+// rider drifts off course. Those replays are useless, so VERSION is bumped on
+// any such change and parse() rejects the older files outright — a clean "from
+// an older version" failure instead of a silent, wrong-looking playback.
 const REPLAY = (() => {
   const FORMAT = 'burger-mania-replay';
-  const VERSION = 1;
+  const VERSION = 2; // bumped 2026-06-13 (drag + air-spin physics pass)
   const EXT = '.bmr';
   const PICKER_TYPES = [{
     description: 'Burger Mania replay',
@@ -70,7 +76,14 @@ const REPLAY = (() => {
     const d = JSON.parse(text);
     if (d.format !== FORMAT) throw new Error('not a Burger Mania replay');
     if (d.version !== VERSION) {
-      throw new Error('unsupported replay version ' + d.version);
+      // a version mismatch means the sim has changed since the save, so the
+      // tape can't reproduce its run. Flag it so the folder browser can tell
+      // these apart from genuinely corrupt files and explain why they're gone
+      const e = new Error(d.version < VERSION
+        ? 'this replay is from an older version of Burger Mania'
+        : 'this replay is from a newer version of Burger Mania');
+      e.versionMismatch = true;
+      throw e;
     }
     const L = d.level;
     if (!L || !Array.isArray(L.polygons) || !L.polygons.length ||
@@ -195,18 +208,25 @@ const REPLAY = (() => {
     return false;
   }
 
-  // every parseable EXT file in the folder, newest first
+  // every parseable EXT file in the folder, newest first, plus a count of
+  // files skipped because they're from another game version (so the UI can
+  // explain the gap rather than just dropping them silently)
   async function listDir(h) {
     const out = [];
+    let outdated = 0;
     for await (const entry of h.values()) {
       if (entry.kind !== 'file' || !entry.name.endsWith(EXT)) continue;
       try {
         const f = await entry.getFile();
         out.push({ name: entry.name, mtime: f.lastModified, data: parse(await f.text()) });
-      } catch (e) { /* not a replay (or a broken one): leave it out */ }
+      } catch (e) {
+        // a version mismatch is a known, explainable skip; anything else is a
+        // damaged or non-replay file and is left out without comment
+        if (e && e.versionMismatch) outdated++;
+      }
     }
     out.sort((a, b) => b.mtime - a.mtime);
-    return out;
+    return { files: out, outdated };
   }
 
   // ---------- tiny IndexedDB key-value store (remembers the folder) ----------

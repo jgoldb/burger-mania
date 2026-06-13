@@ -15,7 +15,10 @@ const PHYS = {
   springC: 5.0,
   springCFade: 5,  // relative speed (m/s) where damper force fades to half:
                    // slow squat stays controlled, hard hits stay elastic
-  maxStretch: 0.4,
+  maxStretch: 0.7,  // hard cap on suspension travel from the raw anchor. Set
+                    // well above spinExtMax so a fast air spin can sling the
+                    // wheels right out to the elastic-bar limit and the front
+                    // wheel stretches far on the momentum, Elasto Mania style
   frameR: 0.45,    // body collider radius: on a slammed landing the faded
                    // damper lets the frame dive between the planted wheels,
                    // and without a belly hit it would carry the head into
@@ -23,7 +26,11 @@ const PHYS = {
                    // the stretch clamp. Inactive in normal riding (rest
                    // clearance ~0.67)
   spinExt: 0.022,   // anchor extension (m) per (rad/s)^2 of frame spin
-  spinExtMax: 0.28, // cap on the spin-driven extension
+  spinExtMax: 0.28, // cap on the spin-driven REST extension. Kept modest: this
+                    // is how far the slung anchor sits out during *sustained*
+                    // rotation, so raising it pushes the wheels into the wall
+                    // riding a loop. The dramatic stretch comes from momentum
+                    // flinging the wheel past the rest, out to maxStretch
 
   engineT: 1.4,    // torque applied to the driven (rear) wheel
   engineLow: 0.25, // extra low-end torque fraction: full extra at zero
@@ -54,14 +61,29 @@ const PHYS = {
                    // ratchets it past the balance point and all the way
                    // over (~2s from static; >=0.65 never tips)
   voltRate: 4.0,  // rad/s spin rate a thrust saturates toward
-  voltStack: 1.0,  // strength gain per consecutive same-direction air volt
-  voltStackMax: 3, // air volts stop compounding past this many stacks
+  voltStack: 1.5,  // strength gain per consecutive same-direction air volt:
+                   // both the thrust and the spin ceiling it saturates toward
+                   // scale with the stack, so holding a lean through a long
+                   // airtime winds up a fast rotation (~3+ rev/s)
+  voltStackMax: 4, // air volts stop compounding past this many stacks
 
   mu: 1.1,         // tire friction coefficient
   muGlass: 0.06,   // tire friction on obsidian glass: the engine can barely
                    // push and the brakes barely bite, so glass is crossed on
                    // momentum alone (the parking clamp never engages on it)
   rollRes: 9,      // rolling resistance (spin decel, rad/s^2, on contact)
+  dragV0: 19,      // speed (m/s) below which there is no air drag at all:
+                   // the tuned maps top out ~17 m/s (Sriracha's spiral dive),
+                   // so leaving the normal range drag-free keeps every map's
+                   // ballistics bit-identical. Drag only bites past this
+  drag: 0.03,      // quadratic air drag (1/m) on the speed ABOVE dragV0: a
+                   // mass-independent decel of drag*(|v|-dragV0)^2 that sets
+                   // the top speed. Free-fall terminal is dragV0+sqrt(g/drag)
+                   // ~ 34 m/s, and it's the SAME on the gas or coasting, so a
+                   // long descent can't be out-run by idling. The engine tops
+                   // out at maxSpin*wheelR (~22) on the flat, so the gas is
+                   // always the faster choice up to there and never slower
+                   // past it (it just stops adding once drag has the lead)
   bounce: 0.3,     // restitution of a belly impact (elastic bar rebound)
   bounceMin: 0.8,  // impact speed (m/s) below which contact is inelastic,
                    // so rolling contact stays planted instead of jittering
@@ -250,13 +272,19 @@ class Bike {
       fy -= Fy;
       torque += rx * (-Fy) - ry * (-Fx);
 
-      if (i === this.rearIndex && input.throttle) {
+      // the engine only winds the wheel UP to maxSpin; it never reaches in
+      // to slow a wheel that traction has already spun past the cap on a
+      // fast descent. (The old unconditional clamp braked that overspin,
+      // which made holding the gas downhill SLOWER than coasting — the
+      // drag terminal below is what actually limits top speed now.)
+      if (i === this.rearIndex && input.throttle &&
+          w.spin * this.facing < P.maxSpin) {
         const before = w.spin;
         const eT = P.engineT * (1 + P.engineLow *
           Math.max(0, 1 - Math.abs(w.spin) / P.engineKnee));
         w.spin += (eT / P.wheelI) * dt * this.facing;
-        if (w.spin > P.maxSpin) w.spin = P.maxSpin;
-        if (w.spin < -P.maxSpin) w.spin = -P.maxSpin;
+        // cap the engine's own wind-up without clawing back the extra
+        if (w.spin * this.facing > P.maxSpin) w.spin = P.maxSpin * this.facing;
         // engine reaction torque pitches the frame backward (wheelies,
         // and mid-air attitude adjustment) until the wheel maxes out;
         // weaker in the air so gas doesn't overpower the lean controls.
@@ -291,6 +319,28 @@ class Bike {
     this.vel.y += (fy / P.frameM) * dt;
     this.avel += (torque / P.frameI) * dt;
     this.avel *= 1 - 0.12 * dt;
+
+    // quadratic linear drag on the speed above dragV0: a mass-independent
+    // deceleration applied to the frame and both wheels so the whole bike
+    // shares one terminal velocity. This is the real top-speed limit, it
+    // doesn't care about throttle (so coasting can never out-run the gas
+    // down a long slope), and it's zero in the normal riding range so the
+    // tuned maps are untouched. (v-v0)^2 ramps in with zero slope at v0, so
+    // there's no kick as it engages
+    const dragDecel = (vx, vy) => {
+      const sp = Math.hypot(vx, vy);
+      if (sp <= P.dragV0) return 0;
+      const ex = sp - P.dragV0;
+      return P.drag * ex * ex / sp * dt; // fraction of velocity shed this step
+    };
+    const fDrag = dragDecel(this.vel.x, this.vel.y);
+    this.vel.x -= this.vel.x * fDrag;
+    this.vel.y -= this.vel.y * fDrag;
+    for (const w of this.wheels) {
+      const wDrag = dragDecel(w.vel.x, w.vel.y);
+      w.vel.x -= w.vel.x * wDrag;
+      w.vel.y -= w.vel.y * wDrag;
+    }
 
     this.pos.x += this.vel.x * dt;
     this.pos.y += this.vel.y * dt;

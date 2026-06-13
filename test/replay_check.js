@@ -193,6 +193,17 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
     REPLAY.parse(JSON.stringify(broken));
   } catch (e) { threw = true; }
   if (!threw) bad('parse accepted a frame-count mismatch');
+  // a replay from an older game version is rejected cleanly and FLAGGED, so
+  // the folder browser can explain it apart from a corrupt file
+  let flagged = false;
+  try {
+    const old = JSON.parse(REPLAY.serialize({
+      level: LEVELS[0], label: 'old', outcome: 'crashed', time: 1,
+      trackId: 'easy', levelIndex: 0 }));
+    old.version = 0; // any version that isn't the current one
+    REPLAY.parse(JSON.stringify(old));
+  } catch (e) { flagged = e.versionMismatch === true; }
+  if (!flagged) bad('parse did not flag an outdated replay version');
   // style metadata: round-trips when present, null (shown as N/A) when not
   const styled = REPLAY.parse(REPLAY.serialize({
     level: LEVELS[0], label: 'st', outcome: 'finished', time: 2,
@@ -256,6 +267,20 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
   if (!lastFrameTexts().some(t => t.includes('Choose Replays Folder'))) {
     bad('replays screen does not offer to choose a folder');
   }
+  // drop an outdated (older-version) replay into the folder: it must be
+  // hidden from the list and the gap explained, not silently mis-played
+  savedFiles['ancient.bmr'] = JSON.stringify({
+    format: 'burger-mania-replay', version: 1,
+    savedAt: '2026-01-01T00:00:00.000Z',
+    label: 'Ancient Run', outcome: 'finished', time: 1,
+    trackId: null, levelIndex: 0,
+    level: {
+      name: 'Old Map', theme: 'meadow',
+      polygons: [[[-5, -8], [20, -8], [20, 8], [-5, 8]]],
+      start: { x: 2, y: 7.25 }, burgers: [], goal: [2.5, 7.5],
+    },
+    frames: 60, inputs: [0, 60], flips: [],
+  });
   key('Enter');                              // choose folder (stub grants)
   await settle();
   const listTexts = lastFrameTexts();
@@ -264,6 +289,12 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
   }
   if (!listTexts.some(t => / - style \\d+$/.test(t))) {
     bad('replay list does not show the saved run style total');
+  }
+  if (listTexts.some(t => t.includes('Ancient Run'))) {
+    bad('replay list shows an outdated-version replay it cannot play');
+  }
+  if (!listTexts.some(t => t.includes('older version'))) {
+    bad('replays screen does not explain the hidden outdated replay');
   }
   key('Enter');                              // play the newest replay
   pumpFrames(2, 1 / 60);
@@ -289,7 +320,7 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
   }
   // ---- a synthetic instant-win replay covers the finished path ----
   savedFiles['synthetic-win.bmr'] = JSON.stringify({
-    format: 'burger-mania-replay', version: 1,
+    format: 'burger-mania-replay', version: 2,
     savedAt: '2026-06-11T00:00:00.000Z',
     label: 'Synthetic Win', outcome: 'finished', time: 0.02,
     trackId: null, levelIndex: 0,

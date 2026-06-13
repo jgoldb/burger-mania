@@ -462,9 +462,9 @@
       return;
     }
     repNote = 'Reading "' + replayDir.name + '"...';
-    let files;
+    let files, outdated;
     try {
-      files = await REPLAY.listDir(replayDir);
+      ({ files, outdated } = await REPLAY.listDir(replayDir));
     } catch (e) {
       if (gen !== repGen) return;
       repItems = [{ label: 'Choose Replays Folder...', act: chooseReplayFolder }];
@@ -478,9 +478,17 @@
       act: () => startReplay(f.data),
     }));
     repItems.push({ label: 'Change Folder...', act: chooseReplayFolder });
-    repNote = files.length ? ''
-      : 'No replays in "' + replayDir.name + '" yet - finish a run and ' +
-        (TOUCH.active ? 'tap Save Replay!' : 'press S!');
+    // replays from an older game version can't be played (the physics they
+    // recorded against has changed), so they're hidden — but say so, so the
+    // gap isn't a mystery
+    const stale = outdated
+      ? outdated + (outdated > 1 ? ' replays are' : ' replay is') +
+        ' from an older version and can no longer be played.'
+      : '';
+    repNote = files.length
+      ? stale
+      : (stale || 'No replays in "' + replayDir.name + '" yet - finish a run and ' +
+        (TOUCH.active ? 'tap Save Replay!' : 'press S!'));
   }
 
   function replaySub(f) {
