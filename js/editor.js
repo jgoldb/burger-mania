@@ -1104,13 +1104,16 @@ const EDITOR = (() => {
     ];
     ctx.save();
     ctx.font = 'bold 14px ' + FONT;
-    // layout pass: flow the buttons, wrapping on narrow screens
+    // layout pass: flow the buttons, wrapping on narrow screens. Keep the row
+    // clear of a landscape phone's side notches / top inset (SAFE is zero on
+    // desktop and in the harnesses).
     uiRects = [];
-    let x = 10, y = 8;
+    const x0 = 10 + SAFE.left, xMax = W - 10 - SAFE.right;
+    let x = x0, y = 8 + SAFE.top;
     const bh = 30, gap = 6;
     for (const d of defs) {
       const w = Math.max(d.min || 34, ctx.measureText(d.label).width + 18);
-      if (x + w > W - 10 && x > 10) { x = 10; y += bh + gap; }
+      if (x + w > xMax && x > x0) { x = x0; y += bh + gap; }
       uiRects.push(Object.assign({ x, y, w, h: bh }, d));
       x += w + gap;
     }
@@ -1144,14 +1147,18 @@ const EDITOR = (() => {
 
   function drawStatus(ctx, W, H) {
     ctx.save();
+    // sit the bar above the home-indicator inset and keep its text clear of
+    // the side notches
+    const sb = H - SAFE.bottom, ty = sb - 13;
     ctx.fillStyle = 'rgba(10,6,3,0.72)';
-    ctx.fillRect(0, H - 26, W, 26);
+    ctx.fillRect(0, sb - 26, W, 26);
     ctx.font = '12px ' + FONT;
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'left';
     const transient = status && performance.now() - statusAt < 5000;
     ctx.fillStyle = transient ? '#ffe27a' : 'rgba(240,232,218,0.8)';
-    ctx.fillText(transient ? status : TOOL_HINTS[tool] || '', 10, H - 13, W * 0.62);
+    ctx.fillText(transient ? status : TOOL_HINTS[tool] || '',
+      10 + SAFE.left, ty, safeBandW(W) * 0.62);
     const b = levelBounds(prepared);
     const w = s2w(mx, my);
     ctx.textAlign = 'right';
@@ -1161,7 +1168,7 @@ const EDITOR = (() => {
       '  |  bounds ' + Math.round(b.minX) + '..' + Math.round(b.maxX) +
       ' x ' + Math.round(b.minY) + '..' + Math.round(b.maxY) +
       '  |  ' + map.polygons.length + ' poly  ' + map.burgers.length + ' burgers' +
-      '  |  snap ' + SNAP, W - 10, H - 13);
+      '  |  snap ' + SNAP, W - 10 - SAFE.right, ty);
     ctx.restore();
   }
 

@@ -18,10 +18,24 @@
   // (?ui=menu|difficulty|continue|pause|audio|audio-pause|skip|skip-game|victory|...)
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
-  const W = canvas.width = window.innerWidth;
-  const H = canvas.height = window.innerHeight;
-  const patterns = makePatterns(ctx);
   const params = new URLSearchParams(location.search);
+  // ?w=&h= force a specific viewport (e.g. a phone's landscape size) without
+  // resizing the window; otherwise fill the window
+  const W = canvas.width = parseInt(params.get('w') || '', 10) || window.innerWidth;
+  const H = canvas.height = parseInt(params.get('h') || '', 10) || window.innerHeight;
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  // ?inset=T,R,B,L (or a single number for all sides) simulates a notch /
+  // home-indicator so the safe-area-aware chrome can be eyeballed in landscape
+  if (params.get('inset')) {
+    const v = params.get('inset').split(',').map(Number);
+    const i = v.length === 1
+      ? { top: v[0], right: v[0], bottom: v[0], left: v[0] }
+      : { top: v[0] || 0, right: v[1] || 0, bottom: v[2] || 0, left: v[3] || 0 };
+    setSafeInsets(i);
+    window.__inset = i;
+  }
+  const patterns = makePatterns(ctx);
   const ui = params.get('ui') || 'menu';
   // optional ?theme= to preview menu screens in another world
   const menuPat = patterns[params.get('theme')] || patterns.meadow;
@@ -31,9 +45,10 @@
 
   loadAssets().then(() => {
   if (ui === 'menu') {
-    // ?t= scrubs the backdrop clock; default lands mid-astro so the
-    // rising-astronaut gag and its speech bubble show in the still
-    const t = params.get('t') ? parseFloat(params.get('t')) : 5.7;
+    // ?t= scrubs the backdrop clock (seconds since the menu opened); the
+    // astro gag is held back 30s, so the default clears that delay and lands
+    // mid-ascent so the rising-astronaut gag and its bubble show in the still
+    const t = params.get('t') ? parseFloat(params.get('t')) : 35.7;
     drawMenuBackdrop(ctx, W, H, t, menuPat, true);
     drawTitleLetters(ctx, W, H, 10);
     drawMenu(ctx, W, H, 1, ['Play'], 0, -1);
@@ -165,6 +180,17 @@
       names: track.levels.map(l => l.name),
       results, sel: 0, hover: -1, touch: false, saveNote: 'S: save replay',
     });
+  }
+  // outline the safe band so it's obvious whether the chrome respects it
+  if (window.__inset) {
+    const i = window.__inset;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.strokeStyle = 'rgba(255,64,64,0.9)';
+    ctx.setLineDash([8, 6]);
+    ctx.lineWidth = 2;
+    ctx.strokeRect(i.left, i.top, W - i.left - i.right, H - i.top - i.bottom);
+    ctx.restore();
   }
   });
 </script>

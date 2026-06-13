@@ -27,19 +27,24 @@ const TOUCH = (() => {
     const u = Math.min(W, H);
     const bs = Math.max(56, Math.min(u * 0.17, 96));
     const gap = bs * 0.18, m = Math.max(10, bs * 0.2);
-    const y = H - m - bs;
+    // pull the clusters in from the notch / home-indicator cutouts (SAFE is
+    // owned by render.js; it's all zeros on desktop and in the harnesses)
+    const sl = SAFE.left, sr = SAFE.right, st = SAFE.top, sb = SAFE.bottom;
+    const y = H - sb - m - bs;
     const fs = bs * 0.78;
     const ss = Math.max(40, bs * 0.55);
+    const lx = sl + m;                 // left cluster x
+    const rgx = W - sr - m - bs;       // right (gas) cluster x
     return {
-      left:    { x: m, y, w: bs, h: bs },
-      right:   { x: m + bs + gap, y, w: bs, h: bs },
-      flip:    { x: m + (2 * bs + gap - fs) / 2, y: y - gap - fs, w: fs, h: fs },
-      brake:   { x: W - m - 2 * bs - gap, y, w: bs, h: bs },
-      gas:     { x: W - m - bs, y, w: bs, h: bs },
-      pause:   { x: W / 2 - ss - 8, y: 10, w: ss, h: ss },
-      restart: { x: W / 2 + 8, y: 10, w: ss, h: ss },
-      save:    { x: W / 2 - 120, y: H * 0.36 + 152, w: 240, h: 52 },
-      back:    { x: 12, y: 12, w: 104, h: 46 },
+      left:    { x: lx, y, w: bs, h: bs },
+      right:   { x: lx + bs + gap, y, w: bs, h: bs },
+      flip:    { x: lx + (2 * bs + gap - fs) / 2, y: y - gap - fs, w: fs, h: fs },
+      brake:   { x: rgx - bs - gap, y, w: bs, h: bs },
+      gas:     { x: rgx, y, w: bs, h: bs },
+      pause:   { x: W / 2 - ss - 8, y: 10 + st, w: ss, h: ss },
+      restart: { x: W / 2 + 8, y: 10 + st, w: ss, h: ss },
+      save:    saveButtonRect(W, H),
+      back:    { x: 12 + sl, y: 12 + st, w: 104, h: 46 },
     };
   }
 

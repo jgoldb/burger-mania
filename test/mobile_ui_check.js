@@ -89,7 +89,8 @@ const code = ['js/assets.js', 'js/physics.js', 'js/render.js', 'js/touch.js']
   .map(f => fs.readFileSync(path.join(root, f), 'utf8')).join('\n')
   + '\nglobal.__R = { drawLoading, drawMenu, drawDifficulty, drawReady, drawPause,'
   + ' drawAudio, drawContinue, drawReplays, drawLevelSelect, drawVictory, drawHUD,'
-  + ' drawTitleLetters, makePatterns, TOUCH };';
+  + ' drawTitleLetters, makePatterns, TOUCH, setSafeInsets, saveButtonRect,'
+  + ' menuRects, audioRects, replayRects, minimapRect };';
 eval(code);
 
 const R = global.__R;
@@ -156,24 +157,66 @@ const SIZES = [
   [568, 320], [667, 375], [640, 360], [844, 390], [932, 430],
 ];
 
-for (const [name, fn] of Object.entries(SCENES)) {
-  for (const [W, H] of SIZES) {
-    const sink = [];
-    try { fn(makeCtx(W, H, sink), W, H); }
-    catch (e) { bad(`${name} @ ${W}x${H} threw: ${e.message}`); continue; }
-    for (const t of sink) {
-      if (!t.text.trim()) continue;
-      if (t.left < -0.5 || t.right > W + 0.5) {
-        bad(`${name} @ ${W}x${H}: "${t.text}" clips horizontally `
-          + `[${t.left.toFixed(0)}..${t.right.toFixed(0)}] vs W=${W}`);
-      }
-      if (t.top < -0.5 || t.bottom > H + 0.5) {
-        bad(`${name} @ ${W}x${H}: "${t.text}" clips vertically `
-          + `[${t.top.toFixed(0)}..${t.bottom.toFixed(0)}] vs H=${H}`);
-      }
+// every drawn label must stay inside the given bounds (the screen, or — with
+// safe-area insets — the band clear of the notch / home indicator)
+function checkText(tag, sink, bounds) {
+  for (const t of sink) {
+    if (!t.text.trim()) continue;
+    if (t.left < bounds.left - 0.5 || t.right > bounds.right + 0.5) {
+      bad(`${tag}: "${t.text}" clips horizontally `
+        + `[${t.left.toFixed(0)}..${t.right.toFixed(0)}] vs [${bounds.left}..${bounds.right.toFixed(0)}]`);
+    }
+    if (t.top < bounds.top - 0.5 || t.bottom > bounds.bottom + 0.5) {
+      bad(`${tag}: "${t.text}" clips vertically `
+        + `[${t.top.toFixed(0)}..${t.bottom.toFixed(0)}] vs [${bounds.top}..${bounds.bottom.toFixed(0)}]`);
     }
   }
 }
+
+function runPass(sizes, inset) {
+  R.setSafeInsets(inset);
+  const tag = (inset.top || inset.right || inset.bottom || inset.left)
+    ? ` [safe ${inset.top}/${inset.right}/${inset.bottom}/${inset.left}]` : '';
+  for (const [name, fn] of Object.entries(SCENES)) {
+    for (const [W, H] of sizes) {
+      const sink = [];
+      try { fn(makeCtx(W, H, sink), W, H); }
+      catch (e) { bad(`${name} @ ${W}x${H}${tag} threw: ${e.message}`); continue; }
+      checkText(`${name} @ ${W}x${H}${tag}`, sink, {
+        left: inset.left, right: W - inset.right,
+        top: inset.top, bottom: H - inset.bottom });
+    }
+  }
+  R.setSafeInsets({});
+}
+
+// pass 1: no insets, every size (portrait + landscape) — desktop / unnotched
+runPass(SIZES, { top: 0, right: 0, bottom: 0, left: 0 });
+
+// pass 2: a notched phone held in landscape — side cutouts plus a
+// home-indicator strip along the bottom. Every screen's lettering must stay
+// inside the safe band, never under a cutout.
+const LANDSCAPE = SIZES.filter(([W, H]) => W > H);
+const NOTCH = { top: 0, right: 47, bottom: 21, left: 47 };
+runPass(LANDSCAPE, NOTCH);
+
+// the on-screen touch controls must sit inside that band too, or a thumb
+// would have to reach into the notch / home indicator to press them
+R.setSafeInsets(NOTCH);
+for (const [W, H] of LANDSCAPE) {
+  const L = R.TOUCH.layout(W, H);
+  for (const key of ['left', 'right', 'flip', 'brake', 'gas', 'pause', 'save', 'back']) {
+    const r = L[key];
+    if (r.x < NOTCH.left - 0.5 || r.x + r.w > W - NOTCH.right + 0.5 ||
+        r.y < NOTCH.top - 0.5 || r.y + r.h > H - NOTCH.bottom + 0.5) {
+      bad(`touch ${key} @ ${W}x${H} outside the safe band: `
+        + `[x ${r.x.toFixed(0)}..${(r.x + r.w).toFixed(0)}, `
+        + `y ${r.y.toFixed(0)}..${(r.y + r.h).toFixed(0)}] vs `
+        + `[${NOTCH.left}..${W - NOTCH.right}, ${NOTCH.top}..${H - NOTCH.bottom}]`);
+    }
+  }
+}
+R.setSafeInsets({});
 
 console.log(fail ? `FAILED (${fail})` : 'OK');
 process.exit(fail ? 1 : 0);

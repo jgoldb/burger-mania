@@ -4,11 +4,55 @@
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
   let W = 0, H = 0;
+
+  // A hidden probe whose padding is set to the safe-area insets lets us read
+  // the notch/home-indicator sizes in px (env() can't be read off a custom
+  // property reliably, but resolves fine as resolved padding).
+  let safeProbe = null;
+  function measureInsets() {
+    let s = { top: 0, right: 0, bottom: 0, left: 0 };
+    try {
+      if (!safeProbe && document.body) {
+        safeProbe = document.createElement('div');
+        safeProbe.style.cssText =
+          'position:fixed;top:0;left:0;width:0;height:0;visibility:hidden;' +
+          'pointer-events:none;' +
+          'padding-top:env(safe-area-inset-top);' +
+          'padding-right:env(safe-area-inset-right);' +
+          'padding-bottom:env(safe-area-inset-bottom);' +
+          'padding-left:env(safe-area-inset-left);';
+        document.body.appendChild(safeProbe);
+      }
+      if (safeProbe && typeof getComputedStyle === 'function') {
+        const cs = getComputedStyle(safeProbe);
+        s = { top: parseFloat(cs.paddingTop) || 0,
+              right: parseFloat(cs.paddingRight) || 0,
+              bottom: parseFloat(cs.paddingBottom) || 0,
+              left: parseFloat(cs.paddingLeft) || 0 };
+      }
+    } catch (e) { /* stub DOM (headless harnesses) — leave insets at zero */ }
+    if (typeof setSafeInsets === 'function') setSafeInsets(s);
+  }
+
+  // Size the backing store to the canvas's own laid-out box (it's pinned
+  // position:fixed inset:0, so that's the full visual viewport). Measuring the
+  // element rather than window.innerWidth/Height keeps the canvas filling the
+  // screen and keeps clientX/Y touch coords mapping 1:1 to canvas pixels.
   function resize() {
-    W = canvas.width = window.innerWidth;
-    H = canvas.height = window.innerHeight;
+    const vv = window.visualViewport;
+    W = canvas.width = canvas.clientWidth ||
+      Math.round((vv && vv.width) || window.innerWidth);
+    H = canvas.height = canvas.clientHeight ||
+      Math.round((vv && vv.height) || window.innerHeight);
+    measureInsets();
   }
   window.addEventListener('resize', resize);
+  // iOS often reports stale dimensions during a rotation, so re-measure once
+  // the new orientation has settled
+  window.addEventListener('orientationchange', () => { resize(); setTimeout(resize, 300); });
+  if (window.visualViewport && window.visualViewport.addEventListener) {
+    window.visualViewport.addEventListener('resize', resize);
+  }
   resize();
 
   const patterns = makePatterns(ctx);
@@ -53,6 +97,12 @@
 
   // ---------- screens ----------
   let loadFrac = 0, loadDone = false;
+  // performance-clock seconds at which the player dismissed the loading
+  // overlay. The whole menu world (clouds, drifting burgers, the rising
+  // astronaut) is clocked from here rather than from page load, so nothing
+  // animates until the player taps in — and the astro gag stays parked for a
+  // good while after that. -1 means "still on the loading overlay".
+  let menuClock0 = -1;
   let introT = 0, menuT = 0, diffT = 0, contT = 0;
   let introLaunched = 0, introLanded = 0, fanfared = false;
   const menuItems = ['Play', 'Map Editor', 'Replays', 'Audio'];
@@ -409,13 +459,15 @@
   }
 
   // ---------- replays ----------
-  // Recorded runs live in .bmr files on the player's disk. With the File
-  // System Access API (Chromium) the Replays screen lists a folder the
-  // player picks once (the handle is remembered in IndexedDB); elsewhere
-  // it falls back to opening one file at a time.
+  // With the File System Access API (Chromium) recorded runs are .bmr files on
+  // disk and the Replays screen lists a folder the player picks once (the
+  // handle is remembered in IndexedDB). Browsers without it (notably iOS
+  // Safari) can't browse folders or reopen a downloaded .bmr, so there runs
+  // are kept in IndexedDB and listed in-app — see REPLAY.dbSave/dbList/dbDelete.
   let repItems = [];   // { label, sub?, act } buttons on the Replays screen
   let repSel = 0, repScroll = 0, repT = 0, repGen = 0;
   let repNote = '';    // status/help line under the list
+  let repDeleteMode = false;  // mobile library: rows delete instead of play
   let replayDir = null;       // FileSystemDirectoryHandle once chosen
   let replayData = null, replayCursor = null, replayOutcome = null;
   let saveNote = '', saveBusy = false;
@@ -425,6 +477,7 @@
     repT = 0;
     repSel = 0;
     repScroll = 0;
+    repDeleteMode = false;
     hoverIdx = -1;
     buildReplayItems();
   }
@@ -438,8 +491,7 @@
     repItems = [];
     repNote = '';
     if (!REPLAY.fsSupported) {
-      repItems = [{ label: 'Open Replay File...', act: openReplayFile }];
-      repNote = 'This browser cannot browse folders - open replays one at a time.';
+      await buildLocalReplayItems(gen);
       return;
     }
     if (!replayDir) {
@@ -478,17 +530,69 @@
       act: () => startReplay(f.data),
     }));
     repItems.push({ label: 'Change Folder...', act: chooseReplayFolder });
-    // replays from an older game version can't be played (the physics they
-    // recorded against has changed), so they're hidden — but say so, so the
-    // gap isn't a mystery
-    const stale = outdated
-      ? outdated + (outdated > 1 ? ' replays are' : ' replay is') +
-        ' from an older version and can no longer be played.'
-      : '';
     repNote = files.length
-      ? stale
-      : (stale || 'No replays in "' + replayDir.name + '" yet - finish a run and ' +
+      ? staleNote(outdated)
+      : (staleNote(outdated) || 'No replays in "' + replayDir.name + '" yet - finish a run and ' +
         (TOUCH.active ? 'tap Save Replay!' : 'press S!'));
+  }
+
+  // The mobile library: replays kept in IndexedDB, listed in-app (no folder,
+  // no re-openable files). repDeleteMode swaps each row's action from "play"
+  // to "delete" so old runs can be pruned without leaving the screen.
+  async function buildLocalReplayItems(gen) {
+    let files, outdated;
+    try {
+      ({ files, outdated } = await REPLAY.dbList());
+    } catch (e) {
+      if (gen !== repGen) return;
+      repItems = [];
+      repNote = 'Could not read your saved replays: ' + (e.message || e);
+      return;
+    }
+    if (gen !== repGen) return;
+    if (!files.length) repDeleteMode = false;
+    repItems = files.map(f => ({
+      label: (repDeleteMode ? 'Delete: ' : '') + (f.data.label || f.data.level.name),
+      sub: replaySub(f),
+      act: repDeleteMode ? () => removeReplay(f) : () => startReplay(f.data),
+    }));
+    if (files.length) {
+      repItems.push({
+        label: repDeleteMode ? 'Done' : 'Delete a Replay...',
+        act: toggleReplayDelete,
+      });
+    }
+    repNote = repDeleteMode
+      ? 'Pick a replay to delete for good.'
+      : (files.length
+        ? staleNote(outdated)
+        : (staleNote(outdated) || 'No replays saved yet - finish a run and ' +
+          (TOUCH.active ? 'tap Save Replay!' : 'press S!')));
+  }
+
+  function toggleReplayDelete() {
+    repDeleteMode = !repDeleteMode;
+    buildReplayItems();
+  }
+
+  async function removeReplay(f) {
+    try {
+      await REPLAY.dbDelete(f.id);
+    } catch (e) {
+      repNote = 'Could not delete that replay: ' + (e.message || e);
+      blip(180, 0.12);
+      return;
+    }
+    buildReplayItems();
+  }
+
+  // replays from an older game version can't be played (the physics they
+  // recorded against has changed), so both lists hide them — but say so, so
+  // the gap isn't a mystery. '' when none were skipped.
+  function staleNote(outdated) {
+    if (!outdated) return '';
+    return outdated + (outdated > 1 ? ' replays are' : ' replay is') +
+      ' from an older version and can no longer be played.';
   }
 
   function replaySub(f) {
@@ -514,16 +618,6 @@
 
   async function reopenReplayFolder() {
     if (await REPLAY.dirPermission(replayDir, true)) buildReplayItems();
-  }
-
-  async function openReplayFile() {
-    try {
-      startReplay(REPLAY.parse(await REPLAY.openFile()));
-    } catch (e) {
-      if (e && e.name === 'AbortError') return;
-      repNote = 'Could not load that replay: ' + (e.message || e);
-      blip(180, 0.12);
-    }
   }
 
   function activateReplays(i) {
@@ -572,9 +666,15 @@
         trackId: currentTrack ? currentTrack.id : null,
         levelIndex,
       });
-      if (!replayDir) replayDir = await REPLAY.restoreDir();
-      const saved = await REPLAY.saveAs(text, replayFileName(outcome), replayDir);
-      saveNote = 'Saved ' + saved;
+      const name = replayFileName(outcome);
+      if (REPLAY.fsSupported) {
+        if (!replayDir) replayDir = await REPLAY.restoreDir();
+        saveNote = 'Saved ' + await REPLAY.saveAs(text, name, replayDir);
+      } else {
+        // no folder to save into: stash it in the in-app library instead
+        await REPLAY.dbSave(text, name);
+        saveNote = 'Saved! See the Replays screen.';
+      }
       blip(880, 0.08);
     } catch (e) {
       saveNote = e && e.name === 'AbortError'
@@ -646,6 +746,16 @@
     enterLevel(i);
     state = 'ready';
     blip(1320, 0.15);
+  }
+
+  // leave the loading overlay for the title sequence. Stamps the menu clock
+  // so the backdrop animations start fresh from this moment (and not from
+  // whenever the page happened to finish loading).
+  function leaveLoading() {
+    if (!loadDone) return;
+    state = 'intro';
+    introT = 0;
+    menuClock0 = performance.now() / 1000;
   }
 
   function skipIntro() {
@@ -841,7 +951,7 @@
 
     switch (state) {
       case 'loading':
-        if (loadDone) { state = 'intro'; introT = 0; }
+        leaveLoading();
         return;
       case 'intro':
         skipIntro();
@@ -1103,7 +1213,7 @@
     const wasDrag = audioDragged;
     audioDragged = false;
     if (state === 'loading') {
-      if (loadDone) { state = 'intro'; introT = 0; }
+      leaveLoading();
       return;
     }
     if (state === 'intro') { skipIntro(); return; }
@@ -1130,7 +1240,7 @@
     const k = TOUCH.layout(W, H);
     switch (state) {
       case 'loading':
-        if (loadDone) { state = 'intro'; introT = 0; }
+        leaveLoading();
         return;
       case 'intro':
         skipIntro();
@@ -1645,12 +1755,16 @@
 
   function draw() {
     const rt = performance.now() / 1000;
+    // menu-world time: zero at the moment the loading overlay is dismissed,
+    // so the backdrop's clouds/burgers/astronaut begin their cycles fresh
+    // (and the astro gag's 30s delay is measured from the player tapping in).
+    const mt = menuClock0 >= 0 ? rt - menuClock0 : 0;
     if (state === 'loading') {
       drawLoading(ctx, W, H, loadFrac, rt, loadDone, TOUCH.active);
       return;
     }
     if (state === 'intro' || state === 'menu') {
-      drawMenuBackdrop(ctx, W, H, rt, patterns.meadow, true);
+      drawMenuBackdrop(ctx, W, H, mt, patterns.meadow, true);
       drawTitleLetters(ctx, W, H, introT);
       if (state === 'menu') {
         drawMenu(ctx, W, H, Math.min(1, menuT / 0.6), menuItems, menuSel, hoverIdx);
@@ -1658,7 +1772,7 @@
       return;
     }
     if (state === 'difficulty') {
-      drawMenuBackdrop(ctx, W, H, rt, patterns.meadow);
+      drawMenuBackdrop(ctx, W, H, mt, patterns.meadow);
       drawDifficulty(ctx, W, H, Math.min(1, diffT / 0.4), TRACKS, diffSel, hoverIdx,
         TOUCH.active);
       return;
@@ -1666,18 +1780,18 @@
     if (state === 'continue') {
       // the rider slumps in the world he just lost in (the checkpoint
       // map a continue would restart shares the same world)
-      drawMenuBackdrop(ctx, W, H, rt, patterns[level.theme] || patterns.meadow);
+      drawMenuBackdrop(ctx, W, H, mt, patterns[level.theme] || patterns.meadow);
       drawContinue(ctx, W, H, Math.min(1, contT / 0.4), rt, continues, contSel, hoverIdx);
       return;
     }
     if (state === 'replays') {
-      drawMenuBackdrop(ctx, W, H, rt, patterns.meadow);
+      drawMenuBackdrop(ctx, W, H, mt, patterns.meadow);
       drawReplays(ctx, W, H, Math.min(1, repT / 0.4),
         repItems, repSel, repScroll, hoverIdx, repNote, TOUCH.active);
       return;
     }
     if (state === 'audio' && audioFrom !== 'paused') {
-      drawMenuBackdrop(ctx, W, H, rt, patterns.meadow);
+      drawMenuBackdrop(ctx, W, H, mt, patterns.meadow);
       drawAudio(ctx, W, H, Math.min(1, audioT / 0.4),
         { volume, sel: audioSel, hover: hoverIdx, dim: false, muted,
           touch: TOUCH.active });
@@ -1686,7 +1800,7 @@
     // the skip picker summoned from a menu gets its own backdrop; summoned
     // mid-game it falls through to float over the frozen level instead
     if (state === 'skip' && !skipOverGame()) {
-      drawMenuBackdrop(ctx, W, H, rt, patterns[level.theme] || patterns.meadow);
+      drawMenuBackdrop(ctx, W, H, mt, patterns[level.theme] || patterns.meadow);
       drawLevelSelect(ctx, W, H, Math.min(1, skipT / 0.4), {
         items: skipItems, sel: skipSel, scroll: skipScroll, hover: hoverIdx,
         label: skipTrack ? skipTrack.label : '', touch: TOUCH.active,

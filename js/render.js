@@ -411,6 +411,35 @@ function roundRectPath(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
+// ---------- safe-area insets (notch / home indicator) ----------
+
+// The canvas covers the whole screen, including under a phone's notch and
+// home indicator in landscape. game.js measures those cutout sizes from
+// env(safe-area-inset-*) and pushes them here; the chrome (HUD, minimap,
+// touch buttons, menus) insets itself by them so nothing important hides in
+// a cutout. Defaults to zero, so desktop and the headless harnesses (which
+// never call setSafeInsets) lay out exactly as before.
+let SAFE = { top: 0, right: 0, bottom: 0, left: 0 };
+function setSafeInsets(s) {
+  s = s || {};
+  SAFE = { top: s.top || 0, right: s.right || 0,
+           bottom: s.bottom || 0, left: s.left || 0 };
+}
+// width of the screen band clear of the left/right cutouts
+function safeBandW(W) { return W - SAFE.left - SAFE.right; }
+// left edge that centers a `bw`-wide element within that clear band
+function safeCenterX(W, bw) { return SAFE.left + (safeBandW(W) - bw) / 2; }
+
+// The touch SAVE REPLAY button (crash/finish screens): pinned to the bottom
+// centre, just above the home-indicator inset, so it can't run off a short
+// landscape screen. Shared by render.js (which anchors the result panel above
+// it) and touch.js (which draws and hit-tests it) so the two always agree.
+function saveButtonRect(W, H) {
+  const w = Math.min(240, safeBandW(W) * 0.72);
+  const h = 48;
+  return { x: safeCenterX(W, w), y: H - SAFE.bottom - 12 - h, w, h };
+}
+
 // ---------- text fitting (so nothing clips on a narrow phone) ----------
 
 // All HUD/menu lettering is monospace, so a string's width scales linearly
@@ -921,12 +950,14 @@ function drawStylePopup(ctx, x, y, text, age, zoom) {
 // what-to-do hint, which is long, so it wraps to as many lines as it needs
 // and the panel grows upward from a fixed bottom — keeping the touch SAVE
 // REPLAY button (anchored just below) clear no matter how tall it gets.
-function centerMsg(ctx, W, H, title, sub, sub2) {
+// `bottomY` overrides that bottom anchor (the touch crash/finish screens pass
+// the top of the SAVE REPLAY button so the panel always sits just above it).
+function centerMsg(ctx, W, H, title, sub, sub2, bottomY) {
   ctx.save();
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   const mono = 'px "Consolas","Courier New",monospace';
-  const pw = Math.min(W * 0.9, 560), innerW = pw - 40;
+  const pw = Math.min(safeBandW(W) * 0.9, 560), innerW = pw - 40;
 
   const titlePx = fitFont(ctx, title, innerW, 30, 'bold', 16);
   ctx.font = '16' + mono;
@@ -938,16 +969,18 @@ function centerMsg(ctx, W, H, title, sub, sub2) {
   if (sub2) rows.push({ text: sub2, font: 'bold ' + sub2Px + mono, fill: '#9be08a', h: sub2Px + 12 });
 
   const ph = rows.reduce((s, r) => s + r.h, 0) + 28;
-  const py = Math.max(8, H * 0.36 + 142 - ph);
+  const bottom = bottomY != null ? bottomY : H * 0.36 + 142;
+  const py = Math.max(8 + SAFE.top, bottom - ph);
+  const px = safeCenterX(W, pw), cx = px + pw / 2;
   ctx.fillStyle = 'rgba(20,12,6,0.78)';
-  roundRectPath(ctx, (W - pw) / 2, py, pw, ph, 12);
+  roundRectPath(ctx, px, py, pw, ph, 12);
   ctx.fill();
 
   let y = py + 14;
   for (const r of rows) {
     ctx.fillStyle = r.fill;
     ctx.font = r.font;
-    ctx.fillText(r.text, W / 2, y + r.h / 2);
+    ctx.fillText(r.text, cx, y + r.h / 2);
     y += r.h;
   }
   ctx.restore();
@@ -962,7 +995,8 @@ function drawReady(ctx, W, H, mapLabel, touch) {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   const mono = 'px "Consolas","Courier New",monospace';
-  const pw = Math.min(W * 0.92, 600), innerW = pw - 48;
+  const pw = Math.min(safeBandW(W) * 0.92, 600), innerW = pw - 48;
+  const cx = safeCenterX(W, pw) + pw / 2;          // panel centre (clear of cutouts)
 
   const titlePx = fitFont(ctx, 'GET READY!', innerW, Math.min(52, W * 0.14), 'bold', 26);
   const mapPx = mapLabel ? fitFont(ctx, mapLabel, innerW, 18, 'bold', 12) : 0;
@@ -977,7 +1011,7 @@ function drawReady(ctx, W, H, mapLabel, touch) {
     'UP gas   DOWN brake   LEFT / RIGHT rotate',
     'SPACE turn around   ESC pause   M sound',
   ];
-  const instrPx = 16, lineH = 23;
+  let instrPx = 16, lineH = 23;
   ctx.font = instrPx + mono;
   const lines = [];
   for (const t of raw) {
@@ -986,9 +1020,13 @@ function drawReady(ctx, W, H, mapLabel, touch) {
   }
   let iconS = Math.max(18, Math.min(42, W * 0.1, H * 0.07));
 
+  // usable height between the top notch and bottom home-indicator insets
+  const availH = H - SAFE.top - SAFE.bottom;
+
   // vertical stack: title, [map], burger, instructions, footer. Sized to
   // its contents; if even that overruns a short screen, the blank spacer
-  // and then the (decorative) burger are dropped so nothing clips.
+  // and then the (decorative) burger are dropped, and finally the instruction
+  // type itself shrinks, so nothing clips on a short landscape phone.
   const padTop = 20, padBot = 20, g = 12;
   let blankH = 10, iconH = iconS * 1.5;
   const measure = () => {
@@ -998,13 +1036,21 @@ function drawReady(ctx, W, H, mapLabel, touch) {
     return padTop + padBot + g * (n - 1) + hs.reduce((a, b) => a + b, 0);
   };
   let ph = measure();
-  if (ph > H - 16) { blankH = 2; ph = measure(); }
-  if (ph > H - 16) { iconH = 0; ph = measure(); }
+  if (ph > availH - 16) { blankH = 2; ph = measure(); }
+  if (ph > availH - 16) { iconH = 0; ph = measure(); }
+  if (ph > availH - 16) {
+    // last resort: scale the instruction lines down to claw back the overflow
+    const instrH = lines.reduce((s, t) => s + (t ? lineH : blankH), 0);
+    const k = Math.max(0.6, (instrH - (ph - (availH - 16))) / instrH);
+    lineH = Math.max(15, lineH * k);
+    instrPx = Math.max(12, Math.round(instrPx * k));
+    ph = measure();
+  }
 
-  let py = Math.min(H * 0.16, (H - ph) / 2);
-  py = Math.max(8, Math.min(py, H - ph - 8));
+  let py = SAFE.top + Math.min(availH * 0.16, (availH - ph) / 2);
+  py = Math.max(SAFE.top + 8, Math.min(py, H - SAFE.bottom - ph - 8));
   ctx.fillStyle = 'rgba(20,12,6,0.82)';
-  roundRectPath(ctx, (W - pw) / 2, py, pw, ph, 16);
+  roundRectPath(ctx, safeCenterX(W, pw), py, pw, ph, 16);
   ctx.fill();
 
   let y = py + padTop;
@@ -1013,21 +1059,21 @@ function drawReady(ctx, W, H, mapLabel, touch) {
   let cy = block(titlePx);
   ctx.font = 'bold ' + titlePx + mono;
   ctx.fillStyle = '#5d2f17';
-  ctx.fillText('GET READY!', W / 2 + 3, cy + 3);
+  ctx.fillText('GET READY!', cx + 3, cy + 3);
   ctx.fillStyle = '#f9c623';
-  ctx.fillText('GET READY!', W / 2, cy);
+  ctx.fillText('GET READY!', cx, cy);
 
   if (mapLabel) {
     cy = block(mapPx + 4);
     ctx.font = 'bold ' + mapPx + mono;
     ctx.fillStyle = '#9be08a';
-    ctx.fillText(mapLabel, W / 2, cy);
+    ctx.fillText(mapLabel, cx, cy);
   }
 
   if (iconH > 0) {
     cy = block(iconH);
     ctx.save();
-    ctx.translate(W / 2, cy);
+    ctx.translate(cx, cy);
     ctx.scale(iconS, iconS);
     drawBurger(ctx, 0, 0.1, performance.now() / 1000);
     ctx.restore();
@@ -1040,14 +1086,14 @@ function drawReady(ctx, W, H, mapLabel, touch) {
   ctx.fillStyle = '#f0e8da';
   let ly = instrTop;
   for (const t of lines) {
-    if (t) ctx.fillText(t, W / 2, ly + lineH / 2);
+    if (t) ctx.fillText(t, cx, ly + lineH / 2);
     ly += t ? lineH : blankH;
   }
 
   cy = block(footPx + 6);
   ctx.font = 'bold ' + footPx + mono;
   ctx.fillStyle = '#9be08a';
-  ctx.fillText(goText, W / 2, cy);
+  ctx.fillText(goText, cx, cy);
   ctx.restore();
 }
 
@@ -1185,12 +1231,18 @@ function astroBubble(ctx, anchorY, op, unit) {
 // so it reads as far off in the distance. Menu only — not the continue
 // screen, which shares this same world.
 function drawMenuAstro(ctx, w, h, t) {
+  // Hold the gag back for a while after the menu first opens (t is clocked
+  // from when the player dismissed the loading overlay), so the very first
+  // thing on screen is the calm scene, not the astronaut popping straight up.
+  const DELAY = 30;
+  const at = t - DELAY;  // astro-local time; nothing flies before it turns positive
+  if (at < 0) return;
   const P = 26;          // one ascent roughly every P seconds
   const FLY = 11;        // seconds a single ascent lasts
-  const lt = t % P;
+  const lt = at % P;
   if (lt > FLY) return;  // resting between ascents
   const q = lt / FLY;    // 0..1 progress along the path
-  const cyc = Math.floor(t / P);
+  const cyc = Math.floor(at / P);
 
   // per-ascent randomness, stable across frames within one ascent
   const r1 = srand(cyc * 1.7 + 0.3);
@@ -1308,9 +1360,9 @@ function drawMenuBackdrop(ctx, W, H, t, pat, showAstro) {
 // a tall stack (e.g. the 4-item menu) never runs off a short phone; only if
 // even the floor height overruns do we slide the stack up to avoid a clip.
 function menuRects(W, H, n, y0) {
-  const bw = Math.min(300, W * 0.7);
-  const x = (W - bw) / 2;
-  const m = Math.max(12, H * 0.04);
+  const bw = Math.min(300, safeBandW(W) * 0.7);
+  const x = safeCenterX(W, bw);
+  const m = Math.max(12, H * 0.04) + SAFE.bottom;
   const avail = H - y0 - m;                       // room below the start
   let bh = Math.max(28, Math.min(56, avail / (n + (n - 1) * 0.32)));
   const gap = bh * 0.32;
@@ -1375,7 +1427,7 @@ function drawDifficulty(ctx, W, H, alpha, tracks, sel, hover, touch) {
   ctx.globalAlpha = alpha;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  fitFont(ctx, 'CHOOSE DIFFICULTY', W * 0.9, 44, 'bold', 18);
+  fitFont(ctx, 'CHOOSE DIFFICULTY', safeBandW(W) * 0.9, 44, 'bold', 18);
   ctx.fillStyle = 'rgba(40,16,4,0.85)';
   ctx.fillText('CHOOSE DIFFICULTY', W / 2 + 3, H * 0.20 + 3);
   ctx.fillStyle = '#f9c623';
@@ -1689,7 +1741,7 @@ function drawVictory(ctx, W, H, o) {
   ctx.restore();
 
   ctx.fillStyle = '#9be08a';
-  fitFont(ctx, `Every ${o.label} map cleared!`, W * 0.9, 19, 'bold', 12);
+  fitFont(ctx, `Every ${o.label} map cleared!`, safeBandW(W) * 0.9, 19, 'bold', 12);
   ctx.fillText(`Every ${o.label} map cleared!`, W / 2, H * 0.08 + 42);
 
   // ---------- the scorecard ----------
@@ -1700,8 +1752,8 @@ function drawVictory(ctx, W, H, o) {
   const top = Math.max(H * 0.155, H * 0.08 + 56), bottom = H * 0.645;
   const rowH = Math.max(13, Math.min(27, (bottom - top - 24) / (rows + 1.1)));
   const fs = Math.max(10, Math.round(rowH * 0.62));
-  const pw = Math.min(W * 0.88, 600);
-  const px = (W - pw) / 2;
+  const pw = Math.min(safeBandW(W) * 0.88, 600);
+  const px = safeCenterX(W, pw);
   const ph = rowH * (rows + 1.1) + 24;
   ctx.fillStyle = 'rgba(20,12,6,0.82)';
   roundRectPath(ctx, px, top, pw, ph, 12);
@@ -1785,7 +1837,8 @@ function drawVictory(ctx, W, H, o) {
     ctx.fillStyle = 'rgba(40,20,8,0.85)';
     ctx.font = '15px "Consolas","Courier New",monospace';
     ctx.textAlign = 'center';
-    ctx.fillText(hint, W / 2, rects[0].y + rects[0].h + 26);
+    ctx.fillText(hint, W / 2,
+      Math.min(rects[0].y + rects[0].h + 26, H - SAFE.bottom - 10));
   }
   ctx.textAlign = 'left';
 }
@@ -1841,10 +1894,10 @@ function drawPause(ctx, W, H, items, sel, hover) {
 // plus a Back button. Each row rect is the hover/click target and its
 // `bar` is the slider track inside it.
 function audioRects(W, H) {
-  const bw = Math.min(520, W * 0.86);
-  const x = (W - bw) / 2;
-  const m = Math.max(12, H * 0.04);
-  const top = H * (H < 360 ? 0.20 : H < 430 ? 0.24 : 0.30); // higher on short screens
+  const bw = Math.min(520, safeBandW(W) * 0.86);
+  const x = safeCenterX(W, bw);
+  const m = Math.max(12, H * 0.04) + SAFE.bottom;
+  const top = SAFE.top + H * (H < 360 ? 0.20 : H < 430 ? 0.24 : 0.30); // higher on short screens
   const backH = Math.min(56, Math.max(44, H * 0.1));
   const reserve = backH + 46;              // gap to Back + the hint line below
   // shrink the three slider rows so they plus the Back button and hint fit
@@ -1857,8 +1910,8 @@ function audioRects(W, H) {
       bar: { x: x + 24, y: y + bh - 15, w: bw - 48, h: 8 } });
     y += bh + gap;
   }
-  const backW = Math.min(240, W * 0.7);
-  rects.push({ x: (W - backW) / 2, y: y + 6, w: backW, h: backH }); // Back
+  const backW = Math.min(240, safeBandW(W) * 0.7);
+  rects.push({ x: safeCenterX(W, backW), y: y + 6, w: backW, h: backH }); // Back
   return rects;
 }
 
@@ -1880,7 +1933,7 @@ function drawAudio(ctx, W, H, alpha, o) {
   ctx.globalAlpha = alpha;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  fitFont(ctx, 'AUDIO', W * 0.9, 44, 'bold', 18);
+  fitFont(ctx, 'AUDIO', safeBandW(W) * 0.9, 44, 'bold', 18);
   ctx.fillStyle = 'rgba(40,16,4,0.85)';
   ctx.fillText('AUDIO', W / 2 + 3, H * 0.16 + 3);
   ctx.fillStyle = '#f9c623';
@@ -1937,8 +1990,8 @@ function drawAudio(ctx, W, H, alpha, o) {
   ctx.fillStyle = o.dim ? 'rgba(240,232,218,0.75)' : 'rgba(40,20,8,0.85)';
   const hint = o.touch ? 'Drag the sliders - tap Back when done'
     : 'Arrows adjust - M mutes - Esc to go back';
-  fitFont(ctx, hint, W * 0.92, 15, '', 11);
-  ctx.fillText(hint, W / 2, Math.min(back.y + back.h + 22, H - 10));
+  fitFont(ctx, hint, safeBandW(W) * 0.92, 15, '', 11);
+  ctx.fillText(hint, W / 2, Math.min(back.y + back.h + 22, H - SAFE.bottom - 10));
   ctx.restore();
 }
 
@@ -1948,9 +2001,9 @@ const REPLAY_VIS = 6; // list rows visible at once
 const SKIP_VIS = 6;   // skip-cheat level-picker rows visible at once
 
 function replayRects(W, H, n, y0) {
-  const bw = Math.min(560, W * 0.86);
-  const x = (W - bw) / 2;
-  const m = Math.max(12, H * 0.1);  // room below for the bottom hints / back
+  const bw = Math.min(560, safeBandW(W) * 0.86);
+  const x = safeCenterX(W, bw);
+  const m = Math.max(12, H * 0.1) + SAFE.bottom;  // room below for the bottom hints / back
   // rows are 52 tall where there's room, shrinking so the window fits a
   // short (landscape) screen instead of running its last rows off the edge
   const bh = Math.max(30, Math.min(52, (H - y0 - m) / (n + (n - 1) * 0.23)));
@@ -1968,7 +2021,7 @@ function drawReplays(ctx, W, H, alpha, items, sel, scroll, hover, note, touch) {
   ctx.globalAlpha = alpha;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  fitFont(ctx, 'REPLAYS', W * 0.9, 44, 'bold', 18);
+  fitFont(ctx, 'REPLAYS', safeBandW(W) * 0.9, 44, 'bold', 18);
   ctx.fillStyle = 'rgba(40,16,4,0.85)';
   ctx.fillText('REPLAYS', W / 2 + 3, H * 0.13 + 3);
   ctx.fillStyle = '#f9c623';
@@ -1989,7 +2042,7 @@ function drawReplays(ctx, W, H, alpha, items, sel, scroll, hover, note, touch) {
   if (scroll > 0) ctx.fillText('- more -', W / 2, y0 - 16);
   if (scroll + REPLAY_VIS < items.length && rects.length) {
     const last = rects[rects.length - 1];
-    ctx.fillText('- more -', W / 2, last.y + last.h + 14);
+    ctx.fillText('- more -', W / 2, Math.min(last.y + last.h + 14, H - SAFE.bottom - 8));
   }
   if (note) {
     ctx.fillStyle = '#f0e8da';
@@ -2021,13 +2074,13 @@ function drawLevelSelect(ctx, W, H, alpha, o) {
   ctx.globalAlpha = alpha;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  fitFont(ctx, 'SKIP TO MAP', W * 0.9, 44, 'bold', 18);
+  fitFont(ctx, 'SKIP TO MAP', safeBandW(W) * 0.9, 44, 'bold', 18);
   ctx.fillStyle = 'rgba(40,16,4,0.85)';
   ctx.fillText('SKIP TO MAP', W / 2 + 3, H * 0.13 + 3);
   ctx.fillStyle = '#f9c623';
   ctx.fillText('SKIP TO MAP', W / 2, H * 0.13);
   if (o.label) {
-    fitFont(ctx, o.label + ' track', W * 0.9, 18, 'bold', 11);
+    fitFont(ctx, o.label + ' track', safeBandW(W) * 0.9, 18, 'bold', 11);
     ctx.fillStyle = '#f0e8da';
     ctx.fillText(o.label + ' track', W / 2, H * 0.13 + 40);
   }
@@ -2047,7 +2100,7 @@ function drawLevelSelect(ctx, W, H, alpha, o) {
   if (o.scroll > 0) ctx.fillText('- more -', W / 2, y0 - 16);
   if (o.scroll + SKIP_VIS < o.items.length && rects.length) {
     const last = rects[rects.length - 1];
-    ctx.fillText('- more -', W / 2, last.y + last.h + 14);
+    ctx.fillText('- more -', W / 2, Math.min(last.y + last.h + 14, H - SAFE.bottom - 8));
   }
   if (!o.touch) {
     ctx.fillStyle = 'rgba(240,232,218,0.85)';
@@ -2086,7 +2139,7 @@ function minimapRect(W, H) {
   const s = Math.min(Math.min(W * 0.32, 320) / MAP_VIEW.w,
                      Math.min(H * 0.26, 150) / MAP_VIEW.h);
   const mw = MAP_VIEW.w * s, mh = MAP_VIEW.h * s;
-  return { s, mw, mh, mx: W - mw - 14, my: 12 };
+  return { s, mw, mh, mx: W - mw - 14 - SAFE.right, my: 12 + SAFE.top };
 }
 
 function drawMinimap(ctx, W, H, level, o) {
@@ -2239,23 +2292,25 @@ function drawHUD(ctx, W, H, o) {
   // style) is followed by an indented "best" row so both records read the
   // same way. Harnesses that pass no style keep the time-only layout
   const hasStyle = o.style != null;
-  const rowY = i => 12 + fs * 1.3 * i;
+  // keep the metrics clear of a left-side notch / top inset
+  const hudX = 14 + SAFE.left;
+  const rowY = i => 12 + SAFE.top + fs * 1.3 * i;
   let row = 0;
-  ctx.fillText(`time    ${fmt(o.time)}`, 14, rowY(row++));
-  ctx.fillText(`  best  ${o.best != null ? fmt(o.best) : '--:--,--'}`, 14, rowY(row++));
+  ctx.fillText(`time    ${fmt(o.time)}`, hudX, rowY(row++));
+  ctx.fillText(`  best  ${o.best != null ? fmt(o.best) : '--:--,--'}`, hudX, rowY(row++));
   if (hasStyle) {
-    ctx.fillText(`style   ${o.style}`, 14, rowY(row++));
-    ctx.fillText(`  best  ${o.styleBest != null ? o.styleBest : '---'}`, 14, rowY(row++));
+    ctx.fillText(`style   ${o.style}`, hudX, rowY(row++));
+    ctx.fillText(`  best  ${o.styleBest != null ? o.styleBest : '---'}`, hudX, rowY(row++));
   }
-  ctx.fillText(`burgers ${o.got}/${o.total}`, 14, rowY(row++));
+  ctx.fillText(`burgers ${o.got}/${o.total}`, hudX, rowY(row++));
   if (o.lives != null) {
     // one biker head per remaining life, behind a "lives" label that lines
     // up with the value column of the rows above
     const img = IMAGES.biker;
     const ih = fs * 1.5, iy = rowY(row);
     // value column matches "time", "best", "burgers" (all 8 monospace chars)
-    const hx = 14 + ctx.measureText('burgers ').width;
-    ctx.fillText('lives', 14, iy + (ih - fs) / 2);
+    const hx = hudX + ctx.measureText('burgers ').width;
+    ctx.fillText('lives', hudX, iy + (ih - fs) / 2);
     // the heads paint their own shadow and shine; no halo on the sprites
     ctx.shadowBlur = 0;
     const t = o.t || 0;
@@ -2347,13 +2402,16 @@ function drawHUD(ctx, W, H, o) {
     const sub = o.lives > 0
       ? `${again} to try again - ${o.lives} ${o.lives === 1 ? 'life' : 'lives'} left`
       : `Out of lives... ${o.touch ? 'tap to continue' : 'press Enter'}`;
-    centerMsg(ctx, W, H, 'You crashed!', sub, o.saveNote);
+    // on touch the panel rides just above the bottom SAVE REPLAY button
+    const anchor = o.touch ? saveButtonRect(W, H).y - 12 : undefined;
+    centerMsg(ctx, W, H, 'You crashed!', sub, o.saveNote, anchor);
   } else if (o.state === 'finished') {
+    const anchor = o.touch ? saveButtonRect(W, H).y - 12 : undefined;
     centerMsg(ctx, W, H, 'Course completed!',
       `Time ${fmt(o.time)}${hasStyle ? ' - Style ' + o.style : ''} - ` +
         `${o.touch ? 'tap' : 'press Enter'} for ` +
         (o.hasNext ? 'the next map' : 'the menu'),
-      o.saveNote);
+      o.saveNote, anchor);
   } else if (o.state === 'ready') {
     drawReady(ctx, W, H, o.mapLabel, o.touch);
   }

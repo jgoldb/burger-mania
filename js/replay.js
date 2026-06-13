@@ -229,12 +229,21 @@ const REPLAY = (() => {
     return { files: out, outdated };
   }
 
-  // ---------- tiny IndexedDB key-value store (remembers the folder) ----------
+  // ---------- tiny IndexedDB store (folder handle + the mobile replay library) ----------
   function idb() {
     return new Promise((resolve, reject) => {
       if (typeof indexedDB === 'undefined') return reject(new Error('no idb'));
-      const r = indexedDB.open('burger-mania', 1);
-      r.onupgradeneeded = () => r.result.createObjectStore('kv');
+      const r = indexedDB.open('burger-mania', 2);
+      r.onupgradeneeded = () => {
+        // v1 held only `kv` (the remembered folder handle); v2 adds `replays`
+        // so browsers without the File System Access API (iOS Safari) can keep
+        // a library of runs in the browser instead of orphaned downloads
+        const db = r.result;
+        if (!db.objectStoreNames.contains('kv')) db.createObjectStore('kv');
+        if (!db.objectStoreNames.contains('replays')) {
+          db.createObjectStore('replays', { keyPath: 'id' });
+        }
+      };
       r.onsuccess = () => resolve(r.result);
       r.onerror = () => reject(r.error);
     });
@@ -255,10 +264,65 @@ const REPLAY = (() => {
     }));
   }
 
+  // ---------- in-browser replay library (the mobile path) ----------
+  // Without the File System Access API there's no folder to list and a saved
+  // .bmr can't be reopened (iOS greys the unknown extension out of the Files
+  // picker), so on those browsers replays live in IndexedDB and the Replays
+  // screen lists them from here. dbList mirrors listDir's {files, outdated}
+  // shape so the UI treats both alike; each file also carries an `id` for
+  // deletion. The filename doubles as the key, so re-saving an identical run
+  // (e.g. a double-tap on Save) overwrites it rather than piling up duplicates.
+  function dbSave(text, name) {
+    return idb().then(db => new Promise((resolve, reject) => {
+      const tx = db.transaction('replays', 'readwrite');
+      tx.objectStore('replays').put({
+        id: name, name, savedAt: new Date().toISOString(), text,
+      });
+      tx.oncomplete = () => resolve(name);
+      tx.onerror = () => reject(tx.error);
+    }));
+  }
+
+  function dbList() {
+    return idb().then(db => new Promise((resolve, reject) => {
+      const rq = db.transaction('replays', 'readonly').objectStore('replays').getAll();
+      rq.onsuccess = () => {
+        const out = [];
+        let outdated = 0;
+        for (const rec of rq.result || []) {
+          try {
+            out.push({
+              id: rec.id, name: rec.name,
+              mtime: Date.parse(rec.savedAt) || 0,
+              data: parse(rec.text),
+            });
+          } catch (e) {
+            // same rule as listDir: a version mismatch is a known skip, any
+            // other parse failure is a corrupt record and is dropped silently
+            if (e && e.versionMismatch) outdated++;
+          }
+        }
+        out.sort((a, b) => b.mtime - a.mtime);
+        resolve({ files: out, outdated });
+      };
+      rq.onerror = () => reject(rq.error);
+    }));
+  }
+
+  function dbDelete(id) {
+    return idb().then(db => new Promise((resolve, reject) => {
+      const tx = db.transaction('replays', 'readwrite');
+      tx.objectStore('replays').delete(id);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    }));
+  }
+
   return {
     EXT, fsSupported,
     begin, record, hasRun, serialize,
     parse, cursor,
     saveAs, openFile, pickDir, restoreDir, dirPermission, listDir,
+    dbSave, dbList, dbDelete,
   };
 })();

@@ -10,7 +10,12 @@
 <style>
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden;
                overscroll-behavior: none; }
-  canvas { display: block; touch-action: none;
+  /* Pin the canvas to the visual viewport so it always covers the screen
+     edge to edge (with viewport-fit=cover, that includes under the notch and
+     home indicator) — no black gutters in landscape. The UI insets itself
+     from the safe areas in JS so controls stay clear of those cutouts. */
+  canvas { display: block; position: fixed; inset: 0;
+           width: 100%; height: 100%; touch-action: none;
            -webkit-user-select: none; user-select: none;
            -webkit-touch-callout: none;
            -webkit-tap-highlight-color: transparent; }
