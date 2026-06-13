@@ -1,9 +1,11 @@
 // Map editor check: loads the full script stack under a stubbed DOM,
 // walks menu -> Map Editor, then exercises the editing surface with
 // synthetic mouse and key events — placing burgers, dragging vertices and
-// walls, painting and erasing glass edges, drawing an island polygon, wiring
-// it, renaming, undo/redo, theme cycling — and finally serializes the map,
-// round-trips it through the .bmm parser, and takes a test ride.
+// walls, painting glass and clearing it by selecting the edge + Delete,
+// drawing an island polygon, wiring it, Shift+dragging a whole polygon,
+// deleting vertices/polygons, renaming, undo/redo, theme cycling — and
+// finally serializes the map, round-trips it through the .bmm parser, and
+// takes a test ride.
 // Run with: node test/editor_check.js
 const fs = require('fs');
 const path = require('path');
@@ -103,9 +105,9 @@ function key(k, mods) {
       ctrlKey: false, shiftKey: false, metaKey: false }, mods || {}));
   }
 }
-function mouseDown(x, y) {
+function mouseDown(x, y, mods) {
   for (const fn of canvasHandlers.mousedown || []) {
-    fn({ clientX: x, clientY: y, button: 0, preventDefault() {} });
+    fn(Object.assign({ clientX: x, clientY: y, button: 0, preventDefault() {} }, mods || {}));
   }
 }
 function mouseMove(x, y) {
@@ -159,7 +161,7 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   key('y', { ctrlKey: true });
   if (EDITOR.map.burgers.length !== burgers0 + 1) bad('Ctrl+Y should redo the burger');
 
-  // ---- glass: paint an edge, erase it, undo the erase ----
+  // ---- glass: paint an edge, then clear it by selecting + Delete ----
   key('4');
   if (EDITOR.tool !== 'glass') bad('key 4 should pick the glass tool');
   let s = w2s(25, 8), s2;                     // a point on the box floor (edge 2)
@@ -169,13 +171,15 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   } else if (EDITOR.map.glassEdges[0][0] !== 0 || EDITOR.map.glassEdges[0][1] !== 2) {
     bad('glass landed on edge ' + JSON.stringify(EDITOR.map.glassEdges[0]) + ', wanted [0,2] (the floor)');
   }
-  key('5');                                   // erase tool
-  if (EDITOR.tool !== 'erase') bad('key 5 should pick the erase tool');
-  s = w2s(25, 8);
+  key('1');                                   // select tool
+  if (EDITOR.tool !== 'select') bad('key 1 should pick the select tool');
+  s = w2s(25, 8);                             // click the glassed floor edge
   mouseDown(s.x, s.y); mouseUp(s.x, s.y);
-  if (EDITOR.map.glassEdges.length !== 0) bad('erase should clear the glass edge');
-  key('z', { ctrlKey: true });                // undo the erase: the glass returns
-  if (EDITOR.map.glassEdges.length !== 1) bad('undo should restore the erased glass');
+  if (!EDITOR.sel || EDITOR.sel.kind !== 'edge') bad('clicking the floor should select its edge');
+  key('Delete');                              // Del clears glass off a selected edge
+  if (EDITOR.map.glassEdges.length !== 0) bad('Delete on a glassed edge should clear the glass');
+  key('z', { ctrlKey: true });                // undo: the glass returns
+  if (EDITOR.map.glassEdges.length !== 1) bad('undo should restore the deleted glass');
 
   // ---- vertex drag: pull the floor-right corner (the map bounds) ----
   key('1');
@@ -252,6 +256,34 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
     try { EDITOR.parse(junk); bad('parse accepted junk: ' + junk); }
     catch (e) { /* good */ }
   }
+
+  // ---- whole-polygon move: Shift+drag the island translates every vertex ----
+  key('1');
+  const isle0 = EDITOR.map.polygons[1].map(v => v.slice());
+  s = w2s(20, 2); s2 = w2s(23, 4);            // grab a corner, drag by ~(+3,+2)
+  mouseDown(s.x, s.y, { shiftKey: true });
+  if (!EDITOR.sel || EDITOR.sel.kind !== 'poly') bad('Shift+click should select the whole polygon');
+  mouseMove(s2.x, s2.y); mouseUp(s2.x, s2.y);
+  const isle1 = EDITOR.map.polygons[1];
+  if (!isle1.every((v, i) => Math.abs(v[0] - (isle0[i][0] + 3)) < 0.2 &&
+                             Math.abs(v[1] - (isle0[i][1] + 2)) < 0.2)) {
+    bad('Shift+drag should translate every island vertex by ~(+3,+2), got ' + JSON.stringify(isle1));
+  }
+  key('z', { ctrlKey: true });                // undo the move
+  if (JSON.stringify(EDITOR.map.polygons[1]) !== JSON.stringify(isle0)) {
+    bad('undo should restore the moved polygon');
+  }
+
+  // ---- delete: a triangle keeps 3 points; Shift+Del drops the whole polygon ----
+  s = w2s(20, 2);
+  mouseDown(s.x, s.y); mouseUp(s.x, s.y);     // select an island corner vertex
+  if (!EDITOR.sel || EDITOR.sel.kind !== 'vertex') bad('clicking a corner should select a vertex');
+  key('Delete');                              // refused: a triangle can't lose a vertex
+  if (EDITOR.map.polygons[1].length !== 3) bad('Del must keep a triangle at its 3 points');
+  key('Delete', { shiftKey: true });          // Shift+Del removes the whole island
+  if (EDITOR.map.polygons.length !== 1) bad('Shift+Del should remove the whole polygon');
+  key('z', { ctrlKey: true });                // undo brings it back
+  if (EDITOR.map.polygons.length !== 2) bad('undo should restore the deleted polygon');
 
   // ---- test ride: keys go to the bike, not the tools ----
   key('Enter', { ctrlKey: true });

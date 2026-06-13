@@ -26,7 +26,7 @@ const EDITOR = (() => {
   };
   const AUTOSAVE_KEY = 'burger-mania-editor-map';
   const SNAP = 0.1;                  // placement grid (world units)
-  const BRUSH_R = 14;                // glass/erase brush reach (screen px)
+  const BRUSH_R = 14;                // glass brush reach (screen px)
   const ZOOM_MIN = 4, ZOOM_MAX = 140;
   const UNDO_MAX = 200;
   const FONT = '"Consolas","Courier New",monospace';
@@ -39,7 +39,7 @@ const EDITOR = (() => {
   let prepared = null;   // prepareLevel(map), rebuilt after every change
   let cam = { x: 0, y: 0 };
   let zoom = 36;         // screen px per world unit
-  let tool = 'select';   // select | poly | burger | glass | erase
+  let tool = 'select';   // select | poly | burger | glass
   let sel = null;        // {kind: vertex|edge|burger|start|goal, ...}
   let hov = null;        // same shape, under the cursor (select tool only)
   let drag = null;       // active mouse drag: pan | move | paint
@@ -405,10 +405,23 @@ const EDITOR = (() => {
         if (wholePoly) deletePolygon(sel.pi);
         else deleteVertex(sel);
         return;
-      case 'edge':
-        if (wholePoly) deletePolygon(sel.pi);
-        else note('Shift+Del removes the whole polygon (double-click a vertex to remove it)');
+      case 'poly':
+        deletePolygon(sel.pi);
         return;
+      case 'edge': {
+        if (wholePoly) { deletePolygon(sel.pi); return; }
+        // a glassed edge clears its glass; a bare edge can't be deleted alone
+        const gi = map.glassEdges.findIndex(g => g[0] === sel.pi && g[1] === sel.vi);
+        if (gi >= 0) {
+          pushUndo();
+          map.glassEdges.splice(gi, 1);
+          commit(true);
+          note('Glass removed');
+        } else {
+          note('That edge has no glass - Shift+Del removes the whole polygon');
+        }
+        return;
+      }
       case 'burger':
         pushUndo();
         map.burgers.splice(sel.bi, 1);
@@ -421,7 +434,7 @@ const EDITOR = (() => {
   }
 
   function toggleWire() {
-    const pi = sel && (sel.kind === 'vertex' || sel.kind === 'edge') ? sel.pi : null;
+    const pi = sel && (sel.kind === 'vertex' || sel.kind === 'edge' || sel.kind === 'poly') ? sel.pi : null;
     if (pi === null) {
       note('Select a polygon first (click a vertex or edge)');
       return;
@@ -458,6 +471,12 @@ const EDITOR = (() => {
         v[1] = round2(v[1] + dy);
         break;
       }
+      case 'poly':
+        for (const v of map.polygons[p.pi]) {
+          v[0] = round2(v[0] + dx);
+          v[1] = round2(v[1] + dy);
+        }
+        break;
       case 'burger': {
         const b = map.burgers[p.bi];
         b[0] = round2(b[0] + dx);
@@ -541,7 +560,7 @@ const EDITOR = (() => {
   // the nearest polygon edge to (wx, wy) within reach, as {kind, pi, vi, px,
   // py}, or null. Picks in 2D (closest point on the segment, not by x), so a
   // brush hits the one edge under the cursor even where polygons stack at the
-  // same x — what the glass/erase tools paint.
+  // same x — what the glass tool paints and an edge-select picks.
   function pickEdge(wx, wy, reach) {
     let best = null, bestD = reach;
     map.polygons.forEach((poly, pi) => {
@@ -574,25 +593,32 @@ const EDITOR = (() => {
     const w = s2w(x, y);
     if (tool === 'poly') { polyClick(w); return; }
     if (tool === 'burger') { addBurger(w); return; }
-    if (tool === 'glass' || tool === 'erase') {
-      drag = { kind: 'paint', erase: tool === 'erase', moved: false };
+    if (tool === 'glass') {
+      drag = { kind: 'paint', moved: false };
       paintGlassAt(w);
       return;
     }
     // select tool
     const p = pick(w.x, w.y);
-    sel = p;
-    if (!p) {
+    // Shift turns a vertex/edge grab into a whole-polygon select + move, so a
+    // shape translates as one piece instead of a vertex at a time
+    sel = e && e.shiftKey && p && (p.kind === 'vertex' || p.kind === 'edge')
+      ? { kind: 'poly', pi: p.pi } : p;
+    if (!sel) {
       drag = { kind: 'pan', sx: x, sy: y, cx: cam.x, cy: cam.y };
       return;
     }
     drag = { kind: 'move', moved: false };
-    if (p.kind === 'edge') {
+    if (sel.kind === 'edge') {
       // dragging an edge moves both of its endpoints together — this is
       // how a whole wall or floor (the map bounds) slides around
       drag.grab = { x: w.x, y: w.y };
-      const poly = map.polygons[p.pi];
-      drag.orig = [poly[p.vi].slice(), poly[(p.vi + 1) % poly.length].slice()];
+      const poly = map.polygons[sel.pi];
+      drag.orig = [poly[sel.vi].slice(), poly[(sel.vi + 1) % poly.length].slice()];
+    } else if (sel.kind === 'poly') {
+      // every vertex shifts by the same cursor delta from where the grab began
+      drag.grab = { x: w.x, y: w.y };
+      drag.orig = map.polygons[sel.pi].map(v => v.slice());
     }
   }
 
@@ -640,20 +666,27 @@ const EDITOR = (() => {
         poly[(p.vi + 1) % poly.length] = [snap(drag.orig[1][0] + dx), snap(drag.orig[1][1] + dy)];
         break;
       }
+      case 'poly': {
+        const dx = w.x - drag.grab.x, dy = w.y - drag.grab.y;
+        const poly = map.polygons[p.pi];
+        for (let i = 0; i < poly.length; i++) {
+          poly[i] = [snap(drag.orig[i][0] + dx), snap(drag.orig[i][1] + dy)];
+        }
+        break;
+      }
     }
   }
 
-  // glass/erase brush: paint the one edge under the cursor. A whole stroke
-  // (down + drag) coalesces into a single undo step, and re-touching an
-  // already-(un)glassed edge is a no-op, so dragging back and forth is safe.
+  // glass brush: glass the one edge under the cursor. A whole stroke (down +
+  // drag) coalesces into a single undo step, and re-touching an already-glassed
+  // edge is a no-op, so dragging back and forth is safe. To clear glass, select
+  // the edge and press Del (see deleteSel).
   function paintGlassAt(w) {
     const e = pickEdge(w.x, w.y, BRUSH_R / zoom);
     if (!e) return;
-    const idx = map.glassEdges.findIndex(g => g[0] === e.pi && g[1] === e.vi);
-    if (drag.erase ? idx < 0 : idx >= 0) return;   // already in the wanted state
+    if (map.glassEdges.some(g => g[0] === e.pi && g[1] === e.vi)) return;   // already glass
     if (!drag.moved) { pushUndo(); drag.moved = true; }
-    if (drag.erase) map.glassEdges.splice(idx, 1);
-    else map.glassEdges.push([e.pi, e.vi]);
+    map.glassEdges.push([e.pi, e.vi]);
     commit();
   }
 
@@ -661,7 +694,7 @@ const EDITOR = (() => {
     if (x != null) { mx = x; my = y; }
     if (drag && drag.kind === 'paint' && drag.moved) {
       commit(true);
-      note(drag.erase ? 'Glass cleared' : 'Glass painted - the tires barely grip it');
+      note('Glass painted - the tires barely grip it');
     }
     if (drag && drag.kind === 'move' && drag.moved) commit(true);
     drag = null;
@@ -715,7 +748,6 @@ const EDITOR = (() => {
       case '2': case 'p': case 'P': setTool('poly'); return;
       case '3': case 'b': case 'B': setTool('burger'); return;
       case '4': case 'g': case 'G': setTool('glass'); return;
-      case '5': case 'e': case 'E': setTool('erase'); return;
       case 't': case 'T': cycleTheme(); return;
       case 'n': case 'N': startNaming(); return;
       case 'w': case 'W': toggleWire(); return;
@@ -735,7 +767,7 @@ const EDITOR = (() => {
 
   function action(id) {
     switch (id) {
-      case 'select': case 'poly': case 'burger': case 'glass': case 'erase': setTool(id); break;
+      case 'select': case 'poly': case 'burger': case 'glass': setTool(id); break;
       case 'rider': toggleRider(); break;
       case 'theme': cycleTheme(); break;
       case 'name': startNaming(); break;
@@ -960,13 +992,16 @@ const EDITOR = (() => {
     const hr = 4.5 / zoom;
     map.polygons.forEach((poly, pi) => {
       const wire = map.wires.includes(pi);
-      ctx.strokeStyle = wire ? 'rgba(120,220,255,0.9)' : 'rgba(255,255,255,0.45)';
-      ctx.lineWidth = (wire ? 2.5 : 1.5) / zoom;
+      // a whole-polygon selection lights up the entire outline and every handle
+      const polySel = sel && sel.kind === 'poly' && sel.pi === pi;
+      ctx.strokeStyle = polySel ? '#f9c623'
+        : wire ? 'rgba(120,220,255,0.9)' : 'rgba(255,255,255,0.45)';
+      ctx.lineWidth = (polySel ? 3 : wire ? 2.5 : 1.5) / zoom;
       ctx.setLineDash(wire ? [8 / zoom, 5 / zoom] : []);
       strokePoly(ctx, poly);
       ctx.setLineDash([]);
       for (let vi = 0; vi < poly.length; vi++) {
-        const isSel = sel && sel.kind === 'vertex' && sel.pi === pi && sel.vi === vi;
+        const isSel = polySel || (sel && sel.kind === 'vertex' && sel.pi === pi && sel.vi === vi);
         const isHov = hov && hov.kind === 'vertex' && hov.pi === pi && hov.vi === vi;
         const r = isSel || isHov ? hr * 1.5 : hr;
         ctx.fillStyle = isSel ? '#f9c623' : isHov ? '#ffe27a' : 'rgba(255,255,255,0.85)';
@@ -995,8 +1030,8 @@ const EDITOR = (() => {
 
   // a glassy overlay tracing each painted edge, so glass shows exactly where
   // it sits (the real obsidian sheen also renders, but only on up-facing
-  // tops). In the glass/erase tools the edge under the brush lights up — gold
-  // to paint, red to erase — for unambiguous aim where polygons stack.
+  // tops). In the glass tool the edge under the brush lights up gold, for
+  // unambiguous aim where polygons stack.
   function drawGlassEdges(ctx) {
     const stroke = (pi, vi, color, w) => {
       const poly = map.polygons[pi];
@@ -1013,10 +1048,10 @@ const EDITOR = (() => {
     ctx.save();
     ctx.lineCap = 'round';
     for (const [pi, vi] of map.glassEdges) stroke(pi, vi, 'rgba(170,215,235,0.85)', 4);
-    if ((tool === 'glass' || tool === 'erase') && !overToolbar()) {
+    if (tool === 'glass' && !overToolbar()) {
       const w = s2w(mx, my);
       const e = pickEdge(w.x, w.y, BRUSH_R / zoom);
-      if (e) stroke(e.pi, e.vi, tool === 'erase' ? 'rgba(255,120,90,0.95)' : '#f9c623', 6);
+      if (e) stroke(e.pi, e.vi, '#f9c623', 6);
     }
     ctx.restore();
   }
@@ -1126,7 +1161,6 @@ const EDITOR = (() => {
       { id: 'poly', label: '+Poly', on: tool === 'poly' },
       { id: 'burger', label: '+Burger', on: tool === 'burger' },
       { id: 'glass', label: '+Glass', on: tool === 'glass' },
-      { id: 'erase', label: '-Glass', on: tool === 'erase' },
       { id: 'rider', label: (showRider ? '[x]' : '[ ]') + ' Rider', on: showRider },
       { id: 'theme', label: 'Theme:' + map.theme },
       { id: 'name', label: (naming ? nameBuf + caret : map.name) + (dirty ? ' *' : ''), on: naming, min: 150 },
@@ -1179,11 +1213,10 @@ const EDITOR = (() => {
   }
 
   const TOOL_HINTS = {
-    select: 'drag vertices, edges, burgers, START, GOAL - double-click an edge to add a vertex (a vertex to remove it) - Del removes - W wires a polygon',
+    select: 'drag vertices, edges, burgers, START, GOAL - Shift+drag moves a whole polygon - double-click an edge to add a vertex (a vertex to remove it) - Del removes (a glassed edge clears its glass; Shift+Del the whole polygon) - W wires a polygon',
     poly: 'click to lay vertices - click the first one (or Enter) closes the polygon - Esc cancels',
     burger: 'click to drop a triple cheeseburger',
-    glass: 'click or drag along an edge to glass it (obsidian the tires barely grip) - paints the one edge nearest the cursor',
-    erase: 'click or drag over a glassed edge to clear it',
+    glass: 'click or drag along an edge to glass it (obsidian the tires barely grip) - paints the one edge nearest the cursor - clear it by selecting the edge and pressing Del',
   };
 
   function drawStatus(ctx, W, H) {
@@ -1215,12 +1248,12 @@ const EDITOR = (() => {
 
   const HELP = [
     ['1 / V', 'Select: drag vertices, edges (walls move whole), burgers, START, GOAL'],
+    ['Shift+drag', 'move a whole polygon at once (Shift+click a vertex/edge selects it)'],
     ['2 / P', 'Polygon: click out a new shape, close on the first point - inside the play area it is a solid island'],
     ['3 / B', 'Burger: click to drop burgers'],
-    ['4 / G', 'Glass: paint obsidian onto edges (near-zero tire grip) - click or drag the nearest edge'],
-    ['5 / E', 'Erase: clear glass off edges - click or drag over them'],
+    ['4 / G', 'Glass: paint obsidian onto edges (near-zero tire grip) - click or drag the nearest edge; clear it by selecting the edge and pressing Del'],
     ['double-click', 'on an edge adds a vertex; on a vertex removes it'],
-    ['Del', 'remove the selection (Shift+Del: its whole polygon)'],
+    ['Del', 'remove the selection - a glassed edge clears its glass (Shift+Del: its whole polygon)'],
     ['W', 'toggle the selected polygon solid <-> wire (only wheels collide)'],
     ['R', 'toggle the rider preview: wheel (blue) + head (red) colliders parked under the cursor'],
     ['arrows', 'nudge the selection (Shift: whole units) - pan when nothing is selected'],
@@ -1278,6 +1311,7 @@ const EDITOR = (() => {
     // exposed for the headless tests
     get map() { return map; },
     get tool() { return tool; },
+    get sel() { return sel; },
     worldToScreen: w2s,
     EXT,
   };

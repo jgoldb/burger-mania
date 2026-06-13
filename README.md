@@ -107,14 +107,17 @@ control reference; the short version:
 
 - **Select** (1): drag terrain vertices, whole edges (that's how the map
   bounds move), burgers, the START bike, and the GOAL bucket.
-  Double-click an edge to add a vertex, a vertex to remove it,
-  `Del` removes the selection (`Shift+Del`: its whole polygon), `W` flips
-  the selected polygon between solid and wire (wheels-only) terrain.
+  `Shift+drag` a vertex or edge moves the whole polygon at once.
+  Double-click an edge to add a vertex, a vertex to remove it.
+  `Del` removes the selection — a glassed edge clears its glass
+  (`Shift+Del`: its whole polygon). `W` flips the selected polygon
+  between solid and wire (wheels-only) terrain.
 - **+Poly** (2): click out a new polygon and close it on its first point.
   A polygon inside the playable area is a solid island.
 - **+Burger** (3) drops burgers; **+Glass** (4) paints obsidian onto
-  edges and **-Glass** (5) clears it — click or drag and the one edge
-  nearest the cursor takes the brush, so stacked polygons stay distinct.
+  edges — click or drag and the one edge nearest the cursor takes the
+  brush, so stacked polygons stay distinct. To clear glass, select that
+  edge and press `Del`.
 - **T** cycles the theme (the soundtrack follows along), **N** renames
   the map, `Ctrl+Z`/`Ctrl+Y` undo and redo, the wheel zooms, **0** fits
   the whole map.
