@@ -59,11 +59,7 @@ for (let i = 0; i < 480 * 60; i++) {
   // a live front wheel separates wall-riding (both wheels pressed into
   // the track) from a wheelie (front floats) that also tilts the bike
   if (b.wheels[1 - b.rearIndex].onGround) frontT = 0; else frontT += dt;
-  // a near-upright bike with a wheel braced on a wire is a wheelie using
-  // the wire as a handhold, not wall-riding: rail must not power it over
-  const wireBrace = Math.abs(wa) < 1.6 &&
-    (b.wheels[0].onWire || b.wheels[1].onWire);
-  const rail = airT < 0.3 && frontT < 0.35 && !wireBrace &&
+  const rail = airT < 0.3 && frontT < 0.35 &&
     (Math.abs(wa) > 0.45 || Math.abs(wa + 0.35 * m * b.avel) > 0.6);
   // flip only on a decisive reversal, so a burger passing underfoot
   // doesn't flap the heading (and never mid-wall: a player committed to
@@ -74,9 +70,9 @@ for (let i = 0; i < 480 * 60; i++) {
     m = -m;
     prog = b.pos.x * m; stuckT = 0; crawl = false;
   }
-  // hanging upside down from a wire reverses the drive direction, so the
-  // turn-around is judged on EFFECTIVE drive, not facing — and only on
-  // the ground (mid-air or mid-loop attitude is transient)
+  // riding inverted (a gravity-flipped ceiling, or mid-loop) reverses the
+  // drive direction, so the turn-around is judged on EFFECTIVE drive, not
+  // facing — and only on the ground (mid-air/mid-loop attitude is transient)
   const wa0 = wrapA(b.angle);
   const inv = Math.abs(wa0) > 2.2;
   const drive = b.facing * (inv ? -1 : 1);
@@ -101,34 +97,23 @@ for (let i = 0; i < 480 * 60; i++) {
   // brakes into a drop, so the arc falls onto the burger instead of
   // sailing past it
   const brakeNow = !rail && dipAhead && grounded && sp > 2.5;
-  // a wire waiting below means the rider is mid-commit to a wire catch:
-  // hold the tumble and let the wire shepherd the flip, no panic volts
-  const wireBelow = !grounded && level.segments.some(s => s.wire &&
-    Math.min(s.ax, s.bx) < b.pos.x + 2 && Math.max(s.ax, s.bx) > b.pos.x - 2 &&
-    (s.ay + s.by) / 2 > b.pos.y + 0.5);
-  // and a wire drop just ahead means the roll-off must be clean: coast
-  // the last stretch level instead of creeping off mid-gas-wheelie (the
-  // nose-over pivot needs a level start to rotate far enough to hang)
-  const wireDropAhead = grounded && level.segments.some(s => s.wire &&
-    Math.min(s.ax, s.bx) < b.pos.x + 4.5 && Math.max(s.ax, s.bx) > b.pos.x &&
-    (s.ay + s.by) / 2 > b.pos.y + 1.2);
   // in the air only volt nose-down for severe pitch: rear-first landings
   // are safe, and a strong volt at mild pitch over-rotates into a
   // momentum-killing nose-dive. Never stack a nose-down volt on the
   // brake: the brake's own stoppie torque is already pitching forward,
   // and the pair goes over the bars (burning the volt that would have
   // caught the tumble)
-  const noseDown = pred < (grounded ? -0.6 : -1.45) && !brakeNow && !wireBelow;
+  const noseDown = pred < (grounded ? -0.6 : -1.45) && !brakeNow;
   // be reluctant to volt the nose up: suspension absorbs nose-down
   // landings, while an over-rotated nose-up landing is head-first
-  const noseUp = pred > 1.15 && !wireBelow;
+  const noseUp = pred > 1.15;
   const input = rail ? { throttle: true } : {
     // the low-speed override never gasses past a deep wheelie: with volts
     // a second apart, engine reaction past the balance point is fatal.
     // The cruise cap reflects that a player doesn't hold flat-out into
     // terrain they can't see landing on
     throttle: (pred > -0.45 || (sp < 3.5 && grounded && pred > -0.85)) &&
-      (!dipAhead || sp < 2.5) && settle <= 0 && !wireDropAhead &&
+      (!dipAhead || sp < 2.5) && settle <= 0 &&
       sp < (crawl ? 2.5 : 9),
     // a nose-down volt torques toward travel, mirrored with direction
     right: m === 1 ? noseDown : noseUp,

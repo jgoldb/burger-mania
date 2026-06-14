@@ -6,9 +6,8 @@
 // nested polygons are solid islands), start, burgers, goal, theme, plus the
 // optional object/terrain fields: `nuts` [x,y] lethal mounds, `flipBurgers`
 // [x,y] gravity-reversing burgers (identical to the rider, marked only in the
-// editor), `glassEdges` [poly, edge] pairs (obsidian the tires barely grip,
-// painted on per-edge), and `wires` polygon indices (wheels-only terrain).
-// Maps save to
+// editor), and `glassEdges` [poly, edge] pairs (obsidian the tires barely
+// grip, painted on per-edge). Maps save to
 // .bmm files: JSON whose body IS a LEVELS entry plus a format header, so
 // a finished map can be pasted straight into a track.
 //
@@ -27,7 +26,8 @@ const EDITOR = (() => {
     accept: EXT + ',application/json',
   };
   const AUTOSAVE_KEY = 'burger-mania-editor-map';
-  const SNAP = 0.1;                  // placement grid (world units)
+  let SNAP = 0.1;                    // placement grid (world units); [ and ] cycle it
+  const SNAP_STEPS = [1, 0.5, 0.25, 0.1];  // coarse -> fine
   const BRUSH_R = 14;                // glass brush reach (screen px)
   const ZOOM_MIN = 4, ZOOM_MAX = 140;
   const UNDO_MAX = 200;
@@ -53,8 +53,11 @@ const EDITOR = (() => {
   let dirty = false;     // edited since the last save/load
   let busy = false;      // a file dialog is open
   let helpOpen = false;
+  let confirmPrompt = null; // { verb, run } while a discard-changes dialog is up
+  let confirmRects = [];    // confirm-dialog button hitboxes, rebuilt every draw
   let showRider = false; // overlay the rider's wheel + head colliders, parked
                          // on the surface under the cursor (a clearance gauge)
+  let showGrid = false;  // draw the alignment grid; off (default) hides it entirely
   let mx = 0, my = 0;    // last pointer position (screen px)
   let scrW = 800, scrH = 600;
   let uiRects = [];      // toolbar hitboxes, rebuilt every draw
@@ -75,12 +78,17 @@ const EDITOR = (() => {
       nuts: [],
       flipBurgers: [],
       glassEdges: [],
-      wires: [],
     };
   }
 
   const round2 = v => Math.round(v * 100) / 100;
-  const snap = v => Math.round(v * 10) / 10;
+  // round to the live grid, then trim binary float noise (0.1-style grids
+  // aren't exact in floating point, so 0.3 would land as 0.30000000000000004)
+  const snap = v => Math.round(Math.round(v / SNAP) * SNAP * 1e6) / 1e6;
+  // snap to the nearest drawn grid line for alignment: half-unit when the
+  // grid is shown (it draws half-unit subdivisions), whole units when hidden.
+  // 0.5 and 1 are exact in floating point, so no noise to trim.
+  const gridSnap = v => { const g = showGrid ? 0.5 : 1; return Math.round(v / g) * g; };
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
   function exportLevel() {
@@ -95,7 +103,6 @@ const EDITOR = (() => {
     if (map.nuts.length) L.nuts = map.nuts.map(n => [round2(n[0]), round2(n[1])]);
     if (map.flipBurgers.length) L.flipBurgers = map.flipBurgers.map(b => [round2(b[0]), round2(b[1])]);
     if (map.glassEdges.length) L.glassEdges = map.glassEdges.map(e => [e[0], e[1]]);
-    if (map.wires.length) L.wires = map.wires.slice();
     return L;
   }
 
@@ -135,10 +142,6 @@ const EDITOR = (() => {
     if (d.flipBurgers != null && (!Array.isArray(d.flipBurgers) || !d.flipBurgers.every(isPt))) {
       throw new Error('map upside-down burgers are damaged');
     }
-    const wires = Array.isArray(d.wires) ? d.wires : [];
-    if (!wires.every(i => Number.isInteger(i) && i >= 0 && i < d.polygons.length)) {
-      throw new Error('map wire indices are damaged');
-    }
     const polygons = d.polygons.map(p => p.map(v => [Number(v[0]), Number(v[1])]));
     return {
       name: typeof d.name === 'string' && d.name ? d.name : 'Mystery Map',
@@ -149,15 +152,14 @@ const EDITOR = (() => {
       goal: [Number(d.goal[0]), Number(d.goal[1])],
       nuts: Array.isArray(d.nuts) ? d.nuts.map(n => [Number(n[0]), Number(n[1])]) : [],
       flipBurgers: Array.isArray(d.flipBurgers) ? d.flipBurgers.map(b => [Number(b[0]), Number(b[1])]) : [],
-      glassEdges: parseGlass(d, polygons, wires),
-      wires: wires.slice(),
+      glassEdges: parseGlass(d, polygons),
     };
   }
 
   // glass is per-edge ([poly, edge] pairs). A version-1 map instead carries
   // x-spans in d.glass; convert them with the same midpoint rule prepareLevel
   // uses, so an old map loads to the exact edges it always rendered as glass.
-  function parseGlass(d, polygons, wires) {
+  function parseGlass(d, polygons) {
     if (Array.isArray(d.glassEdges)) {
       const ok = d.glassEdges.every(e =>
         Array.isArray(e) && e.length === 2 &&
@@ -168,18 +170,16 @@ const EDITOR = (() => {
     }
     const spans = Array.isArray(d.glass) ? d.glass : [];
     if (!spans.every(isPt)) throw new Error('map glass spans are damaged');
-    return spansToEdges(polygons, wires,
+    return spansToEdges(polygons,
       spans.map(g => [Math.min(g[0], g[1]), Math.max(g[0], g[1])]));
   }
 
   // the midpoint rule prepareLevel classifies glass with — kept in step here
   // so legacy x-spans migrate to exactly the edges they used to flag
-  function spansToEdges(polygons, wires, spans) {
+  function spansToEdges(polygons, spans) {
     if (!spans.length) return [];
-    const wire = new Set(wires);
     const out = [];
     polygons.forEach((poly, pi) => {
-      if (wire.has(pi)) return;
       for (let i = 0; i < poly.length; i++) {
         const a = poly[i], b = poly[(i + 1) % poly.length];
         const mx = (a[0] + b[0]) / 2;
@@ -205,6 +205,13 @@ const EDITOR = (() => {
   function pushUndo() {
     undoStack.push(JSON.stringify(map));
     if (undoStack.length > UNDO_MAX) undoStack.shift();
+    redoStack.length = 0;
+  }
+
+  // swapping in a whole new map (New / Load) is a clean break, not an edit:
+  // wipe the history so Undo can't drag the discarded map back
+  function resetHistory() {
+    undoStack.length = 0;
     redoStack.length = 0;
   }
 
@@ -345,6 +352,20 @@ const EDITOR = (() => {
       : 'Rider preview off');
   }
 
+  function toggleGrid() {
+    showGrid = !showGrid;
+    note(showGrid ? 'Grid on' : 'Grid off');
+  }
+
+  // step the placement grid coarser (dir -1) or finer (dir +1) through
+  // SNAP_STEPS, clamped at the ends. Affects future placements/drags/nudges
+  // only, not existing geometry, so it changes no map data (no undo)
+  function cycleSnap(dir) {
+    const i = Math.max(0, SNAP_STEPS.indexOf(SNAP));
+    SNAP = SNAP_STEPS[Math.min(SNAP_STEPS.length - 1, Math.max(0, i + dir))];
+    note('Grid snap: ' + SNAP + (SNAP === 1 ? ' unit' : ' units'));
+  }
+
   function startNaming() {
     naming = true;
     nameBuf = map.name;
@@ -422,8 +443,7 @@ const EDITOR = (() => {
     }
     pushUndo();
     map.polygons.splice(pi, 1);
-    // wire and glass indices shift down past the removed polygon
-    map.wires = map.wires.filter(i => i !== pi).map(i => (i > pi ? i - 1 : i));
+    // glass indices shift down past the removed polygon
     remapGlassPolyDelete(pi);
     sel = null; hov = null;
     commit(true);
@@ -475,20 +495,6 @@ const EDITOR = (() => {
       default:
         note('The start and goal can be moved, not removed');
     }
-  }
-
-  function toggleWire() {
-    const pi = sel && (sel.kind === 'vertex' || sel.kind === 'edge' || sel.kind === 'poly') ? sel.pi : null;
-    if (pi === null) {
-      note('Select a polygon first (click a vertex or edge)');
-      return;
-    }
-    pushUndo();
-    const at = map.wires.indexOf(pi);
-    if (at >= 0) map.wires.splice(at, 1);
-    else map.wires.push(pi);
-    commit(true);
-    note('Polygon ' + pi + (at >= 0 ? ' is solid again' : ' is now a wire (wheels-only)'));
   }
 
   // arrows move the selection on the grid; held presses coalesce into a
@@ -550,13 +556,35 @@ const EDITOR = (() => {
     }
   }
 
+  // New and Load throw away the working map, so when there are unsaved edits
+  // they raise a discard-changes dialog first; a clean map runs straight through
+  function confirmIfDirty(verb, fn) {
+    if (dirty) confirmPrompt = { verb, run: fn };
+    else fn();
+  }
+
+  function runConfirm() {
+    const p = confirmPrompt;
+    confirmPrompt = null;
+    if (p) p.run();
+  }
+
+  function cancelConfirm() {
+    if (!confirmPrompt) return;
+    confirmPrompt = null;
+    note('Kept the current map');
+  }
+
   function newMap() {
-    pushUndo();
     map = template();
     sel = null; hov = null; draft = null;
+    resetHistory();
     commit(true);
+    // a pristine template has no edits to lose, so it isn't "unsaved" — clear
+    // the flag commit() set (matching loadFile) so New again won't re-prompt
+    dirty = false;
     fitView();
-    note('Fresh map - Ctrl+Z brings the old one back');
+    note('Fresh map');
   }
 
   async function saveFile() {
@@ -579,9 +607,9 @@ const EDITOR = (() => {
     busy = true;
     try {
       const loaded = parse(await REPLAY.openFile(PICKER));
-      pushUndo();
       map = loaded;
       sel = null; hov = null; draft = null;
+      resetHistory();
       commit(true);
       dirty = false;
       fitView();
@@ -646,6 +674,17 @@ const EDITOR = (() => {
 
   function mouseDown(x, y, e) {
     mx = x; my = y;
+    // modal discard-changes dialog: only its buttons respond, the rest is inert
+    if (confirmPrompt) {
+      for (const b of confirmRects) {
+        if (hitRect(b, x, y)) {
+          hooks.blip();
+          if (b.id === 'yes') runConfirm(); else cancelConfirm();
+          return;
+        }
+      }
+      return;
+    }
     if (helpOpen) { helpOpen = false; return; }
     for (const b of uiRects) {
       if (hitRect(b, x, y)) {
@@ -688,7 +727,7 @@ const EDITOR = (() => {
     }
   }
 
-  function mouseMove(x, y) {
+  function mouseMove(x, y, shift) {
     mx = x; my = y;
     const w = s2w(x, y);
     if (drag) {
@@ -703,7 +742,7 @@ const EDITOR = (() => {
       }
       if (drag.kind === 'move' && sel) {
         if (!drag.moved) { pushUndo(); drag.moved = true; }
-        applyMove(sel, w);
+        applyMove(sel, w, shift);
         commit();
       }
       return;
@@ -711,10 +750,15 @@ const EDITOR = (() => {
     hov = tool === 'select' ? pick(w.x, w.y) : null;
   }
 
-  function applyMove(p, w) {
+  // `grid` (Shift held mid-drag) snaps a lone vertex to the nearest grid
+  // line instead of the fine placement grid, for quick alignment. It only
+  // affects single-vertex drags — a Shift+grab is already a whole-polygon move
+  function applyMove(p, w, grid) {
     switch (p.kind) {
       case 'vertex':
-        map.polygons[p.pi][p.vi] = [snap(w.x), snap(w.y)];
+        map.polygons[p.pi][p.vi] = grid
+          ? [gridSnap(w.x), gridSnap(w.y)]
+          : [snap(w.x), snap(w.y)];
         break;
       case 'burger':
         map.burgers[p.bi] = [snap(w.x), snap(w.y)];
@@ -793,6 +837,12 @@ const EDITOR = (() => {
 
   function key(e) {
     const k = e.key;
+    // the discard-changes dialog is modal: it swallows every key until answered
+    if (confirmPrompt) {
+      if (k === 'Enter' || k === 'y' || k === 'Y') runConfirm();
+      else if (k === 'Escape' || k === 'n' || k === 'N') cancelConfirm();
+      return;
+    }
     if (naming) {
       if (k === 'Enter') finishNaming(true);
       else if (k === 'Escape') finishNaming(false);
@@ -805,7 +855,7 @@ const EDITOR = (() => {
       if (lk === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); }
       else if (lk === 'y') { e.preventDefault(); redo(); }
       else if (lk === 's') { e.preventDefault(); saveFile(); }
-      else if (lk === 'o') { e.preventDefault(); loadFile(); }
+      else if (lk === 'o') { e.preventDefault(); confirmIfDirty('load another map', loadFile); }
       else if (k === 'Enter') hooks.test();
       return;
     }
@@ -824,14 +874,16 @@ const EDITOR = (() => {
       case '6': case 'f': case 'F': setTool('flip'); return;
       case 't': case 'T': cycleTheme(); return;
       case 'n': case 'N': startNaming(); return;
-      case 'w': case 'W': toggleWire(); return;
       case 'r': case 'R': toggleRider(); return;
+      case '#': toggleGrid(); return;
       case 'h': case 'H': case '?': helpOpen = !helpOpen; return;
       case 'Enter': if (tool === 'poly' && draft) closeDraft(); return;
       case 'Delete': case 'Backspace': deleteSel(e.shiftKey); return;
       case '+': case '=': zoomAt(scrW / 2, scrH / 2, 1.3); return;
       case '-': case '_': zoomAt(scrW / 2, scrH / 2, 1 / 1.3); return;
       case '0': fitView(); return;
+      case '[': case '{': cycleSnap(-1); return;
+      case ']': case '}': cycleSnap(1); return;
       case 'ArrowLeft': nudge(-1, 0, e.shiftKey); return;
       case 'ArrowRight': nudge(1, 0, e.shiftKey); return;
       case 'ArrowUp': nudge(0, -1, e.shiftKey); return;
@@ -843,6 +895,7 @@ const EDITOR = (() => {
     switch (id) {
       case 'select': case 'poly': case 'burger': case 'glass': case 'nut': case 'flip': setTool(id); break;
       case 'rider': toggleRider(); break;
+      case 'grid': toggleGrid(); break;
       case 'theme': cycleTheme(); break;
       case 'name': startNaming(); break;
       case 'undo': undo(); break;
@@ -851,8 +904,8 @@ const EDITOR = (() => {
       case 'zoomIn': zoomAt(scrW / 2, scrH / 2, 1.3); break;
       case 'fit': fitView(); break;
       case 'help': helpOpen = !helpOpen; break;
-      case 'new': newMap(); break;
-      case 'load': loadFile(); break;
+      case 'new': confirmIfDirty('start a new map', newMap); break;
+      case 'load': confirmIfDirty('load another map', loadFile); break;
       case 'save': saveFile(); break;
       case 'test': hooks.test(); break;
       case 'exit': hooks.exit(); break;
@@ -860,6 +913,10 @@ const EDITOR = (() => {
   }
 
   function cursor() {
+    if (confirmPrompt) {
+      for (const b of confirmRects) if (hitRect(b, mx, my)) return 'pointer';
+      return 'default';
+    }
     if (drag && drag.kind === 'pan') return 'grabbing';
     for (const b of uiRects) if (hitRect(b, mx, my)) return 'pointer';
     if (tool !== 'select') return 'crosshair';
@@ -884,7 +941,7 @@ const EDITOR = (() => {
       note(fresh ? 'Welcome! H shows the controls' : 'Picked up where you left off - H shows the controls');
     }
     sel = null; hov = null; drag = null; draft = null;
-    naming = false;
+    naming = false; confirmPrompt = null;
   }
 
   // ---------- drawing ----------
@@ -925,38 +982,45 @@ const EDITOR = (() => {
     drawToolbar(ctx, W, H, rt);
     drawStatus(ctx, W, H);
     if (helpOpen) drawHelp(ctx, W, H);
+    if (confirmPrompt) drawConfirm(ctx, W, H);
   }
 
-  function drawGrid(ctx, view) {
-    ctx.save();
-    ctx.lineWidth = 1 / zoom;
-    // minor lines fade out when they would be closer than ~14 px apart
-    if (zoom >= 14) {
-      ctx.strokeStyle = 'rgba(255,255,255,0.06)';
-      ctx.beginPath();
-      for (let x = Math.ceil(view.x0); x <= view.x1; x++) {
-        if (x % 5 === 0) continue;
-        ctx.moveTo(x, view.y0);
-        ctx.lineTo(x, view.y1);
-      }
-      for (let y = Math.ceil(view.y0); y <= view.y1; y++) {
-        if (y % 5 === 0) continue;
-        ctx.moveTo(view.x0, y);
-        ctx.lineTo(view.x1, y);
-      }
-      ctx.stroke();
-    }
-    ctx.strokeStyle = 'rgba(255,255,255,0.14)';
+  // strokes every line in [from, to] at `step` spacing, skipping any that
+  // land on a coarser tier (drawn brighter on its own pass)
+  function gridLines(ctx, view, step, skip) {
     ctx.beginPath();
-    for (let x = Math.ceil(view.x0 / 5) * 5; x <= view.x1; x += 5) {
+    for (let x = Math.ceil(view.x0 / step) * step; x <= view.x1; x += step) {
+      if (skip && Math.abs(x / skip - Math.round(x / skip)) < 1e-6) continue;
       ctx.moveTo(x, view.y0);
       ctx.lineTo(x, view.y1);
     }
-    for (let y = Math.ceil(view.y0 / 5) * 5; y <= view.y1; y += 5) {
+    for (let y = Math.ceil(view.y0 / step) * step; y <= view.y1; y += step) {
+      if (skip && Math.abs(y / skip - Math.round(y / skip)) < 1e-6) continue;
       ctx.moveTo(view.x0, y);
       ctx.lineTo(view.x1, y);
     }
     ctx.stroke();
+  }
+
+  function drawGrid(ctx, view) {
+    if (!showGrid) return;            // grid off: no lines at all
+    ctx.save();
+    ctx.lineWidth = 1 / zoom;
+    // three tiers, each fading in as it gets far enough apart to read: the
+    // finest first hides when zoomed out, leaving just the bold 5-unit majors
+    // half-unit subdivisions — the faintest tier, deep zoom only
+    if (zoom >= 26) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+      gridLines(ctx, view, 0.5, 1);   // skip whole units (drawn brighter below)
+    }
+    // 1-unit minor lines
+    if (zoom >= 9) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.24)';
+      gridLines(ctx, view, 1, 5);     // skip the 5-unit majors
+    }
+    // 5-unit major lines, always on
+    ctx.strokeStyle = 'rgba(255,255,255,0.44)';
+    gridLines(ctx, view, 5, 0);
     ctx.restore();
   }
 
@@ -1104,15 +1168,11 @@ const EDITOR = (() => {
   function drawPolyOverlay(ctx) {
     const hr = 4.5 / zoom;
     map.polygons.forEach((poly, pi) => {
-      const wire = map.wires.includes(pi);
       // a whole-polygon selection lights up the entire outline and every handle
       const polySel = sel && sel.kind === 'poly' && sel.pi === pi;
-      ctx.strokeStyle = polySel ? '#f9c623'
-        : wire ? 'rgba(120,220,255,0.9)' : 'rgba(255,255,255,0.45)';
-      ctx.lineWidth = (polySel ? 3 : wire ? 2.5 : 1.5) / zoom;
-      ctx.setLineDash(wire ? [8 / zoom, 5 / zoom] : []);
+      ctx.strokeStyle = polySel ? '#f9c623' : 'rgba(255,255,255,0.45)';
+      ctx.lineWidth = (polySel ? 3 : 1.5) / zoom;
       strokePoly(ctx, poly);
-      ctx.setLineDash([]);
       for (let vi = 0; vi < poly.length; vi++) {
         const isSel = polySel || (sel && sel.kind === 'vertex' && sel.pi === pi && sel.vi === vi);
         const isHov = hov && hov.kind === 'vertex' && hov.pi === pi && hov.vi === vi;
@@ -1272,10 +1332,6 @@ const EDITOR = (() => {
     };
     tag(map.start.x, map.start.y - 1.4, 'START', '#9be08a');
     tag(map.goal[0], map.goal[1] - 1.3, 'GOAL', '#ff8a5c');
-    map.wires.forEach(pi => {
-      const v = map.polygons[pi] && map.polygons[pi][0];
-      if (v) tag(v[0], v[1] - 14 / zoom, 'wire', 'rgba(120,220,255,0.95)');
-    });
     ctx.restore();
   }
 
@@ -1294,6 +1350,7 @@ const EDITOR = (() => {
       { id: 'nut', label: '+Nut', on: tool === 'nut' },
       { id: 'flip', label: '+Flip', on: tool === 'flip' },
       { id: 'rider', label: (showRider ? '[x]' : '[ ]') + ' Rider', on: showRider },
+      { id: 'grid', label: (showGrid ? '[x]' : '[ ]') + ' Grid', on: showGrid },
       { id: 'theme', label: 'Theme:' + map.theme },
       { id: 'name', label: (naming ? nameBuf + caret : map.name) + (dirty ? ' *' : ''), on: naming, min: 150 },
       { id: 'undo', label: 'Undo', disabled: !undoStack.length },
@@ -1345,7 +1402,7 @@ const EDITOR = (() => {
   }
 
   const TOOL_HINTS = {
-    select: 'drag vertices, edges, burgers, START, GOAL - Shift+drag moves a whole polygon - double-click an edge to add a vertex (a vertex to remove it) - Del removes (a glassed edge clears its glass; Shift+Del the whole polygon) - W wires a polygon',
+    select: 'drag vertices, edges, burgers, START, GOAL - Shift+drag moves a whole polygon (or Shift while dragging a lone vertex snaps it to the grid) - double-click an edge to add a vertex (a vertex to remove it) - Del removes (a glassed edge clears its glass; Shift+Del the whole polygon)',
     poly: 'click to lay vertices - click the first one (or Enter) closes the polygon - Esc cancels',
     burger: 'click to drop a triple cheeseburger',
     glass: 'click or drag along an edge to glass it (obsidian the tires barely grip) - paints the one edge nearest the cursor - clear it by selecting the edge and pressing Del',
@@ -1384,7 +1441,7 @@ const EDITOR = (() => {
 
   const HELP = [
     ['1 / V', 'Select: drag vertices, edges (walls move whole), burgers, START, GOAL'],
-    ['Shift+drag', 'move a whole polygon at once (Shift+click a vertex/edge selects it)'],
+    ['Shift+drag', 'move a whole polygon (Shift+grab a vertex/edge); or hold Shift while dragging a lone vertex to snap it to the grid'],
     ['2 / P', 'Polygon: click out a new shape, close on the first point - inside the play area it is a solid island'],
     ['3 / B', 'Burger: click to drop burgers'],
     ['4 / G', 'Glass: paint obsidian onto edges (near-zero tire grip) - click or drag the nearest edge; clear it by selecting the edge and pressing Del'],
@@ -1392,9 +1449,10 @@ const EDITOR = (() => {
     ['6 / F', 'Flip: click to drop an upside-down burger - collecting it reverses gravity; identical to a normal burger in play, badged only in the editor'],
     ['double-click', 'on an edge adds a vertex; on a vertex removes it'],
     ['Del', 'remove the selection - a glassed edge clears its glass (Shift+Del: its whole polygon)'],
-    ['W', 'toggle the selected polygon solid <-> wire (only wheels collide)'],
     ['R', 'toggle the rider preview: wheel (blue) + head (red) colliders parked under the cursor'],
+    ['#', 'show or hide the alignment grid (or the Grid button)'],
     ['arrows', 'nudge the selection (Shift: whole units) - pan when nothing is selected'],
+    ['[  /  ]', 'coarsen / refine the placement grid (the snap step shown bottom-right)'],
     ['T  /  N', 'cycle the theme / rename the map'],
     ['wheel  + - 0', 'zoom (0 fits the whole map)'],
     ['Ctrl+Z / Ctrl+Y', 'undo / redo'],
@@ -1408,7 +1466,7 @@ const EDITOR = (() => {
     ctx.fillStyle = 'rgba(8,5,2,0.6)';
     ctx.fillRect(0, 0, W, H);
     const pw = Math.min(W * 0.9, 760);
-    const ph = HELP.length * 24 + 86;
+    const ph = HELP.length * 24 + 64;
     const px = (W - pw) / 2, py = Math.max(50, (H - ph) / 2);
     ctx.fillStyle = 'rgba(20,12,6,0.92)';
     roundRectPath(ctx, px, py, pw, ph, 14);
@@ -1431,10 +1489,50 @@ const EDITOR = (() => {
       ctx.fillStyle = '#f0e8da';
       ctx.fillText(what, px + 166, yy, pw - 186);
     });
+    ctx.restore();
+  }
+
+  function drawConfirm(ctx, W, H) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(8,5,2,0.72)';
+    ctx.fillRect(0, 0, W, H);
+    const pw = Math.min(W * 0.9, 440), ph = 172;
+    const px = (W - pw) / 2, py = Math.max(50, (H - ph) / 2);
+    ctx.fillStyle = 'rgba(20,12,6,0.96)';
+    roundRectPath(ctx, px, py, pw, ph, 14);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(249,198,35,0.5)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.textBaseline = 'middle';
     ctx.textAlign = 'center';
-    ctx.fillStyle = '#9be08a';
-    ctx.font = 'bold 13px ' + FONT;
-    ctx.fillText('Saved ' + EXT + ' files are LEVELS entries - see the README to put them in a track', W / 2, py + ph - 18);
+    ctx.fillStyle = '#f9c623';
+    ctx.font = 'bold 18px ' + FONT;
+    ctx.fillText('Unsaved changes', W / 2, py + 36);
+    ctx.fillStyle = '#f0e8da';
+    ctx.font = '14px ' + FONT;
+    ctx.fillText('Discard them and ' + confirmPrompt.verb + '?', W / 2, py + 68, pw - 44);
+    // Discard (destructive) on the left, Cancel on the right
+    const bw = Math.min(150, (pw - 48) / 2), bh = 40, bgap = 16;
+    const by = py + ph - bh - 22;
+    confirmRects = [
+      { id: 'yes', label: 'Discard', x: W / 2 - bw - bgap / 2, y: by, w: bw, h: bh, danger: true },
+      { id: 'no', label: 'Cancel', x: W / 2 + bgap / 2, y: by, w: bw, h: bh },
+    ];
+    ctx.font = 'bold 14px ' + FONT;
+    for (const r of confirmRects) {
+      const hot = hitRect(r, mx, my);
+      ctx.fillStyle = r.danger
+        ? (hot ? 'rgba(150,40,24,0.96)' : 'rgba(96,28,16,0.9)')
+        : (hot ? 'rgba(70,34,10,0.92)' : 'rgba(20,12,6,0.82)');
+      roundRectPath(ctx, r.x, r.y, r.w, r.h, 8);
+      ctx.fill();
+      ctx.lineWidth = hot ? 2.5 : 1.5;
+      ctx.strokeStyle = hot ? '#f9c623' : 'rgba(249,198,35,0.4)';
+      ctx.stroke();
+      ctx.fillStyle = hot ? '#ffe27a' : '#f0e8da';
+      ctx.fillText(r.label, r.x + r.w / 2, r.y + r.h / 2 + 1);
+    }
     ctx.restore();
   }
 
@@ -1450,6 +1548,8 @@ const EDITOR = (() => {
     get map() { return map; },
     get tool() { return tool; },
     get sel() { return sel; },
+    get confirmOpen() { return !!confirmPrompt; },
+    action,
     worldToScreen: w2s,
     EXT,
   };

@@ -1291,7 +1291,7 @@
     mouse.x = e.clientX;
     mouse.y = e.clientY;
     if (state === 'editor') {
-      EDITOR.mouseMove(e.clientX, e.clientY);
+      EDITOR.mouseMove(e.clientX, e.clientY, e.shiftKey);
       canvas.style.cursor = EDITOR.cursor();
       return;
     }

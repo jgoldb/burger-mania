@@ -2,7 +2,8 @@
 // walks menu -> Map Editor, then exercises the editing surface with
 // synthetic mouse and key events — placing burgers, dragging vertices and
 // walls, painting glass and clearing it by selecting the edge + Delete,
-// drawing an island polygon, wiring it, Shift+dragging a whole polygon,
+// drawing an island polygon, Shift+dragging a whole polygon, cycling the
+// placement grid, the dense-grid toggle and Shift-snapping a lone vertex,
 // deleting vertices/polygons, renaming, undo/redo, theme cycling — and
 // finally serializes the map, round-trips it through the .bmm parser, and
 // takes a test ride.
@@ -110,9 +111,9 @@ function mouseDown(x, y, mods) {
     fn(Object.assign({ clientX: x, clientY: y, button: 0, preventDefault() {} }, mods || {}));
   }
 }
-function mouseMove(x, y) {
+function mouseMove(x, y, mods) {
   for (const fn of canvasHandlers.mousemove || []) {
-    fn({ clientX: x, clientY: y, preventDefault() {} });
+    fn(Object.assign({ clientX: x, clientY: y, preventDefault() {} }, mods || {}));
   }
 }
 function mouseUp(x, y) {
@@ -224,7 +225,7 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
     bad('double-clicking an edge should insert a vertex');
   }
 
-  // ---- island polygon + wire toggle ----
+  // ---- island polygon ----
   key('2');
   for (const [px, py] of [[20, 2], [30, 2], [25, 5.5]]) {
     s = w2s(px, py);
@@ -235,8 +236,6 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   key('1');
   s = w2s(25, 2);                            // the island's top edge
   mouseDown(s.x, s.y); mouseUp(s.x, s.y);
-  key('w');
-  if (!EDITOR.map.wires.includes(1)) bad('W should wire the selected polygon');
 
   // ---- rider preview: a non-destructive collider gauge ----
   if (EDITOR.riderPreview) bad('rider preview should start off');
@@ -278,7 +277,6 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   else if (back.glassEdges[0][1] !== 3) {
     bad('glass edge should track the vertex insert to [0,3], got ' + JSON.stringify(back.glassEdges[0]));
   }
-  if (!back.wires || back.wires[0] !== 1) bad('round trip lost the wire flag');
   if (JSON.stringify(back.goal) !== JSON.stringify(EDITOR.map.goal)) bad('round trip moved the goal');
   for (const junk of ['{"format":"nope"}', '{"format":"burger-mania-map","version":1}']) {
     try { EDITOR.parse(junk); bad('parse accepted junk: ' + junk); }
@@ -340,6 +338,52 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   key('z', { ctrlKey: true });                // undo brings it back
   if (EDITOR.map.polygons.length !== 2) bad('undo should restore the deleted polygon');
 
+  // ---- placement grid: [ coarsens the snap step, ] refines it ----
+  key('3');                                   // burger tool
+  key('['); key('['); key('[');               // 0.1 -> 0.25 -> 0.5 -> 1.0
+  let cgp = w2s(33.4, 5.2);
+  mouseDown(cgp.x, cgp.y); mouseUp(cgp.x, cgp.y);
+  let cgb = EDITOR.map.burgers[EDITOR.map.burgers.length - 1];
+  if (Math.abs(cgb[0] - 33) > 0.02 || Math.abs(cgb[1] - 5) > 0.02) {
+    bad('the coarsened grid should snap a burger to whole units, got ' + JSON.stringify(cgb));
+  }
+  key('z', { ctrlKey: true });                // remove the test burger
+  key(']'); key(']'); key(']');               // back to the 0.1 fine grid
+  mouseDown(cgp.x, cgp.y); mouseUp(cgp.x, cgp.y);
+  cgb = EDITOR.map.burgers[EDITOR.map.burgers.length - 1];
+  if (Math.abs(cgb[0] - 33.4) > 0.02) {
+    bad('the fine grid should keep a ~0.1 burger coordinate, got ' + JSON.stringify(cgb));
+  }
+  key('z', { ctrlKey: true });                // remove that one too
+
+  // ---- grid toggle + Shift-snap a lone vertex to the visible grid ----
+  key('1');
+  let gv = w2s(62, 9);                         // the box's dragged corner vertex
+  mouseDown(gv.x, gv.y);                       // no Shift at grab = single-vertex drag
+  const gvSel = EDITOR.sel;
+  if (!gvSel || gvSel.kind !== 'vertex') bad('grabbing a corner should select a vertex');
+  // grid is off by default, so Shift snaps to whole units -> (58, 6)
+  mouseMove(w2s(58.4, 6.3).x, w2s(58.4, 6.3).y, { shiftKey: true });
+  let gvv = EDITOR.map.polygons[gvSel.pi][gvSel.vi];
+  if (Math.abs(gvv[0] - 58) > 0.01 || Math.abs(gvv[1] - 6) > 0.01) {
+    bad('with the grid off, Shift-drag should snap to whole units, got ' + JSON.stringify(gvv));
+  }
+  key('#');                                    // show the grid -> Shift snaps to half-units
+  mouseMove(w2s(58.4, 6.3).x, w2s(58.4, 6.3).y, { shiftKey: true });
+  gvv = EDITOR.map.polygons[gvSel.pi][gvSel.vi];
+  if (Math.abs(gvv[0] - 58.5) > 0.01 || Math.abs(gvv[1] - 6.5) > 0.01) {
+    bad('with the grid on, Shift-drag should snap to half-units, got ' + JSON.stringify(gvv));
+  }
+  // releasing Shift mid-drag returns to the fine placement grid
+  mouseMove(w2s(58.4, 6.3).x, w2s(58.4, 6.3).y);
+  gvv = EDITOR.map.polygons[gvSel.pi][gvSel.vi];
+  if (Math.abs(gvv[0] - 58.4) > 0.02) {
+    bad('without Shift the drag should use the fine grid, got ' + JSON.stringify(gvv));
+  }
+  key('#');                                    // restore the grid to its default (off)
+  mouseUp(w2s(58.4, 6.3).x, w2s(58.4, 6.3).y);
+  key('z', { ctrlKey: true });                // restore the corner to (62, 9)
+
   // ---- test ride: keys go to the bike, not the tools ----
   key('Enter', { ctrlKey: true });
   key('b');                                  // would switch tools in the editor
@@ -352,6 +396,38 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   key('b');
   if (EDITOR.tool !== 'burger') bad('Esc should return to the editor');
   key('1');
+
+  // ---- New / Load: discard-changes dialog, and confirming wipes the undo history ----
+  key('3');                                    // an unsaved edit -> the map is dirty
+  mouseDown(410, 300); mouseUp(410, 300);
+  key('1');
+  if (EDITOR.confirmOpen) bad('no confirm dialog should be open yet');
+  EDITOR.action('new');                        // New with unsaved changes
+  if (!EDITOR.confirmOpen) bad('New on a dirty map should raise the discard dialog');
+  const polysWas = EDITOR.map.polygons.length;
+  key('3');                                    // the modal must swallow other keys
+  if (EDITOR.tool !== 'select') bad('the confirm dialog should swallow tool keys');
+  pumpFrames(1, 1 / 60);                       // draw the dialog (must not throw)
+  key('Escape');                               // cancel keeps the current map
+  if (EDITOR.confirmOpen) bad('Escape should close the dialog');
+  if (EDITOR.map.polygons.length !== polysWas) bad('cancelling New must not change the map');
+  EDITOR.action('load');                       // Load raises it too
+  if (!EDITOR.confirmOpen) bad('Load on a dirty map should raise the discard dialog');
+  key('Escape');                               // cancel without touching the file picker
+  if (EDITOR.confirmOpen) bad('Escape should close the Load dialog');
+  if (EDITOR.map.polygons.length !== polysWas) bad('cancelling Load must not change the map');
+  EDITOR.action('new');                        // now confirm a New
+  key('Enter');                                // Enter = Discard
+  if (EDITOR.confirmOpen) bad('Enter should close the dialog');
+  if (EDITOR.map.polygons.length !== 1 || EDITOR.map.name !== 'Untitled Map') {
+    bad('confirming New should load a fresh template, got ' + EDITOR.map.name);
+  }
+  key('z', { ctrlKey: true });                 // New wiped the history -> nothing to undo
+  if (EDITOR.map.polygons.length !== 1 || EDITOR.map.name !== 'Untitled Map') {
+    bad('Undo must not restore a map discarded by New, got ' + EDITOR.map.name);
+  }
+  EDITOR.action('new');                        // a fresh template is not dirty
+  if (EDITOR.confirmOpen) bad('New on a fresh (unedited) template should not re-prompt');
 
   // ---- out to the menu ----
   key('Escape');                             // clears any selection

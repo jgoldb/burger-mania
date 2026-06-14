@@ -130,11 +130,6 @@ function pointInPoly(px, py, poly) {
 }
 
 // Builds collision segments and the list of grass-topped edges from raw level data.
-// Polygons whose index appears in L.wires are "wire" terrain, Elasto
-// Mania style: only the WHEELS collide with them. The frame's belly and
-// the head pass straight through, so a wire can thread the rider's body
-// — and a bike tipping over a ledge gets shepherded around by the wire
-// until the wheels land on top of it, hanging the bike upside down.
 // Edges listed in L.glassEdges ([[polyIndex, edgeIndex], ...]) are obsidian
 // glass: solid like rock, but the tires get almost no grip on them, so glass
 // is ridden on banked momentum. The edge index is the segment from poly[i] to
@@ -147,26 +142,24 @@ function pointInPoly(px, py, poly) {
 // here untouched; the sim reads L.nuts directly.
 function prepareLevel(L) {
   const segments = [], grass = [], glassTops = [];
-  const wires = new Set(L.wires || []);
   const glassSpans = L.glass || [];
   const glassEdges = new Set((L.glassEdges || []).map(e => e[0] + ':' + e[1]));
   L.polygons.forEach((poly, pi) => {
-    const wire = wires.has(pi);
     // a polygon nested inside another is a solid island in the playable
     // area (evenodd fill), so its playable side is the inverse
     const island = L.polygons.some(p =>
       p !== poly && pointInPoly(poly[0][0], poly[0][1], p));
     for (let i = 0; i < poly.length; i++) {
       const a = poly[i], b = poly[(i + 1) % poly.length];
-      const s = { ax: a[0], ay: a[1], bx: b[0], by: b[1], wire };
+      const s = { ax: a[0], ay: a[1], bx: b[0], by: b[1] };
       const mx = (s.ax + s.bx) / 2, my = (s.ay + s.by) / 2;
-      s.glass = !wire && (glassEdges.has(pi + ':' + i) ||
-        glassSpans.some(r => mx >= r[0] && mx <= r[1]));
+      s.glass = glassEdges.has(pi + ':' + i) ||
+        glassSpans.some(r => mx >= r[0] && mx <= r[1]);
       segments.push(s);
       const dx = s.bx - s.ax, dy = s.by - s.ay;
       // grass grows on edges that are not too steep and face the playable
-      // side upward; wires stay bare and glass gets a sheen instead
-      if (!wire && Math.abs(dx) > 0.001 && Math.abs(dy / dx) < 2.0) {
+      // side upward; glass gets a sheen instead
+      if (Math.abs(dx) > 0.001 && Math.abs(dy / dx) < 2.0) {
         const up = pointInPoly(mx, my - 0.3, poly);
         const down = pointInPoly(mx, my + 0.3, poly);
         if (island ? (down && !up) : (up && !down)) {
@@ -409,9 +402,8 @@ class Bike {
     // out the far side. But everything ABOVE the wheel tops (toward the head,
     // in the bike's own frame) is passthrough, so the body threads obstacles
     // in the wheel↔head gap, Elasto Mania style — only the wheels and the head
-    // collide there. Wires touch wheels only too: the body threads past them.
+    // collide there.
     for (const seg of segs) {
-      if (seg.wire) continue;
       const cp = closestOnSeg(this.pos.x, this.pos.y, seg);
       let nx = this.pos.x - cp.x, ny = this.pos.y - cp.y;
       const d = Math.hypot(nx, ny);
@@ -441,10 +433,9 @@ class Bike {
       else w.spin -= Math.sign(w.spin) * dec;
     }
 
-    // the head is the only fatal terrain collider; wires can't hurt it
+    // the head is the only fatal terrain collider
     const h = this.headPos();
     for (const seg of segs) {
-      if (seg.wire) continue;
       const cp = closestOnSeg(h.x, h.y, seg);
       if (Math.hypot(h.x - cp.x, h.y - cp.y) < P.headR) {
         this.dead = true;
@@ -478,14 +469,12 @@ class Bike {
   wheelContacts(w, segs, dt, braking) {
     const P = PHYS;
     w.onGround = false;
-    w.onWire = false;
     for (const seg of segs) {
       const cp = closestOnSeg(w.pos.x, w.pos.y, seg);
       let nx = w.pos.x - cp.x, ny = w.pos.y - cp.y;
       const d = Math.hypot(nx, ny);
       if (d >= P.wheelR || d === 0) continue;
       w.onGround = true;
-      if (seg.wire) w.onWire = true;
       nx /= d; ny /= d;
 
       // positional correction
