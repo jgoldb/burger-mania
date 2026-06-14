@@ -161,6 +161,32 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   key('y', { ctrlKey: true });
   if (EDITOR.map.burgers.length !== burgers0 + 1) bad('Ctrl+Y should redo the burger');
 
+  // ---- nut mound placement (the lethal hazard) + undo/redo + draw ----
+  const nuts0 = EDITOR.map.nuts.length;
+  key('5');
+  if (EDITOR.tool !== 'nut') bad('key 5 should pick the nut tool');
+  mouseDown(360, 280); mouseUp(360, 280);
+  if (EDITOR.map.nuts.length !== nuts0 + 1) bad('clicking should drop a nut mound');
+  pumpFrames(2, 1 / 60);                      // draw a frame with the mound (must not throw)
+  key('z', { ctrlKey: true });
+  if (EDITOR.map.nuts.length !== nuts0) bad('Ctrl+Z should undo the nut mound');
+  key('y', { ctrlKey: true });
+  if (EDITOR.map.nuts.length !== nuts0 + 1) bad('Ctrl+Y should redo the nut mound');
+  key('1');
+
+  // ---- upside-down (gravity-flip) burger placement + undo/redo + draw ----
+  const flip0 = EDITOR.map.flipBurgers.length;
+  key('6');
+  if (EDITOR.tool !== 'flip') bad('key 6 should pick the flip-burger tool');
+  mouseDown(440, 320); mouseUp(440, 320);
+  if (EDITOR.map.flipBurgers.length !== flip0 + 1) bad('clicking should drop an upside-down burger');
+  pumpFrames(2, 1 / 60);                      // draw a frame with the badge (must not throw)
+  key('z', { ctrlKey: true });
+  if (EDITOR.map.flipBurgers.length !== flip0) bad('Ctrl+Z should undo the upside-down burger');
+  key('y', { ctrlKey: true });
+  if (EDITOR.map.flipBurgers.length !== flip0 + 1) bad('Ctrl+Y should redo the upside-down burger');
+  key('1');
+
   // ---- glass: paint an edge, then clear it by selecting + Delete ----
   key('4');
   if (EDITOR.tool !== 'glass') bad('key 4 should pick the glass tool');
@@ -245,6 +271,8 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   if (back.theme !== 'volcano') bad('round trip lost the theme');
   if (back.polygons.length !== 2) bad('round trip lost a polygon');
   if (back.burgers.length !== EDITOR.map.burgers.length) bad('round trip lost burgers');
+  if (!back.nuts || back.nuts.length !== EDITOR.map.nuts.length) bad('round trip lost nut mounds');
+  if (!back.flipBurgers || back.flipBurgers.length !== EDITOR.map.flipBurgers.length) bad('round trip lost upside-down burgers');
   if (!back.glassEdges || back.glassEdges.length !== 1) bad('round trip lost the glass edge');
   // the ceiling vertex inserted above split edge 0, bumping the floor to edge 3
   else if (back.glassEdges[0][1] !== 3) {
@@ -256,6 +284,33 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
     try { EDITOR.parse(junk); bad('parse accepted junk: ' + junk); }
     catch (e) { /* good */ }
   }
+
+  // ---- the nut mound selects, drags, and deletes like a burger ----
+  key('1');
+  const n0 = EDITOR.map.nuts[0].slice();
+  let ns = w2s(n0[0], n0[1]);
+  mouseDown(ns.x, ns.y); mouseUp(ns.x, ns.y);
+  if (!EDITOR.sel || EDITOR.sel.kind !== 'nut') bad('clicking a nut mound should select it');
+  let nd = w2s(n0[0] + 2, n0[1] + 1);
+  mouseDown(ns.x, ns.y); mouseMove(nd.x, nd.y); mouseUp(nd.x, nd.y);
+  if (Math.abs(EDITOR.map.nuts[0][0] - (n0[0] + 2)) > 0.2) bad('dragging should move the nut mound');
+  key('Delete');
+  if (EDITOR.map.nuts.length !== nuts0) bad('Delete should remove a selected nut mound');
+  key('z', { ctrlKey: true });               // undo the delete brings it back
+  if (EDITOR.map.nuts.length !== nuts0 + 1) bad('undo should restore the deleted nut mound');
+
+  // ---- the upside-down burger selects, drags, and deletes like a burger ----
+  const f0 = EDITOR.map.flipBurgers[0].slice();
+  let fs2 = w2s(f0[0], f0[1]);
+  mouseDown(fs2.x, fs2.y); mouseUp(fs2.x, fs2.y);
+  if (!EDITOR.sel || EDITOR.sel.kind !== 'flip') bad('clicking an upside-down burger should select it');
+  let fd = w2s(f0[0] + 2, f0[1] + 1);
+  mouseDown(fs2.x, fs2.y); mouseMove(fd.x, fd.y); mouseUp(fd.x, fd.y);
+  if (Math.abs(EDITOR.map.flipBurgers[0][0] - (f0[0] + 2)) > 0.2) bad('dragging should move the upside-down burger');
+  key('Delete');
+  if (EDITOR.map.flipBurgers.length !== flip0) bad('Delete should remove a selected upside-down burger');
+  key('z', { ctrlKey: true });               // undo the delete brings it back
+  if (EDITOR.map.flipBurgers.length !== flip0 + 1) bad('undo should restore the deleted upside-down burger');
 
   // ---- whole-polygon move: Shift+drag the island translates every vertex ----
   key('1');

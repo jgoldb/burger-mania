@@ -90,7 +90,12 @@ const REPLAY = (() => {
         !L.polygons.every(p => Array.isArray(p) && p.length >= 3 && p.every(isPt)) ||
         !L.start || !isFinite(L.start.x) || !isFinite(L.start.y) ||
         !Array.isArray(L.burgers) || !L.burgers.every(isPt) ||
-        !isPt(L.goal)) {
+        !isPt(L.goal) ||
+        // nut mounds are optional; if present they must be valid points, since
+        // the sim reads them straight back as kill positions during playback
+        (L.nuts != null && (!Array.isArray(L.nuts) || !L.nuts.every(isPt))) ||
+        // upside-down (gravity-flip) burgers are optional too, same shape
+        (L.flipBurgers != null && (!Array.isArray(L.flipBurgers) || !L.flipBurgers.every(isPt)))) {
       throw new Error('replay level data is damaged');
     }
     if (typeof L.name !== 'string') L.name = 'Mystery Map';

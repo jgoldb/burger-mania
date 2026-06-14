@@ -786,6 +786,169 @@ function drawPopcorn(ctx, x, y, t) {
   ctx.restore();
 }
 
+// one nut in the heap. `type` picks the kind so a mound looks like assorted
+// nuts: 0 peanut (twin-lobe shell), 1 almond (pointed teardrop), 2 round nut
+// (hazelnut). `s` is the overall size, `ang` the resting tilt.
+function drawNut(ctx, cx, cy, s, ang, type) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(ang);
+  if (type === 0) {
+    const g = ctx.createLinearGradient(-s * 0.6, -s * 0.5, s * 0.6, s * 0.5);
+    g.addColorStop(0, '#e7c98e');
+    g.addColorStop(0.5, '#c8a059');
+    g.addColorStop(1, '#9a7335');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.ellipse(-s * 0.4, 0.02, s * 0.5, s * 0.42, 0, 0, Math.PI * 2);
+    ctx.ellipse(s * 0.4, -0.02, s * 0.56, s * 0.48, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // shell crosshatch ridges + the pinch between the two halves
+    ctx.strokeStyle = 'rgba(120,84,38,0.45)';
+    ctx.lineWidth = s * 0.05;
+    ctx.beginPath();
+    for (let i = -1; i <= 1; i++) {
+      ctx.moveTo(s * (0.18 + i * 0.18), -s * 0.34);
+      ctx.lineTo(s * (0.32 + i * 0.18), s * 0.34);
+    }
+    ctx.stroke();
+  } else if (type === 1) {
+    const g = ctx.createLinearGradient(-s * 0.5, -s * 0.6, s * 0.5, s * 0.6);
+    g.addColorStop(0, '#dcb681');
+    g.addColorStop(0.5, '#b27d43');
+    g.addColorStop(1, '#7c5125');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(0, -s * 0.62);
+    ctx.quadraticCurveTo(s * 0.58, -s * 0.12, 0, s * 0.62);
+    ctx.quadraticCurveTo(-s * 0.58, -s * 0.12, 0, -s * 0.62);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(92,60,28,0.4)';
+    ctx.lineWidth = s * 0.045;
+    ctx.beginPath();
+    ctx.moveTo(0, -s * 0.42);
+    ctx.lineTo(0, s * 0.42);
+    ctx.stroke();
+  } else {
+    const g = ctx.createRadialGradient(-s * 0.22, -s * 0.28, s * 0.08, 0, 0, s * 0.7);
+    g.addColorStop(0, '#c58f52');
+    g.addColorStop(0.6, '#9a6731');
+    g.addColorStop(1, '#5e3c1c');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(0, 0, s * 0.58, 0, Math.PI * 2);
+    ctx.fill();
+    // the fibrous little cap where it joined the branch
+    ctx.fillStyle = 'rgba(74,48,24,0.65)';
+    ctx.beginPath();
+    ctx.ellipse(0, -s * 0.4, s * 0.24, s * 0.16, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+// a nut mound: this world's "killer" hazard (the spinning-spike equivalent) —
+// a heap of assorted nuts smothered in a glossy coat of oozing peanut butter.
+// Touching it with any part of the bike is fatal (see PHYS.nutR / Bike.step).
+// Drawn centred on (x, y), the lethal point, sized to roughly the kill radius.
+// Planted on the terrain, so unlike the hovering burger/popcorn it doesn't bob;
+// only the peanut-butter drips and surface glints move, so it reads as oozing.
+function drawNutMound(ctx, x, y, t) {
+  t = t || 0;
+  const phase = x * 1.3;          // each mound oozes on its own clock
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+
+  // ground-contact shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.22)';
+  ctx.beginPath();
+  ctx.ellipse(0, 0.5, 0.6, 0.1, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // the heaped nuts, back rows first so the front ones overlap
+  const NUTS = [
+    [-0.14, -0.34, 0.36, 0.3, 2], [0.12, -0.36, 0.34, -0.4, 0],
+    [-0.33, -0.12, 0.40, 0.8, 1], [0.30, -0.16, 0.40, -0.6, 2],
+    [-0.02, -0.14, 0.46, 0.1, 0],
+    [0.04, 0.06, 0.42, 1.2, 1], [-0.30, 0.10, 0.40, -0.3, 0],
+    [0.34, 0.08, 0.38, 0.5, 1],
+    [-0.12, 0.26, 0.42, 0.2, 2], [0.18, 0.28, 0.40, -0.9, 0],
+    [-0.40, 0.28, 0.34, 0.6, 1], [0.42, 0.26, 0.34, -0.2, 2],
+  ];
+  for (const [nx, ny, s, a, ty] of NUTS) drawNut(ctx, nx, ny, s, a, ty);
+
+  // the peanut-butter coat: a glossy lumpy dome draped over the upper pile,
+  // smooth low-frequency lobes so it reads gooey, lit from the upper left
+  const lobe = a => 1 + 0.06 * Math.sin(a * 3 + 0.7) + 0.04 * Math.sin(a * 5 - 1.1);
+  ctx.beginPath();
+  for (let i = 0; i <= 40; i++) {
+    const a = (i / 40) * Math.PI * 2;
+    const k = lobe(a);
+    const px = Math.cos(a) * 0.54 * k;
+    const py = -0.07 + Math.sin(a) * 0.47 * k;
+    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  let g = ctx.createRadialGradient(-0.18, -0.28, 0.05, 0, -0.05, 0.72);
+  g.addColorStop(0, '#ecc074');
+  g.addColorStop(0.55, '#c89344');
+  g.addColorStop(1, '#9a6c28');
+  ctx.fillStyle = g;
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(120,80,28,0.5)';
+  ctx.lineWidth = 0.035;
+  ctx.stroke();
+
+  // thick tongues of peanut butter oozing down off the rim; each slowly
+  // stretches and relaxes so the mound looks like it's perpetually dripping
+  const DRIPS = [[-0.30, 0.28, 1.0], [-0.05, 0.34, 1.7], [0.20, 0.30, 2.6], [0.40, 0.18, 3.4]];
+  for (const [dx, dyTop, ph] of DRIPS) {
+    const len = 0.18 + 0.12 * (0.5 + 0.5 * Math.sin(t * 1.3 + ph + phase));
+    const w = 0.09;
+    const tipY = dyTop + len;
+    ctx.fillStyle = '#bd8a36';
+    ctx.beginPath();
+    ctx.moveTo(dx - w, dyTop - 0.04);
+    ctx.quadraticCurveTo(dx - w * 0.9, dyTop + len * 0.6, dx - w * 0.6, tipY);
+    ctx.arc(dx, tipY, w * 0.6, Math.PI, 0, true);
+    ctx.quadraticCurveTo(dx + w * 0.9, dyTop + len * 0.6, dx + w, dyTop - 0.04);
+    ctx.closePath();
+    ctx.fill();
+    // a wet seam of light running down each drip
+    ctx.strokeStyle = 'rgba(255,232,160,0.5)';
+    ctx.lineWidth = 0.025;
+    ctx.beginPath();
+    ctx.moveTo(dx - w * 0.2, dyTop);
+    ctx.lineTo(dx - w * 0.2, tipY - w * 0.4);
+    ctx.stroke();
+  }
+
+  // a couple of whole nuts perched in the butter, so it reads as nuts AND
+  // peanut butter rather than a plain blob
+  drawNut(ctx, -0.16, -0.18, 0.34, 0.5, 1);
+  drawNut(ctx, 0.16, -0.12, 0.36, -0.5, 0);
+
+  // glossy highlight pooled near the crown
+  ctx.fillStyle = 'rgba(255,240,200,0.32)';
+  ctx.beginPath();
+  ctx.ellipse(-0.13, -0.27, 0.17, 0.09, -0.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // small wet glints sliding slowly across the coat
+  for (let i = 0; i < 3; i++) {
+    const f = ((srand(x * 5.1 + i * 3.3) + t * 0.05) % 1);
+    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+    ctx.beginPath();
+    ctx.ellipse(-0.34 + f * 0.7, -0.18 + Math.sin(f * 6.0 + i) * 0.12,
+      0.035, 0.02, 0.6, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
 function strokeSeg(ctx, a, b, w, color) {
   ctx.strokeStyle = color;
   ctx.lineWidth = w;
@@ -2328,6 +2491,7 @@ function drawMinimap(ctx, W, H, level, o) {
   for (const bu of o.burgers) {
     if (!bu.got) dot(tx(bu.x), ty(bu.y), 2.2, '#f9c623');
   }
+  for (const n of o.nuts || []) dot(tx(n[0]), ty(n[1]), 2.4, '#b07a32');
   dot(tx(o.goal[0]), ty(o.goal[1]), 2.6, '#c8202a');
 
   // rider: white dot with a soft pulse so it reads at a glance

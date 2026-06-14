@@ -3,10 +3,12 @@
 // The Map Editor: a full-screen scene (the 'editor' state in game.js) for
 // building custom courses with a GUI. The working map is the exact level
 // shape js/levels.js uses — polygons (the playable area is the inside;
-// nested polygons are solid islands), start, burgers, goal, theme, plus
-// the special-terrain fields: `glassEdges` [poly, edge] pairs (obsidian the
-// tires barely grip, painted on per-edge) and `wires` polygon indices
-// (wheels-only terrain). Maps save to
+// nested polygons are solid islands), start, burgers, goal, theme, plus the
+// optional object/terrain fields: `nuts` [x,y] lethal mounds, `flipBurgers`
+// [x,y] gravity-reversing burgers (identical to the rider, marked only in the
+// editor), `glassEdges` [poly, edge] pairs (obsidian the tires barely grip,
+// painted on per-edge), and `wires` polygon indices (wheels-only terrain).
+// Maps save to
 // .bmm files: JSON whose body IS a LEVELS entry plus a format header, so
 // a finished map can be pasted straight into a track.
 //
@@ -39,7 +41,7 @@ const EDITOR = (() => {
   let prepared = null;   // prepareLevel(map), rebuilt after every change
   let cam = { x: 0, y: 0 };
   let zoom = 36;         // screen px per world unit
-  let tool = 'select';   // select | poly | burger | glass
+  let tool = 'select';   // select | poly | burger | nut | flip | glass
   let sel = null;        // {kind: vertex|edge|burger|start|goal, ...}
   let hov = null;        // same shape, under the cursor (select tool only)
   let drag = null;       // active mouse drag: pan | move | paint
@@ -70,6 +72,8 @@ const EDITOR = (() => {
       start: { x: 2.5, y: 7.25 },
       burgers: [[20, 7.3], [40, 7.3]],
       goal: [55, 7.25],
+      nuts: [],
+      flipBurgers: [],
       glassEdges: [],
       wires: [],
     };
@@ -88,6 +92,8 @@ const EDITOR = (() => {
       burgers: map.burgers.map(b => [round2(b[0]), round2(b[1])]),
       goal: [round2(map.goal[0]), round2(map.goal[1])],
     };
+    if (map.nuts.length) L.nuts = map.nuts.map(n => [round2(n[0]), round2(n[1])]);
+    if (map.flipBurgers.length) L.flipBurgers = map.flipBurgers.map(b => [round2(b[0]), round2(b[1])]);
     if (map.glassEdges.length) L.glassEdges = map.glassEdges.map(e => [e[0], e[1]]);
     if (map.wires.length) L.wires = map.wires.slice();
     return L;
@@ -121,6 +127,14 @@ const EDITOR = (() => {
       throw new Error('map burgers are damaged');
     }
     if (!isPt(d.goal)) throw new Error('map goal is damaged');
+    // nut mounds + upside-down burgers are optional (added after v2); absent
+    // on older maps, validated as point lists when present
+    if (d.nuts != null && (!Array.isArray(d.nuts) || !d.nuts.every(isPt))) {
+      throw new Error('map nut mounds are damaged');
+    }
+    if (d.flipBurgers != null && (!Array.isArray(d.flipBurgers) || !d.flipBurgers.every(isPt))) {
+      throw new Error('map upside-down burgers are damaged');
+    }
     const wires = Array.isArray(d.wires) ? d.wires : [];
     if (!wires.every(i => Number.isInteger(i) && i >= 0 && i < d.polygons.length)) {
       throw new Error('map wire indices are damaged');
@@ -133,6 +147,8 @@ const EDITOR = (() => {
       start: { x: Number(d.start.x), y: Number(d.start.y) },
       burgers: d.burgers.map(b => [Number(b[0]), Number(b[1])]),
       goal: [Number(d.goal[0]), Number(d.goal[1])],
+      nuts: Array.isArray(d.nuts) ? d.nuts.map(n => [Number(n[0]), Number(n[1])]) : [],
+      flipBurgers: Array.isArray(d.flipBurgers) ? d.flipBurgers.map(b => [Number(b[0]), Number(b[1])]) : [],
       glassEdges: parseGlass(d, polygons, wires),
       wires: wires.slice(),
     };
@@ -230,6 +246,10 @@ const EDITOR = (() => {
     if (!inPlayable(map.goal[0], map.goal[1])) out.push('the goal is buried in ground');
     const buried = map.burgers.filter(b => !inPlayable(b[0], b[1])).length;
     if (buried) out.push(buried + (buried > 1 ? ' burgers are' : ' burger is') + ' buried in ground');
+    const buriedNuts = map.nuts.filter(n => !inPlayable(n[0], n[1])).length;
+    if (buriedNuts) out.push(buriedNuts + (buriedNuts > 1 ? ' nut mounds are' : ' nut mound is') + ' buried in ground');
+    const buriedFlip = map.flipBurgers.filter(b => !inPlayable(b[0], b[1])).length;
+    if (buriedFlip) out.push(buriedFlip + (buriedFlip > 1 ? ' upside-down burgers are' : ' upside-down burger is') + ' buried in ground');
     return out;
   }
 
@@ -348,6 +368,18 @@ const EDITOR = (() => {
     commit(true);
   }
 
+  function addNut(w) {
+    pushUndo();
+    map.nuts.push([snap(w.x), snap(w.y)]);
+    commit(true);
+  }
+
+  function addFlip(w) {
+    pushUndo();
+    map.flipBurgers.push([snap(w.x), snap(w.y)]);
+    commit(true);
+  }
+
   function polyClick(w) {
     if (!draft) draft = [];
     // clicking back on the first vertex closes the loop
@@ -428,6 +460,18 @@ const EDITOR = (() => {
         sel = null;
         commit(true);
         return;
+      case 'nut':
+        pushUndo();
+        map.nuts.splice(sel.ni, 1);
+        sel = null;
+        commit(true);
+        return;
+      case 'flip':
+        pushUndo();
+        map.flipBurgers.splice(sel.fi, 1);
+        sel = null;
+        commit(true);
+        return;
       default:
         note('The start and goal can be moved, not removed');
     }
@@ -479,6 +523,18 @@ const EDITOR = (() => {
         break;
       case 'burger': {
         const b = map.burgers[p.bi];
+        b[0] = round2(b[0] + dx);
+        b[1] = round2(b[1] + dy);
+        break;
+      }
+      case 'nut': {
+        const n = map.nuts[p.ni];
+        n[0] = round2(n[0] + dx);
+        n[1] = round2(n[1] + dy);
+        break;
+      }
+      case 'flip': {
+        const b = map.flipBurgers[p.fi];
         b[0] = round2(b[0] + dx);
         b[1] = round2(b[1] + dy);
         break;
@@ -551,6 +607,14 @@ const EDITOR = (() => {
       const b = map.burgers[bi];
       if (Math.hypot(wx - b[0], wy - b[1]) < Math.max(r, 0.5)) return { kind: 'burger', bi };
     }
+    for (let ni = 0; ni < map.nuts.length; ni++) {
+      const n = map.nuts[ni];
+      if (Math.hypot(wx - n[0], wy - n[1]) < Math.max(r, 0.55)) return { kind: 'nut', ni };
+    }
+    for (let fi = 0; fi < map.flipBurgers.length; fi++) {
+      const b = map.flipBurgers[fi];
+      if (Math.hypot(wx - b[0], wy - b[1]) < Math.max(r, 0.5)) return { kind: 'flip', fi };
+    }
     if (Math.hypot(wx - map.start.x, wy - map.start.y) < Math.max(r, 0.7)) return { kind: 'start' };
     if (Math.hypot(wx - map.goal[0], wy - map.goal[1]) < Math.max(r, 0.6)) return { kind: 'goal' };
     // edges last, so handles win where they overlap
@@ -593,6 +657,8 @@ const EDITOR = (() => {
     const w = s2w(x, y);
     if (tool === 'poly') { polyClick(w); return; }
     if (tool === 'burger') { addBurger(w); return; }
+    if (tool === 'nut') { addNut(w); return; }
+    if (tool === 'flip') { addFlip(w); return; }
     if (tool === 'glass') {
       drag = { kind: 'paint', moved: false };
       paintGlassAt(w);
@@ -652,6 +718,12 @@ const EDITOR = (() => {
         break;
       case 'burger':
         map.burgers[p.bi] = [snap(w.x), snap(w.y)];
+        break;
+      case 'nut':
+        map.nuts[p.ni] = [snap(w.x), snap(w.y)];
+        break;
+      case 'flip':
+        map.flipBurgers[p.fi] = [snap(w.x), snap(w.y)];
         break;
       case 'start':
         map.start = { x: snap(w.x), y: snap(w.y) };
@@ -748,6 +820,8 @@ const EDITOR = (() => {
       case '2': case 'p': case 'P': setTool('poly'); return;
       case '3': case 'b': case 'B': setTool('burger'); return;
       case '4': case 'g': case 'G': setTool('glass'); return;
+      case '5': case 'k': case 'K': setTool('nut'); return;
+      case '6': case 'f': case 'F': setTool('flip'); return;
       case 't': case 'T': cycleTheme(); return;
       case 'n': case 'N': startNaming(); return;
       case 'w': case 'W': toggleWire(); return;
@@ -767,7 +841,7 @@ const EDITOR = (() => {
 
   function action(id) {
     switch (id) {
-      case 'select': case 'poly': case 'burger': case 'glass': setTool(id); break;
+      case 'select': case 'poly': case 'burger': case 'glass': case 'nut': case 'flip': setTool(id); break;
       case 'rider': toggleRider(); break;
       case 'theme': cycleTheme(); break;
       case 'name': startNaming(); break;
@@ -830,7 +904,14 @@ const EDITOR = (() => {
     const view = { x0: cam.x - hw, y0: cam.y - hh, x1: cam.x + hw, y1: cam.y + hh };
     drawWorld(ctx, prepared, pat, view, rt);
     drawGrid(ctx, view);
+    for (const n of map.nuts) drawNutMound(ctx, n[0], n[1], rt);
     for (const b of map.burgers) drawBurger(ctx, b[0], b[1], rt);
+    // upside-down burgers draw identically to normal ones in play; here in the
+    // editor a badge marks them so the author can tell them apart
+    for (const b of map.flipBurgers) {
+      drawBurger(ctx, b[0], b[1], rt);
+      drawFlipBadge(ctx, b[0], b[1]);
+    }
     drawPopcorn(ctx, map.goal[0], map.goal[1], rt);
     drawStartMarker(ctx);
     drawGlassEdges(ctx);
@@ -905,6 +986,38 @@ const EDITOR = (() => {
     ctx.moveTo(0.55, -0.8);
     ctx.lineTo(0.75, -0.6);
     ctx.lineTo(0.55, -0.4);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // an editor-only badge over an upside-down burger: a violet ring around the
+  // burger plus a small disc with a double-headed vertical arrow (the gravity-
+  // flip glyph). In play these burgers look exactly like normal ones; this
+  // marker exists only so the author can place and spot them.
+  function drawFlipBadge(ctx, x, y) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = 'rgba(178,102,234,0.95)';
+    ctx.lineWidth = 0.06;
+    ctx.beginPath();
+    ctx.arc(0, 0, 0.62, 0, Math.PI * 2);
+    ctx.stroke();
+    const bx = 0.42, by = -0.42;
+    ctx.fillStyle = 'rgba(150,70,210,0.92)';
+    ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+    ctx.lineWidth = 0.035;
+    ctx.beginPath();
+    ctx.arc(bx, by, 0.26, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 0.05;
+    ctx.beginPath();
+    ctx.moveTo(bx, by - 0.15); ctx.lineTo(bx, by + 0.15);                         // shaft
+    ctx.moveTo(bx - 0.07, by - 0.07); ctx.lineTo(bx, by - 0.16); ctx.lineTo(bx + 0.07, by - 0.07); // up head
+    ctx.moveTo(bx - 0.07, by + 0.07); ctx.lineTo(bx, by + 0.16); ctx.lineTo(bx + 0.07, by + 0.07); // down head
     ctx.stroke();
     ctx.restore();
   }
@@ -1088,6 +1201,19 @@ const EDITOR = (() => {
       drawBurger(ctx, cx, cy, rt);
       ctx.restore();
     }
+    if (tool === 'nut' && !overToolbar()) {
+      ctx.save();
+      ctx.globalAlpha = 0.55;
+      drawNutMound(ctx, cx, cy, rt);
+      ctx.restore();
+    }
+    if (tool === 'flip' && !overToolbar()) {
+      ctx.save();
+      ctx.globalAlpha = 0.55;
+      drawBurger(ctx, cx, cy, rt);
+      drawFlipBadge(ctx, cx, cy);
+      ctx.restore();
+    }
     if (tool !== 'select' && !overToolbar()) {
       // snapped crosshair under placement tools
       ctx.strokeStyle = 'rgba(255,255,255,0.65)';
@@ -1116,6 +1242,10 @@ const EDITOR = (() => {
       if (!p) continue;
       if (p.kind === 'burger' && map.burgers[p.bi]) {
         ring(map.burgers[p.bi][0], map.burgers[p.bi][1], 0.7, hot);
+      } else if (p.kind === 'nut' && map.nuts[p.ni]) {
+        ring(map.nuts[p.ni][0], map.nuts[p.ni][1], 0.7, hot);
+      } else if (p.kind === 'flip' && map.flipBurgers[p.fi]) {
+        ring(map.flipBurgers[p.fi][0], map.flipBurgers[p.fi][1], 0.7, hot);
       } else if (p.kind === 'start') {
         ring(map.start.x, map.start.y, 1.0, hot);
       } else if (p.kind === 'goal') {
@@ -1161,6 +1291,8 @@ const EDITOR = (() => {
       { id: 'poly', label: '+Poly', on: tool === 'poly' },
       { id: 'burger', label: '+Burger', on: tool === 'burger' },
       { id: 'glass', label: '+Glass', on: tool === 'glass' },
+      { id: 'nut', label: '+Nut', on: tool === 'nut' },
+      { id: 'flip', label: '+Flip', on: tool === 'flip' },
       { id: 'rider', label: (showRider ? '[x]' : '[ ]') + ' Rider', on: showRider },
       { id: 'theme', label: 'Theme:' + map.theme },
       { id: 'name', label: (naming ? nameBuf + caret : map.name) + (dirty ? ' *' : ''), on: naming, min: 150 },
@@ -1217,6 +1349,8 @@ const EDITOR = (() => {
     poly: 'click to lay vertices - click the first one (or Enter) closes the polygon - Esc cancels',
     burger: 'click to drop a triple cheeseburger',
     glass: 'click or drag along an edge to glass it (obsidian the tires barely grip) - paints the one edge nearest the cursor - clear it by selecting the edge and pressing Del',
+    nut: 'click to drop a nut mound - a lethal hazard (peanut-butter-soaked nuts) the rider dies on contact with',
+    flip: 'click to drop an upside-down burger - collecting it reverses gravity (it looks like a normal burger in play; the violet badge shows only here)',
   };
 
   function drawStatus(ctx, W, H) {
@@ -1242,6 +1376,8 @@ const EDITOR = (() => {
       '  |  bounds ' + Math.round(b.minX) + '..' + Math.round(b.maxX) +
       ' x ' + Math.round(b.minY) + '..' + Math.round(b.maxY) +
       '  |  ' + map.polygons.length + ' poly  ' + map.burgers.length + ' burgers' +
+      (map.flipBurgers.length ? '  ' + map.flipBurgers.length + ' flip' : '') +
+      (map.nuts.length ? '  ' + map.nuts.length + ' nuts' : '') +
       '  |  snap ' + SNAP, W - 10 - SAFE.right, ty);
     ctx.restore();
   }
@@ -1252,6 +1388,8 @@ const EDITOR = (() => {
     ['2 / P', 'Polygon: click out a new shape, close on the first point - inside the play area it is a solid island'],
     ['3 / B', 'Burger: click to drop burgers'],
     ['4 / G', 'Glass: paint obsidian onto edges (near-zero tire grip) - click or drag the nearest edge; clear it by selecting the edge and pressing Del'],
+    ['5 / K', 'Nut: click to drop a nut mound - a lethal hazard the rider dies on contact with (Del removes a selected one)'],
+    ['6 / F', 'Flip: click to drop an upside-down burger - collecting it reverses gravity; identical to a normal burger in play, badged only in the editor'],
     ['double-click', 'on an edge adds a vertex; on a vertex removes it'],
     ['Del', 'remove the selection - a glassed edge clears its glass (Shift+Del: its whole polygon)'],
     ['W', 'toggle the selected polygon solid <-> wire (only wheels collide)'],

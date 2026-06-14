@@ -83,12 +83,17 @@ still re-earns the points live, since the sim recomputes them).
   separate bodies joined by stiff spring-dampers (the suspension). The rear
   wheel is torque-driven; tire grip is a Coulomb-clamped friction impulse at
   the contact point, so the wheel can spin out, climb, and wheelie. The head
-  is the only fatal collider. Runs at 480 Hz (8 substeps per 60 fps frame).
+  is the only fatal terrain collider; nut mounds (`nuts`) additionally kill on
+  contact with any part of the bike. Gravity is signed (`bike.grav`), so an
+  upside-down burger can flip it and the bike rides ceilings. Runs at 480 Hz
+  (8 substeps per 60 fps frame).
 - `js/levels.js` — level data: the playable area is the inside of a polygon;
-  everything outside is ground. Burger and goal positions per level.
+  everything outside is ground. Burger, goal, (optional) nut-mound hazard, and
+  (optional) gravity-flipping upside-down-burger positions per level.
 - `js/render.js` — canvas renderer: procedural ground/sky texture patterns
   (one themed set per visual world, see `THEMES`), turf fringes on up-facing
-  edges, the bike + rider, the animated burgers and popcorn-bucket goal, HUD.
+  edges, the bike + rider, the animated burgers and popcorn-bucket goal, the
+  peanut-butter-soaked nut-mound hazards, HUD.
 - `js/music.js` — procedural chiptune soundtrack: step-sequenced pattern
   strings played on the shared AudioContext. One looping song per visual
   world, plus a title theme (menu + difficulty screens) and a continue-screen
@@ -99,9 +104,10 @@ still re-earns the points live, since the sim recomputes them).
   the replays folder handle persists in IndexedDB.
 - `js/editor.js` — the map editor: a pan/zoom world view rendered through
   the real renderer, with tools for terrain vertices and polygons,
-  burgers, the start and goal, painted glass edges, wire polygons, themes,
-  and undo/redo. Saves and loads `.bmm` map files; the working map autosaves
-  to localStorage between visits.
+  burgers, upside-down (gravity-flip) burgers, nut-mound hazards, the start
+  and goal, painted glass edges, wire polygons, themes, and undo/redo. Saves
+  and loads `.bmm` map files; the working map autosaves to localStorage
+  between visits.
 - `js/game.js` — game loop, input, camera, WebAudio engine sound + effects,
   state machine (title / playing / dead / finished, plus the replay
   browser and playback screens), picks the soundtrack for the current
@@ -142,6 +148,13 @@ control reference; the short version:
   edges — click or drag and the one edge nearest the cursor takes the
   brush, so stacked polygons stay distinct. To clear glass, select that
   edge and press `Del`.
+- **+Nut** (5) drops nut mounds — lethal hazards (a heap of nuts in oozing
+  peanut butter) the rider dies on contact with, this game's take on
+  Elasto Mania's spinning spikes. Select one and press `Del` to remove it.
+- **+Flip** (6) drops upside-down burgers — collecting one reverses gravity
+  (Elasto Mania's gravity apple). They look exactly like normal burgers in
+  play and count toward the burger total; a violet badge marks them in the
+  editor only. Select one and press `Del` to remove it.
 - **T** cycles the theme (the soundtrack follows along), **N** renames
   the map, `Ctrl+Z`/`Ctrl+Y` undo and redo, the wheel zooms, **0** fits
   the whole map.
@@ -177,3 +190,15 @@ engine and brakes are passengers and momentum is everything. (`edge` is the
 segment from vertex `i` to `i+1`.) Pre-`v2` maps used a `glass` field of
 `[x0, x1]` floor x-spans; the editor still loads them, converting each span
 to the edges whose midpoint falls inside it.
+
+Two more optional fields place objects. `nuts` is a list of `[x, y]` points,
+each a **nut mound** — a lethal "killer" the rider dies on contact with (the
+Elasto Mania spinning-spike equivalent). Touching one with any part of the
+bike — head, either wheel, or the frame body, within `PHYS.nutR` of the
+point — ends the run. `flipBurgers` is a list of `[x, y]` points, each an
+**upside-down burger** — a burger that, when collected, reverses gravity (the
+Elasto Mania gravity apple). They are graphically identical to normal burgers
+in play and count toward the burger total; collecting one toggles `bike.grav`
+so the bike falls — and rides — the other way up. Neither field is used by a
+built-in track yet, and both are inert when absent, so existing maps and saved
+replays are unaffected.

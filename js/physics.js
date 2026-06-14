@@ -100,6 +100,12 @@ const PHYS = {
   headX: -0.18,    // head offset in frame space (x is mirrored by facing)
   headY: -0.90,
 
+  nutR: 0.45,      // lethal radius of a nut mound — this world's "killer", the
+                   // Elasto Mania spinning-spike equivalent. Touching one with
+                   // ANY bike part (head, either wheel, or the frame body) is
+                   // instantly fatal. A touch tighter than the drawn pile so
+                   // death only fires once a part is clearly buried in it
+
   anchorX: 0.55,   // wheel anchor offsets in frame space
   anchorY: 0.30,
 };
@@ -136,6 +142,9 @@ function pointInPoly(px, py, poly) {
 // distinct. L.glass ([[x0, x1], ...], glass wherever a segment's midpoint x
 // falls in a span) is the legacy form, still honoured so old maps and replays
 // play unchanged.
+// L.nuts ([[x, y], ...]) are nut mounds — lethal "killer" hazards the rider
+// dies on contact with (see PHYS.nutR / Bike.step). They pass straight through
+// here untouched; the sim reads L.nuts directly.
 function prepareLevel(L) {
   const segments = [], grass = [], glassTops = [];
   const wires = new Set(L.wires || []);
@@ -183,6 +192,9 @@ class Bike {
     this.voltCombo = 0;     // consecutive same-direction airborne volts
     this.voltWasAir = false; // last volt fired while fully airborne
     this.voltBoost = 1;     // strength multiplier locked in at volt start
+    this.grav = 1;          // gravity direction: +1 pulls down (normal), -1 up.
+                            // An upside-down burger flips it, Elasto-Mania
+                            // gravity-apple style, so the bike rides ceilings
     this.dead = false;
     this.wheels = [];
     for (const sx of [-1, 1]) {
@@ -212,13 +224,20 @@ class Bike {
     this.turnT = 0;
   }
 
-  step(dt, input, segs) {
+  // `kills` is the level's nut mounds as [x, y] points (omitted on maps that
+  // have none); touching any of them is fatal. Optional so the headless
+  // harnesses and old call sites that pass only segments keep working.
+  step(dt, input, segs, kills) {
     if (this.dead) return;
     this.turnT += dt;
     const P = PHYS;
     const c = Math.cos(this.angle), s = Math.sin(this.angle);
+    // gravity acceleration, signed by this.grav so an upside-down burger can
+    // invert it (the whole bike — frame and both wheels — shares the one sign,
+    // so flipping it just changes which way everything falls)
+    const gy = P.g * this.grav;
 
-    let fx = 0, fy = P.frameM * P.g, torque = 0;
+    let fx = 0, fy = P.frameM * gy, torque = 0;
     // lean ("volt") control: the rider throws his weight in one big thrust,
     // Elasto Mania style — at most one per voltEvery, same strength on the
     // ground and in the air, re-volting on the interval while a key is held.
@@ -276,7 +295,7 @@ class Bike {
       const Fx = -P.springK * dx - cf * rvx;
       const Fy = -P.springK * dy - cf * rvy;
       w.vel.x += (Fx / P.wheelM) * dt;
-      w.vel.y += (Fy / P.wheelM + P.g) * dt;
+      w.vel.y += (Fy / P.wheelM + gy) * dt;
       fx -= Fx;
       fy -= Fy;
       torque += rx * (-Fy) - ry * (-Fx);
@@ -422,7 +441,7 @@ class Bike {
       else w.spin -= Math.sign(w.spin) * dec;
     }
 
-    // the head is the only fatal collider; wires can't hurt it
+    // the head is the only fatal terrain collider; wires can't hurt it
     const h = this.headPos();
     for (const seg of segs) {
       if (seg.wire) continue;
@@ -430,6 +449,28 @@ class Bike {
       if (Math.hypot(h.x - cp.x, h.y - cp.y) < P.headR) {
         this.dead = true;
         break;
+      }
+    }
+
+    // nut mounds — the level's "killers". Unlike terrain, the whole rider is
+    // lethal against them: head, either wheel, or the frame body within
+    // partR + nutR of a mound's centre kills instantly. Inert on maps with no
+    // nuts (kills empty/undefined), so existing tracks and replays are untouched
+    if (!this.dead && kills) {
+      const parts = [
+        [this.pos.x, this.pos.y, P.frameR],
+        [h.x, h.y, P.headR],
+        [this.wheels[0].pos.x, this.wheels[0].pos.y, P.wheelR],
+        [this.wheels[1].pos.x, this.wheels[1].pos.y, P.wheelR],
+      ];
+      for (const k of kills) {
+        for (const part of parts) {
+          if (Math.hypot(part[0] - k[0], part[1] - k[1]) < part[2] + P.nutR) {
+            this.dead = true;
+            break;
+          }
+        }
+        if (this.dead) break;
       }
     }
   }

@@ -140,7 +140,14 @@
   function reset() {
     bike = new Bike(level.start.x, level.start.y);
     time = 0;
-    burgers = level.burgers.map(b => ({ x: b[0], y: b[1], got: false }));
+    // normal burgers plus the upside-down ones (identical to the rider, but
+    // collecting one flips gravity). Both count toward the burger total and
+    // collect alike, so they share the runtime list; only the `flip` flag and
+    // the gravity it toggles tell them apart
+    burgers = level.burgers.map(b => ({ x: b[0], y: b[1], got: false, flip: false }));
+    if (level.flipBurgers) {
+      for (const b of level.flipBurgers) burgers.push({ x: b[0], y: b[1], got: false, flip: true });
+    }
     headBody = null;
     stylePts = 0;
     spinAcc = 0;
@@ -327,6 +334,26 @@
     f.connect(g);
     g.connect(sfxGain);
     src.start();
+  }
+
+  // a swooping tone for a gravity flip (an upside-down burger): the pitch
+  // glides toward the new "down", so an up-flip swoops up and a down-flip
+  // swoops down — an audible cue for an otherwise invisible event
+  function gravWhoomp(up) {
+    if (!AC || muted) return;
+    const t0 = AC.currentTime;
+    const o = AC.createOscillator(), g = AC.createGain();
+    o.type = 'triangle';
+    o.frequency.setValueAtTime(up ? 300 : 760, t0);
+    o.frequency.exponentialRampToValueAtTime(up ? 880 : 200, t0 + 0.32);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(0.16, t0 + 0.03);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.36);
+    o.connect(g);
+    g.connect(sfxGain);
+    o.start(t0);
+    o.stop(t0 + 0.38);
+    whoosh(0.18, up ? 900 : 360, 0.25);
   }
 
   // quick rising arpeggio when style points land, each note sliding up a
@@ -1596,6 +1623,10 @@
           b.got = true;
           blip(740, 0.09);
           setTimeout(() => blip(1180, 0.12), 70);
+          // an upside-down burger reverses gravity as it's eaten; the swoop
+          // sound follows the new pull. Deterministic (runs in the shared sim
+          // frame), so replays flip at the same instant
+          if (b.flip) { bike.grav *= -1; gravWhoomp(bike.grav < 0); }
           break;
         }
       }
@@ -1693,7 +1724,7 @@
   // the detached helmet bounces around after a crash
   function stepHead(dt) {
     if (!headBody) return;
-    headBody.vy += PHYS.g * dt;
+    headBody.vy += PHYS.g * bike.grav * dt;
     headBody.x += headBody.vx * dt;
     headBody.y += headBody.vy * dt;
     headBody.rot += (headBody.vx / PHYS.headR) * 0.5 * dt;
@@ -1743,7 +1774,7 @@
     simInput = input;
     const angle0 = bike.angle;
     for (let i = 0; i < SUB; i++) {
-      bike.step(FDT / SUB, input, level.segments);
+      bike.step(FDT / SUB, input, level.segments, level.nuts);
       if (bike.dead) break;
     }
     if (bike.dead) {
@@ -1967,6 +1998,7 @@
     const hw = W / 2 / Z + 1, hh = H / 2 / Z + 1;
     drawWorld(ctx, level, theme,
       { x0: cam.x - hw, y0: cam.y - hh, x1: cam.x + hw, y1: cam.y + hh }, rt);
+    if (level.nuts) for (const n of level.nuts) drawNutMound(ctx, n[0], n[1], rt);
     for (const b of burgers) if (!b.got) drawBurger(ctx, b.x, b.y, rt);
     drawPopcorn(ctx, level.goal[0], level.goal[1], rt);
     drawBike(ctx, bike, !!headBody);
@@ -1986,6 +2018,7 @@
       pos: bike.pos,
       burgers,
       goal: level.goal,
+      nuts: level.nuts,
       t: rt,
       theme,
     });
