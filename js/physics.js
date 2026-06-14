@@ -8,20 +8,33 @@ const PHYS = {
   wheelM: 0.22,
   wheelI: 0.018,
 
-  frameM: 1.0,
-  frameI: 0.35,
+  frameM: 1.3,     // frame mass. Raised 1.0->1.3 over the feel passes to give
+                   // the bike more heft — it was getting tossed around by
+                   // impacts too easily and felt underweight
+  frameI: 0.55,    // frame rotational inertia. Raised 0.35->0.55: the SAME volt
+                   // torque now spins the bike up more slowly, so a lean feels
+                   // like shifting real weight instead of flicking a light
+                   // frame. This is the main "harder to volt / heavier" lever
+                   // (engine wheelie and brake stoppie get a touch heavier too)
 
-  springK: 60,     // soft suspension: low rate so the bike gives a lot per
-                   // bump. Static sag is still tiny (frameM*g/2K ~ 5cm), so
-                   // the frame never rests on its belly collider; the lower
-                   // rate also raises the damping ratio, so it's less bouncy
+  springK: 42,     // soft suspension: low rate so the bike gives a lot per
+                   // bump. Softened 60->42 — the ride felt too stiff. A lower
+                   // rate also lengthens the spring period (slower recoil) and
+                   // raises the damping ratio (less bouncy). Static sag is still
+                   // small (frameM*g/2K ~ 6cm), so the frame never rests on its
+                   // belly collider
   springC: 5.0,
   springCFade: 5,  // relative speed (m/s) where damper force fades to half:
                    // slow squat stays controlled, hard hits stay elastic
-  maxStretch: 0.7,  // hard cap on suspension travel from the raw anchor. Set
+  maxStretch: 1.2,  // hard cap on suspension travel from the raw anchor. Set
                     // well above spinExtMax so a fast air spin can sling the
                     // wheels right out to the elastic-bar limit and the front
-                    // wheel stretches far on the momentum, Elasto Mania style
+                    // wheel stretches far on the momentum, Elasto Mania style.
+                    // Raised 0.7->1.2: now that the spin winds up much faster,
+                    // the wheels were hitting this travel cap and couldn't fling
+                    // out as far as they should. This is the loop-SAFE stretch
+                    // lever (momentum overshoot); spinExtMax (the steady sling)
+                    // is the loop-fatal one, so it's left alone
   frameR: 0.45,    // body collider radius: on a slammed landing the faded
                    // damper lets the frame dive between the planted wheels,
                    // and without a belly hit it would carry the head into
@@ -45,10 +58,21 @@ const PHYS = {
   maxSpin: 55,     // rad/s cap on driven wheel spin
   brakeRate: 30,   // exponential lock rate for both wheels
   brakeR: 0.32,    // fraction of brake torque reacted onto the frame
-  brakeSkid: 2.0,  // skid friction torque multiplier passed to the frame
-  brakeCap: 0.5,   // stoppie pitch (rad) the brake torque fades out at;
-                   // braking decel is endo-limited, so this IS the brake
-                   // strength on flat ground
+  brakeSkid: 1.0,  // skid friction torque multiplier passed to the frame.
+                   // Halved alongside the brakeGrip boost below: the stronger
+                   // brakes shed a lot more momentum, and the skid torque
+                   // scales with that braking force, so without this cut a
+                   // hard stop would just throw the rider over the bars
+  brakeGrip: 2.2,  // the locked tire bites the rock this many times harder
+                   // than rolling traction (P.mu) while the brake is held —
+                   // a brake-only grip boost, so the bike STOPS hard without
+                   // changing how it accelerates or climbs (engine traction
+                   // still uses plain P.mu, so the tuned maps are untouched).
+                   // Glass is exempt (still crossed on momentum alone), and
+                   // braking stays endo-limited, so slamming the brakes at
+                   // speed still pitches you over — this just raises the
+                   // deceleration the front end can deliver before that
+  brakeCap: 0.5,   // stoppie pitch (rad) the brake torque fades out at
   parkMu: 1.9,     // static friction once the brake has fully clamped a
                    // stopped wheel: a held brake parks the bike on a hill
                    // instead of creeping, until the grade gets very steep
@@ -56,19 +80,41 @@ const PHYS = {
                    // sets the break-away grade (~45deg): on steeper slopes
                    // the braked slow-roll never gets slow enough to clamp
 
-  voltT: 28,      // peak torque of one rider thrust ("volt")
+  voltT: 23,      // peak torque of one rider thrust ("volt"). Most of the
+                  // "heavier" feel comes from the bigger frameI above (slower to
+                  // spin up); this sets the ground lean's punch (28->21->23, a
+                  // touch stronger on the ground than the trimmed-back value)
+  voltAirBase: 0.52, // boost the FIRST airborne volt starts at (vs 1 on the
+                  // ground). It scales both the thrust AND the spin ceiling, so
+                  // it sets how fast the FIRST air volt gets going; the stack
+                  // below ramps subsequent ones up. Raised 0.4->0.52 so the
+                  // opening air volt starts off a bit quicker
   voltDur: 0.2,   // thrust duration: torque follows a half-sine burst
   voltEvery: 0.55, // interval between thrusts while a lean key is held:
                    // short enough that grounded re-volts catch the bike
                    // still tilted from the last one, so holding a lean key
                    // ratchets it past the balance point and all the way
                    // over (~2s from static; >=0.65 never tips)
-  voltRate: 4.0,  // rad/s spin rate a thrust saturates toward
-  voltStack: 1.5,  // strength gain per consecutive same-direction air volt:
-                   // both the thrust and the spin ceiling it saturates toward
-                   // scale with the stack, so holding a lean through a long
-                   // airtime winds up a fast rotation (~3+ rev/s)
-  voltStackMax: 4, // air volts stop compounding past this many stacks
+  voltRate: 4.6,  // rad/s spin rate one stack of thrust saturates toward — the
+                  // spin ceiling is voltRate*voltBoost. Raised 4.0->4.6 to lift
+                  // the air rotation speed at EVERY stack (so spamming volts
+                  // tops out faster, not just at the unreachable max-stack cap).
+                  // Barely touches ground volts (those tip the bike well before
+                  // hitting the ceiling, so they're torque/voltT-limited)
+  voltStack: 0.7,  // boost gain per consecutive same-direction AIR volt: both
+                   // the thrust and the spin ceiling scale with the stack, so a
+                   // held lean winds rotation up. Lowered 1.5->1.0->0.7 to slow
+                   // the wind-up — the spin was ramping up too fast after the
+                   // (good) gentle first volt, so each stack now adds less
+  voltStackMax: 24, // air volts stop compounding past this many stacks. Raised
+                   // 18->24 for more headroom on a long spam: the spin ceiling
+                   // is voltRate*(voltAirBase+voltStack*this), so combined with
+                   // the higher voltRate the absolute top is now ~13 rev/s. The
+                   // ramp pace (voltStack) is untouched; this top is only reached
+                   // on a very long airtime, voltRate raises the rest
+  avelDamp: 0.12,  // angular "drag" bled off avel per second (was a hardcoded
+                   // 0.12; promoted to a constant). Keeps rotation from feeling
+                   // floaty — a higher value settles spins faster
 
   mu: 1.1,         // tire friction coefficient
   muGlass: 0.06,   // tire friction on obsidian glass: the engine can barely
@@ -87,14 +133,36 @@ const PHYS = {
                    // out at maxSpin*wheelR (~22) on the flat, so the gas is
                    // always the faster choice up to there and never slower
                    // past it (it just stops adding once drag has the lead)
-  bounce: 0.3,     // restitution of a belly impact (elastic bar rebound)
+  bounce: 0.18,    // restitution of a belly impact (elastic bar rebound).
+                   // Cut 0.3->0.18 so the bike doesn't kick off surfaces so
+                   // dramatically — it lands heavier and planted
+  // Elastic belly: the body is held off a surface by a penalty SPRING, not a
+  // rigid clamp. A light hit compresses it a little and springs back off intact;
+  // a hard hit has enough momentum to punch the frame DEEPER than the body
+  // radius (bellyK can't hold it), so the body collapses through the surface and
+  // the head — rigidly above the frame — is dragged down into it, where the head
+  // collider kills naturally. No speed cutoff: the survive/die threshold falls
+  // out of the spring stiffness vs. the impact momentum (~20 m/s with these).
+  bellyK: 2500,    // belly penalty-spring stiffness (N/m). Lower = collapses
+                   // (and so kills) at a lower slam speed
+  bellyC: 110,     // belly damping. Tames the bounce-off on survivable hits...
+  bellyCFade: 6,   // ...but fades above this closing speed (m/s) so a true slam
+                   // isn't damped out and can still punch through to a death
   bounceMin: 0.8,  // impact speed (m/s) below which contact is inelastic,
                    // so rolling contact stays planted instead of jittering
-  wheelBounce: 0.3,    // tire restitution at full slam speed
+  wheelBounce: 0.18,   // tire restitution at full slam speed (0.3->0.18, with
+                       // `bounce`: less dramatic rebound off surfaces)
   wheelBounceLo: 1.5,  // impact speed (m/s) where tire rebound starts...
   wheelBounceHi: 4.0,  // ...and where it reaches full strength: mild hits
                        // and post-slam chatter land dead, real slams keep
                        // the whole elastic-bar kick
+  wheelMeetDamp: 0.6,  // fraction of the wheels' SEPARATING relative velocity
+                       // bled off per step while they overlap (centres within
+                       // 2*wheelR). Soaks up the suspension-spring rebound after
+                       // the two wheels are smashed together so they spring back
+                       // softly instead of pinging apart; 0 disables, 1 fully
+                       // cancels the rebound. Only damps separation (never adds
+                       // a push), so wheels can still overlap almost completely
 
   headR: 0.24,
   headX: -0.18,    // head offset in frame space (x is mirrored by facing)
@@ -248,7 +316,14 @@ class Bike {
       // a direction change resets the stack
       this.voltCombo = air && this.voltWasAir && lean === this.voltDir
         ? Math.min(P.voltStackMax, this.voltCombo + 1) : 0;
-      this.voltBoost = 1 + P.voltStack * this.voltCombo;
+      // an airborne volt RAMPS from a gentle base (voltAirBase < 1) instead of
+      // starting at full strength: the free-spinning frame would otherwise snap
+      // straight to a fast rotation off the first thrust. The boost scales the
+      // spin ceiling too, so early air volts are slow AND weak and it takes a
+      // few in a row to wind speed up. Grounded volts start at boost 1 (combo
+      // is 0 on the ground), so the ground feel is unchanged
+      const base = air ? P.voltAirBase : 1;
+      this.voltBoost = base + P.voltStack * this.voltCombo;
       this.voltWasAir = air;
       this.voltCd = P.voltEvery;
       this.voltAge = 0;
@@ -273,16 +348,21 @@ class Bike {
       const ax = this.pos.x + lx * c - ly * s;
       const ay = this.pos.y + lx * s + ly * c;
       const rx = ax - this.pos.x, ry = ay - this.pos.y;
-      // velocity of the anchor point on the frame
-      const avx = this.vel.x - this.avel * ry;
-      const avy = this.vel.y + this.avel * rx;
 
-      // spring + damper between wheel and anchor. The damper is digressive:
-      // it fades with relative speed, so slow motion (launch squat, weight
-      // shifts) is firmly damped while fast motion (landing impacts) keeps
-      // its energy in the spring and bounces back out
+      // spring + damper between wheel and anchor. The damper measures the
+      // wheel's velocity against RIGID co-rotation at the wheel's OWN position —
+      // not the anchor's velocity. A wheel slung out past its anchor co-rotates
+      // faster than the anchor does, so referencing the anchor baked in a fake
+      // steady velocity difference: damping it dragged the wheel around its
+      // centre (orbit), and fading the damper on it left the radial spring free
+      // to wobble in and out. Against the wheel's own rigid velocity that
+      // difference vanishes, so a clean spin produces no damper force at all and
+      // the wheel settles into a steady outward sling; only true wobble/orbit is
+      // damped. The digressive fade still lets a real radial slam bounce elastic.
       const dx = w.pos.x - ax, dy = w.pos.y - ay;
-      const rvx = w.vel.x - avx, rvy = w.vel.y - avy;
+      const rbx = this.vel.x - this.avel * (w.pos.y - this.pos.y);
+      const rby = this.vel.y + this.avel * (w.pos.x - this.pos.x);
+      const rvx = w.vel.x - rbx, rvy = w.vel.y - rby;
       const cf = P.springC /
         (1 + (rvx * rvx + rvy * rvy) / (P.springCFade * P.springCFade));
       const Fx = -P.springK * dx - cf * rvx;
@@ -339,7 +419,7 @@ class Bike {
     this.vel.x += (fx / P.frameM) * dt;
     this.vel.y += (fy / P.frameM) * dt;
     this.avel += (torque / P.frameI) * dt;
-    this.avel *= 1 - 0.12 * dt;
+    this.avel *= 1 - P.avelDamp * dt;
 
     // quadratic linear drag on the speed above dragV0: a mass-independent
     // deceleration applied to the frame and both wheels so the whole bike
@@ -391,6 +471,33 @@ class Bike {
       }
     }
 
+    // Soft wheel-meet. The two wheels have no collider against each other, so
+    // on a high-speed smash they pass right through — but each is tethered to
+    // its own frame anchor by a suspension spring, and once they're forced
+    // together those springs would fling them back apart elastically (the
+    // digressive damper has faded out at smash speed), which reads as a harsh
+    // bounce. Absorb that rebound: while the wheels actually overlap, bleed off
+    // only the SEPARATING part of their relative velocity. There's no push, so
+    // they can still smash together and overlap almost completely; the springs
+    // just reform the bike gently instead of snapping it back. Confined to real
+    // overlap (centres within 2*wheelR), which never happens in normal riding,
+    // so the tuned maps and replays are bit-identical away from a crash.
+    {
+      const w0 = this.wheels[0], w1 = this.wheels[1];
+      let nx = w1.pos.x - w0.pos.x, ny = w1.pos.y - w0.pos.y;
+      const sep = Math.hypot(nx, ny);
+      if (sep > 0 && sep < 2 * P.wheelR) {
+        nx /= sep; ny /= sep;
+        const rvN = (w1.vel.x - w0.vel.x) * nx + (w1.vel.y - w0.vel.y) * ny;
+        if (rvN > 0) { // separating: this is the rebound, damp it
+          const depth = (2 * P.wheelR - sep) / (2 * P.wheelR); // 0..1, deeper = stronger
+          const j = P.wheelMeetDamp * depth * rvN * 0.5;
+          w0.vel.x += nx * j; w0.vel.y += ny * j;
+          w1.vel.x -= nx * j; w1.vel.y -= ny * j;
+        }
+      }
+    }
+
     for (const w of this.wheels) this.wheelContacts(w, segs, dt, input.brake);
 
     // the belly collider runs from the wheel-top line downward only: it is a
@@ -414,14 +521,20 @@ class Bike {
       const ly = -(cp.x - this.pos.x) * s2 + (cp.y - this.pos.y) * c2;
       if (ly < P.anchorY - P.wheelR) continue;
       nx /= d; ny /= d;
-      this.pos.x += nx * (P.frameR - d);
-      this.pos.y += ny * (P.frameR - d);
-      const vn = this.vel.x * nx + this.vel.y * ny;
-      if (vn < 0) {
-        const e = -vn > P.bounceMin ? P.bounce : 0;
-        this.vel.x -= nx * vn * (1 + e);
-        this.vel.y -= ny * vn * (1 + e);
-      }
+      const pen = P.frameR - d;                       // how deep the body is in
+      const vn = this.vel.x * nx + this.vel.y * ny;    // <0 = driving inward
+      // penalty SPRING (not a rigid clamp): pushes the body back out, plus
+      // damping that fades on a hard hit. A survivable impact compresses it a
+      // little and springs back off; a hard one carries the frame past the body
+      // radius before the spring can stop it, so it collapses through and the
+      // head (above the frame) is dragged into the surface — the head collider
+      // below then kills naturally, with no speed cutoff. Once the frame punches
+      // through, the head reaches the surface within a step or two; for a
+      // survivable hit the spring/damping fire it back off intact.
+      let f = P.bellyK * pen;
+      if (vn < 0) f -= (P.bellyC / (1 + vn * vn / (P.bellyCFade * P.bellyCFade))) * vn;
+      this.vel.x += nx * (f / P.frameM) * dt;
+      this.vel.y += ny * (f / P.frameM) * dt;
     }
 
     // rolling resistance: grounded wheels slowly shed spin, which bleeds
@@ -528,7 +641,12 @@ class Bike {
       const vt = vg - P.wheelR * w.spin;
       const meff = 1 / (1 / P.wheelM + P.wheelR * P.wheelR / P.wheelI);
       let jt = -vt * meff;
-      const maxF = (seg.glass ? P.muGlass : P.mu) * jn;
+      // a held brake bites far harder than rolling traction (brakeGrip), so
+      // the bike stops in a much shorter distance — but only on rock, and
+      // only while braking, so acceleration/climbing and glass are unchanged
+      const grip = (braking && !seg.glass) ? P.mu * P.brakeGrip
+                                           : (seg.glass ? P.muGlass : P.mu);
+      const maxF = grip * jn;
       if (jt > maxF) jt = maxF;
       if (jt < -maxF) jt = -maxF;
       w.vel.x += tx * jt / P.wheelM;

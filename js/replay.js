@@ -15,7 +15,9 @@
 // an older version" failure instead of a silent, wrong-looking playback.
 const REPLAY = (() => {
   const FORMAT = 'burger-mania-replay';
-  const VERSION = 3; // bumped 2026-06-13 (lower gravity, stronger brakes, less engine torque)
+  const VERSION = 4; // bumped 2026-06-14 (physics feel pass: stronger brakes,
+                     // heavier bike, reworked air volt, softer suspension,
+                     // elastic belly collisions, soft wheel-meet)
   const EXT = '.bmr';
   const PICKER_TYPES = [{
     description: 'Burger Mania replay',
