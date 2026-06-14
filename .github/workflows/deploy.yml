@@ -40,7 +40,7 @@ jobs:
       - name: Assemble the published site (only what the game needs)
         run: |
           mkdir -p _site
-          cp index.html _site/
+          cp index.html CNAME _site/
           cp -r js assets _site/
 
       - uses: actions/configure-pages@v5
