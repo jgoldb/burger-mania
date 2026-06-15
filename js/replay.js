@@ -17,7 +17,9 @@ const REPLAY = (() => {
   const FORMAT = 'burger-mania-replay';
   const VERSION = 4; // bumped 2026-06-14 (physics feel pass: stronger brakes,
                      // heavier bike, reworked air volt, softer suspension,
-                     // elastic belly collisions, soft wheel-meet)
+                     // soft wheel-meet). 2026-06-15 crash model (body has no
+                     // terrain collider — sinks through on a hard slam) rides
+                     // under this same not-yet-deployed VERSION 4, no re-bump
   const EXT = '.bmr';
   const PICKER_TYPES = [{
     description: 'Burger Mania replay',

@@ -21,11 +21,20 @@ const PHYS = {
                    // bump. Softened 60->42 — the ride felt too stiff. A lower
                    // rate also lengthens the spring period (slower recoil) and
                    // raises the damping ratio (less bouncy). Static sag is still
-                   // small (frameM*g/2K ~ 6cm), so the frame never rests on its
-                   // belly collider
+                   // small (frameM*g/2K ~ 6cm)
   springC: 5.0,
-  springCFade: 5,  // relative speed (m/s) where damper force fades to half:
-                   // slow squat stays controlled, hard hits stay elastic
+  springCFade: 12, // relative speed (m/s) where the suspension damper fades to
+                   // half. Raised 5->12 to make the bike take a harder hit: the
+                   // body has no terrain collider (it sinks through on a big
+                   // enough slam, dragging the head to its death), so how far the
+                   // frame bottoms out — and thus the fatal fall height — is set
+                   // by how much of the impact the suspension soaks up. A higher
+                   // fade keeps the damper biting deep into a fast compression,
+                   // so the rider SURVIVES BIGGER DROPS (flat-slam death ~12->15
+                   // m/s, ~19m->28m of fall) and hard landings plant instead of
+                   // springing back. The spring RATE (plushness/give-per-bump)
+                   // is untouched — this is the fall-toughness lever: higher =
+                   // tougher + more planted, lower = bouncier and dies lower
   maxStretch: 1.2,  // hard cap on suspension travel from the raw anchor. Set
                     // well above spinExtMax so a fast air spin can sling the
                     // wheels right out to the elastic-bar limit and the front
@@ -35,12 +44,9 @@ const PHYS = {
                     // out as far as they should. This is the loop-SAFE stretch
                     // lever (momentum overshoot); spinExtMax (the steady sling)
                     // is the loop-fatal one, so it's left alone
-  frameR: 0.45,    // body collider radius: on a slammed landing the faded
-                   // damper lets the frame dive between the planted wheels,
-                   // and without a belly hit it would carry the head into
-                   // the ground and drag the wheels through the floor via
-                   // the stretch clamp. Inactive in normal riding (rest
-                   // clearance ~0.67)
+  frameR: 0.45,    // frame body radius — used ONLY as the body's lethal contact
+                   // radius against nut mounds now (see Bike.step). The body has
+                   // no terrain collider, so this never touches rock
   spinExt: 0.022,   // anchor extension (m) per (rad/s)^2 of frame spin
   spinExtMax: 0.28, // cap on the spin-driven REST extension. Kept modest: this
                     // is how far the slung anchor sits out during *sustained*
@@ -133,25 +139,13 @@ const PHYS = {
                    // out at maxSpin*wheelR (~22) on the flat, so the gas is
                    // always the faster choice up to there and never slower
                    // past it (it just stops adding once drag has the lead)
-  bounce: 0.18,    // restitution of a belly impact (elastic bar rebound).
-                   // Cut 0.3->0.18 so the bike doesn't kick off surfaces so
-                   // dramatically — it lands heavier and planted
-  // Elastic belly: the body is held off a surface by a penalty SPRING, not a
-  // rigid clamp. A light hit compresses it a little and springs back off intact;
-  // a hard hit has enough momentum to punch the frame DEEPER than the body
-  // radius (bellyK can't hold it), so the body collapses through the surface and
-  // the head — rigidly above the frame — is dragged down into it, where the head
-  // collider kills naturally. No speed cutoff: the survive/die threshold falls
-  // out of the spring stiffness vs. the impact momentum (~20 m/s with these).
-  bellyK: 2500,    // belly penalty-spring stiffness (N/m). Lower = collapses
-                   // (and so kills) at a lower slam speed
-  bellyC: 110,     // belly damping. Tames the bounce-off on survivable hits...
-  bellyCFade: 6,   // ...but fades above this closing speed (m/s) so a true slam
-                   // isn't damped out and can still punch through to a death
-  bounceMin: 0.8,  // impact speed (m/s) below which contact is inelastic,
-                   // so rolling contact stays planted instead of jittering
-  wheelBounce: 0.18,   // tire restitution at full slam speed (0.3->0.18, with
-                       // `bounce`: less dramatic rebound off surfaces)
+  // The body has no terrain collider at all (see Bike.step): nothing holds the
+  // frame off a surface, so a hard enough slam sinks it straight through and the
+  // head is dragged down to its death. This is what makes a big drop fatal — the
+  // survive/die line falls out of impact force vs. suspension stiffness, with no
+  // belly spring, no speed cutoff and no special-casing.
+  wheelBounce: 0.18,   // tire restitution at full slam speed (0.3->0.18:
+                       // less dramatic rebound off surfaces)
   wheelBounceLo: 1.5,  // impact speed (m/s) where tire rebound starts...
   wheelBounceHi: 4.0,  // ...and where it reaches full strength: mild hits
                        // and post-slam chatter land dead, real slams keep
@@ -163,6 +157,26 @@ const PHYS = {
                        // softly instead of pinging apart; 0 disables, 1 fully
                        // cancels the rebound. Only damps separation (never adds
                        // a push), so wheels can still overlap almost completely
+
+  // Crash trip. A motorcycle that slams the ground doesn't politely bounce off
+  // a tyre — its momentum carries it OVER the planted wheel (face-first if it
+  // came in nose-down, over the tail on the rear wheel). These constants turn a
+  // hard wheel impact into that throw. (The fall-from-too-high death is handled
+  // separately, by the body having no collider — the frame just sinks through.)
+  tripMin: 6,      // closing speed (m/s) a wheel impact must exceed before it
+                   // trips the frame at all. Below this — rolling contact,
+                   // gentle landings, post-bounce chatter — nothing trips, so
+                   // ordinary riding is untouched
+  tripFull: 16,    // closing speed where the trip reaches full strength
+  tripGain: 0.6,   // how hard a full slam pivots the frame toward rotating
+                   // about the planted wheel (1 = the frame instantly takes
+                   // that pivot's angular velocity, i.e. goes fully over the
+                   // bars). A steep one-wheel slam trips hard and drives the
+                   // head down; a FLAT two-wheel slam cancels — the wheels
+                   // pivot opposite ways — so clean both-wheel landings, even
+                   // fast ones, don't trip (they only pick up a mild forward
+                   // nod from forward speed). This is the "thrown forward /
+                   // backward on a crash" lever
 
   headR: 0.24,
   headX: -0.18,    // head offset in frame space (x is mirrored by facing)
@@ -386,16 +400,23 @@ class Bike {
         w.spin += (eT / P.wheelI) * dt * this.facing;
         // cap the engine's own wind-up without clawing back the extra
         if (w.spin * this.facing > P.maxSpin) w.spin = P.maxSpin * this.facing;
-        // engine reaction torque pitches the frame backward (wheelies,
-        // and mid-air attitude adjustment) until the wheel maxes out;
-        // weaker in the air so gas doesn't overpower the lean controls.
-        // the reaction fades as pitch-back rotation builds, so a held
-        // wheelie climbs slowly instead of snapping over — until gravity
-        // takes it past the balance point
+        // engine reaction torque pitches the frame backward (wheelies, and
+        // mid-air attitude adjustment); weaker in the air so gas doesn't
+        // overpower the lean controls. Two fades stack:
+        //  - `fade` on pitch-back rate, so a held wheelie climbs slowly
+        //    instead of snapping over — until gravity takes it past balance.
+        //  - `accelLeft` on remaining engine headroom (1 at a standstill,
+        //    0 as the wheel nears maxSpin): the front lift tracks how much
+        //    acceleration the engine can still deliver, so the wheelie is
+        //    strong off the line and levels out as you reach speed, with none
+        //    left at top speed — Elasto Mania style. This scales only the
+        //    REACTION (the lift), never eT (forward thrust), so acceleration,
+        //    hill-climb and the tuned maps are all unchanged.
         if (w.spin !== before) {
           const back = this.avel * -this.facing; // current pitch-back rate
           const fade = Math.min(1, Math.max(0, 1 - back / P.wheelieRate));
-          torque -= P.engineR * this.facing * (w.onGround ? 1 : 0.4) * fade;
+          const accelLeft = Math.max(0, 1 - Math.abs(w.spin) / P.maxSpin);
+          torque -= P.engineR * this.facing * (w.onGround ? 1 : 0.4) * fade * accelLeft;
         }
       }
       if (input.brake) {
@@ -500,42 +521,16 @@ class Bike {
 
     for (const w of this.wheels) this.wheelContacts(w, segs, dt, input.brake);
 
-    // the belly collider runs from the wheel-top line downward only: it is a
-    // floor-and-wall backstop, not a full body collider. On a slammed landing
-    // the wheels splay sideways and the frame dives between them, so the belly
-    // is what meets the ground — and it bounces off (the elastic bars fire the
-    // whole bike back up) instead of letting the head carry through. Ramming a
-    // wall, it stops the frame so it can't plow past and drag a stuck wheel
-    // out the far side. But everything ABOVE the wheel tops (toward the head,
-    // in the bike's own frame) is passthrough, so the body threads obstacles
-    // in the wheel↔head gap, Elasto Mania style — only the wheels and the head
-    // collide there.
-    for (const seg of segs) {
-      const cp = closestOnSeg(this.pos.x, this.pos.y, seg);
-      let nx = this.pos.x - cp.x, ny = this.pos.y - cp.y;
-      const d = Math.hypot(nx, ny);
-      if (d >= P.frameR || d === 0) continue;
-      // contact height in the bike's frame (+y is toward the wheels). Skip
-      // anything above the wheel tops — that band is the wheel↔head gap the
-      // body threads; catching it would wall the body off in mid-gap
-      const ly = -(cp.x - this.pos.x) * s2 + (cp.y - this.pos.y) * c2;
-      if (ly < P.anchorY - P.wheelR) continue;
-      nx /= d; ny /= d;
-      const pen = P.frameR - d;                       // how deep the body is in
-      const vn = this.vel.x * nx + this.vel.y * ny;    // <0 = driving inward
-      // penalty SPRING (not a rigid clamp): pushes the body back out, plus
-      // damping that fades on a hard hit. A survivable impact compresses it a
-      // little and springs back off; a hard one carries the frame past the body
-      // radius before the spring can stop it, so it collapses through and the
-      // head (above the frame) is dragged into the surface — the head collider
-      // below then kills naturally, with no speed cutoff. Once the frame punches
-      // through, the head reaches the surface within a step or two; for a
-      // survivable hit the spring/damping fire it back off intact.
-      let f = P.bellyK * pen;
-      if (vn < 0) f -= (P.bellyC / (1 + vn * vn / (P.bellyCFade * P.bellyCFade))) * vn;
-      this.vel.x += nx * (f / P.frameM) * dt;
-      this.vel.y += ny * (f / P.frameM) * dt;
-    }
+    // The body has NO terrain collider — only the wheels and the head touch
+    // rock. This is what makes a hard slam fatal: nothing holds the frame off
+    // the ground, so once an impact beats the suspension the frame sinks
+    // straight through the surface, dragging the head (rigidly above it) down
+    // until the head collider below registers the hit and the rider dies. A
+    // gentle landing never sinks that far — the planted wheels and the soft
+    // suspension carry the frame and the head stays well clear — so it's purely
+    // the impact force vs. the suspension that decides survival, no speed cutoff
+    // and no special-casing. (The frame is still lethal against nut mounds; that
+    // is a separate hazard, handled below.)
 
     // rolling resistance: grounded wheels slowly shed spin, which bleeds
     // bike speed through tire friction and lets it coast to a full stop
@@ -607,6 +602,27 @@ class Bike {
         jn = -(1 + e) * vn * P.wheelM;
         w.vel.x += nx * jn / P.wheelM;
         w.vel.y += ny * jn / P.wheelM;
+      }
+
+      // crash trip — over the bars / over the tail. A hard slam doesn't just
+      // bounce the tyre: the frame's fall momentum keeps going and pivots the
+      // whole bike about the planted wheel. Add a slice of that pivot rate,
+      // omega = (r x v) / |r|^2 with r from the wheel to the frame centre,
+      // scaled by how hard the wheel drove into the ground. A nose-down slam
+      // pivots the head into the floor (face-plant); landing pitched back on
+      // the rear wheel throws it over backward. The kick is ADDED (not blended
+      // toward), so on a flat both-wheel landing the two wheels contribute
+      // exactly opposite omegas that cancel — a clean landing never trips
+      // itself over, it just picks up a mild forward nod from forward speed.
+      const closing = -vn; // frame/wheel speed driving into the surface
+      if (closing > P.tripMin) {
+        const rx = this.pos.x - w.pos.x, ry = this.pos.y - w.pos.y;
+        const r2 = rx * rx + ry * ry;
+        if (r2 > 1e-4) {
+          const omega = (rx * this.vel.y - ry * this.vel.x) / r2;
+          const hard = Math.min(1, (closing - P.tripMin) / (P.tripFull - P.tripMin));
+          this.avel += omega * P.tripGain * hard;
+        }
       }
 
       const tx = -ny, ty = nx;
