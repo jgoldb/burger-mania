@@ -1695,8 +1695,8 @@
   // playback recompute the same totals and old tapes stay in sync.
   const STYLE_FLIP = 100; // turning around (space) while fully airborne
   const STYLE_SPIN = 250; // each full rotation, in the air or on the ground
-  const STYLE_WHEELIE = 25;      // full-speed ceiling per interval held in a wheelie
-  const STYLE_STOPPIE = 150;     // stoppie ceiling: far harder to hold, so worth more
+  const STYLE_WHEELIE = 50;      // full-speed ceiling per interval held in a wheelie
+  const STYLE_STOPPIE = 300;     // stoppie ceiling: far harder to hold, so worth more
   const STYLE_TRICK_EVERY = 1;   // seconds of unbroken balance per payout
   const TRICK_SLACK = 0.4;       // gap (m) under a wheel still scored as planted
   const TRICK_FULL_SPEED = 8;    // m/s at/above which a trick pays its full ceiling
