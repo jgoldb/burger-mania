@@ -3,6 +3,17 @@
 // Tuning constants for the bike. Units: meters, seconds, radians.
 const PHYS = {
   g: 4,
+  airGrav: 0.7,   // gravity multiplier while BOTH wheels are off the ground.
+                   // The AIR-TIME lever: lowering it floats jumps higher and
+                   // longer (peak height & hang time both scale 1/airGrav, so
+                   // 0.75 ~ +33%) WITHOUT touching the ground hold — on contact
+                   // the bike still gets full g, so a volt can't tip it off as
+                   // easily as globally lowering g did. Both frame and wheels
+                   // share the one value, so the airborne bike floats as a rigid
+                   // projectile (the suspension spring is internal/relative, so
+                   // its shape is unchanged). Side effect: a given drop lands a
+                   // touch softer (impact speed = sqrt(2*airGrav*g*h)), i.e.
+                   // slightly more forgiving falls. 1 = no float (old behaviour)
 
   wheelR: 0.4,
   wheelM: 0.22,
@@ -333,8 +344,9 @@ class Bike {
     const c = Math.cos(this.angle), s = Math.sin(this.angle);
     // gravity acceleration, signed by this.grav so an upside-down burger can
     // invert it (the whole bike — frame and both wheels — shares the one sign,
-    // so flipping it just changes which way everything falls)
-    const gy = P.g * this.grav;
+    // so flipping it just changes which way everything falls), and scaled by
+    // airGrav once airborne so jumps float without weakening the ground hold
+    const gy = P.g * this.grav * (grounded ? 1 : P.airGrav);
 
     let fx = 0, fy = P.frameM * gy, torque = 0;
     // lean ("volt"): a DISCRETE rider thrust throttled to one per voltEvery, so
@@ -351,9 +363,10 @@ class Bike {
     const lean = (input.right ? 1 : 0) - (input.left ? 1 : 0);
     if (lean !== 0 && this.voltCd <= 0) {
       this.voltCd = P.voltEvery;  // throttle: no next volt until this elapses
+      this.voltDir = lean;        // remember the lean (drives the arm-flick dir,
+                                   // both grounded and air; sim-inert in the air)
       if (grounded) {
         this.voltAge = 0;         // grounded: start a smooth torque burst
-        this.voltDir = lean;
       } else {
         // mid-air: a FIXED instantaneous boost (voltKick) per volt — the SAME
         // size at ANY voltMaxSpin, so the cap is purely a ceiling, not a volt-

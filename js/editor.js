@@ -58,8 +58,8 @@ const EDITOR = (() => {
   // chosen from the tool's palette panel
   let doodadType = DOODADS[0].id;
   let doodadLayer = 'back';   // 'back' (behind the rider) | 'front' (over him)
-  // which toolbar dropdown is open (null = none): 'view' (Rider/Grid toggles)
-  // or 'theme' (the theme picker)
+  // which toolbar dropdown is open (null = none): 'view' (Rider/Grid/Background
+  // toggles) or 'theme' (the theme picker)
   let menu = null;
   let sel = null;        // {kind: vertex|edge|burger|start|goal|doodad, ...}
   let hov = null;        // same shape, under the cursor (select tool only)
@@ -77,6 +77,8 @@ const EDITOR = (() => {
   let showRider = false; // overlay the rider's wheel + head colliders, parked
                          // on the surface under the cursor (a clearance gauge)
   let showGrid = false;  // draw the alignment grid; off (default) hides it entirely
+  let showBg = true;     // paint the theme's backdrop behind the geometry; off
+                         // blackens the play area (the scenery can distract)
   let mx = 0, my = 0;    // last pointer position (screen px)
   let scrW = 800, scrH = 600;
   let uiRects = [];      // toolbar hitboxes, rebuilt every draw
@@ -449,6 +451,11 @@ const EDITOR = (() => {
   function toggleGrid() {
     showGrid = !showGrid;
     note(showGrid ? 'Grid on' : 'Grid off');
+  }
+
+  function toggleBackground() {
+    showBg = !showBg;
+    note(showBg ? 'Theme background on' : 'Theme background off - play area blacked out');
   }
 
   // step the placement grid coarser (dir -1) or finer (dir +1) through
@@ -1182,6 +1189,7 @@ const EDITOR = (() => {
       case 'select': case 'poly': case 'burger': case 'glass': case 'nut': case 'doodad': setTool(id); break;
       case 'rider': toggleRider(); break;
       case 'grid': toggleGrid(); break;
+      case 'background': toggleBackground(); break;
       case 'name': startNaming(); break;
       case 'undo': undo(); break;
       case 'redo': redo(); break;
@@ -1252,7 +1260,7 @@ const EDITOR = (() => {
     ctx.translate(-cam.x, -cam.y);
     const hw = W / 2 / zoom + 1, hh = H / 2 / zoom + 1;
     const view = { x0: cam.x - hw, y0: cam.y - hh, x1: cam.x + hw, y1: cam.y + hh };
-    drawWorld(ctx, prepared, pat, view, rt);
+    drawWorld(ctx, prepared, pat, view, rt, null, showBg);
     drawGrid(ctx, view);
     drawDoodadLayer(ctx, map.doodads, 'back', rt);   // scenery behind the actors
     for (const n of map.nuts) drawNutMound(ctx, n[0], n[1], rt);
@@ -1952,6 +1960,7 @@ const EDITOR = (() => {
     return [
       { id: 'rider', label: (showRider ? '[x]' : '[ ]') + ' Rider preview', on: showRider },
       { id: 'grid', label: (showGrid ? '[x]' : '[ ]') + ' Grid', on: showGrid },
+      { id: 'background', label: (showBg ? '[x]' : '[ ]') + ' Background', on: showBg },
     ];
   }
 
@@ -2176,6 +2185,7 @@ const EDITOR = (() => {
     get naming() { return naming; },
     get themeName() { return map ? map.theme : 'meadow'; },
     get riderPreview() { return showRider; },
+    get background() { return showBg; },
     // exposed for the headless tests
     get map() { return map; },
     get tool() { return tool; },

@@ -2088,8 +2088,13 @@ function fillGround(ctx, pat, x, y, w, h) {
 
 // `actor` (optional) is the live bike; the gym world reflects it in its wall
 // mirrors. Other worlds ignore it, and the editor/menus pass nothing.
-function drawWorld(ctx, level, pat, view, t, actor) {
+// `bg` (default true) paints the theme's backdrop — sky gradient, distant
+// scenery/mirrors, drifting haze — inside the play area. The Map Editor can
+// pass false to blacken it: the themed backdrop is distracting while laying
+// out geometry, so this leaves only the terrain fill, outlines and edges.
+function drawWorld(ctx, level, pat, view, t, actor, bg) {
   t = t || 0;
+  if (bg === undefined) bg = true;
   const vw = view.x1 - view.x0, vh = view.y1 - view.y0;
   fillGround(ctx, pat, view.x0, view.y0, vw, vh);
 
@@ -2112,15 +2117,20 @@ function drawWorld(ctx, level, pat, view, t, actor) {
     ctx.closePath();
   }
   ctx.clip('evenodd');
-  ctx.fillStyle = skyGradient(ctx, pat, -8 + gdy, 12 + gdy);
-  ctx.fillRect(view.x0, view.y0, vw, vh);
-  pat.background(ctx, view, t, actor, gdy);
-  if (pat.haze !== false) {     // indoor worlds (gym) skip the drifting haze
-    const sp = pat.skyPeriod;   // haze tile repeats every skyPeriod world units
-    const drift = (t * 0.4) % sp;
-    ctx.translate(-drift, 0);
-    ctx.fillStyle = pat.sky;
-    ctx.fillRect(view.x0, view.y0, vw + sp, vh);
+  if (bg) {
+    ctx.fillStyle = skyGradient(ctx, pat, -8 + gdy, 12 + gdy);
+    ctx.fillRect(view.x0, view.y0, vw, vh);
+    pat.background(ctx, view, t, actor, gdy);
+    if (pat.haze !== false) {     // indoor worlds (gym) skip the drifting haze
+      const sp = pat.skyPeriod;   // haze tile repeats every skyPeriod world units
+      const drift = (t * 0.4) % sp;
+      ctx.translate(-drift, 0);
+      ctx.fillStyle = pat.sky;
+      ctx.fillRect(view.x0, view.y0, vw + sp, vh);
+    }
+  } else {
+    ctx.fillStyle = '#000';       // backdrop toggled off: a plain black play area
+    ctx.fillRect(view.x0, view.y0, vw, vh);
   }
   ctx.restore();
 
@@ -3527,36 +3537,55 @@ function drawBike(ctx, bike, headless, back, lamps) {
   strokeSeg(ctx, knee, foot, 0.09, '#15151a');
   strokeSeg(ctx, hip, shoulder, 0.14, '#15151a');
 
-  // The arm is two bones hinged at the elbow: a fixed upper arm
-  // (shoulder→elbow) and a forearm (elbow→hand). At rest the hand grips the
-  // bar; on a volt only the FOREARM swings up — rotating about the fixed
-  // elbow to bring the hand up to the helmet and back, the Elasto-Mania
-  // volting flick. voltCd is re-armed to voltEvery the instant a volt fires
-  // and only ticks down after, so voltEvery - voltCd is the time since that
-  // volt; the forearm tops out at the helmet at the midpoint of a short
-  // window and returns, the whole arc inside one volt interval. The bar
-  // itself never moves — only the rider's hand leaves it.
+  // The arm is two bones hinged at the elbow: an upper arm (shoulder→elbow) and
+  // a forearm (elbow→hand). At rest the hand grips the bar; on a volt it flicks
+  // and returns within one volt interval (the whole arc inside the window), the
+  // direction set by which way the rider is volting — see the two branches below.
+  // voltCd is re-armed to voltEvery the instant a volt fires and only ticks down
+  // after, so voltEvery - voltCd is the time since that volt.
   const VOLT_PUMP = 0.5;  // arm-flick duration (cosmetic flourish, longer than
                           // the snappy PHYS.voltDur boost — they're decoupled)
   const cd = bike.voltCd == null ? PHYS.voltEvery + 9 : bike.voltCd;
   const sinceVolt = PHYS.voltEvery - cd;
   const reach = sinceVolt >= 0 && sinceVolt < VOLT_PUMP
     ? Math.sin(Math.PI * sinceVolt / VOLT_PUMP) : 0;
-  const elbow = L(0.16, -0.56);
-  // the forearm is a rigid bone: rotate its rest direction (elbow→bar) by
-  // `reach` of the way around toward the helmet, keeping its length, so the
-  // hand swings on an arc instead of stretching. atan2 in world space means
-  // the swing follows the bike's tilt and mirrors with its facing for free.
-  const foreLen = Math.hypot(handle.x - elbow.x, handle.y - elbow.y);
-  const restA = Math.atan2(handle.y - elbow.y, handle.x - elbow.x);
-  const headPt = L(PHYS.headX + 0.14, PHYS.headY + 0.08); // front of the helmet
-  let dA = Math.atan2(headPt.y - elbow.y, headPt.x - elbow.x) - restA;
-  dA -= Math.PI * 2 * Math.floor((dA + Math.PI) / (Math.PI * 2)); // shortest turn
-  // take a little less than the full elbow→helmet turn so the flick stops
-  // just shy of the head rather than mashing into it
-  const VOLT_SWING = 0.85;
-  const a = restA + dA * VOLT_SWING * reach;
-  const hand = { x: elbow.x + Math.cos(a) * foreLen, y: elbow.y + Math.sin(a) * foreLen };
+  const restElbow = L(0.16, -0.56);
+  const restHand = handle;  // at rest the hand grips the bar
+  const foreLen = Math.hypot(restHand.x - restElbow.x, restHand.y - restElbow.y);
+  // the flick depends on the volt direction. Everything below is built from L()
+  // world points, so the swing follows the bike's tilt and mirrors with facing.
+  let elbow, hand;
+  if ((bike.voltDir || 0) >= 0) {
+    // CLOCKWISE volt: the upper arm stays put and only the FOREARM swings UP —
+    // a rigid bone rotated about the fixed elbow toward the helmet and back
+    // (it keeps its length, so the hand swings on an arc, not a stretch). The
+    // bar never moves; only the rider's hand leaves it.
+    elbow = restElbow;
+    const restA = Math.atan2(restHand.y - elbow.y, restHand.x - elbow.x);
+    const headPt = L(PHYS.headX + 0.14, PHYS.headY + 0.08); // front of the helmet
+    let dA = Math.atan2(headPt.y - elbow.y, headPt.x - elbow.x) - restA;
+    dA -= Math.PI * 2 * Math.floor((dA + Math.PI) / (Math.PI * 2)); // shortest turn
+    // a little less than the full elbow→helmet turn so it stops shy of the head
+    const a = restA + dA * 0.85 * reach;
+    hand = { x: elbow.x + Math.cos(a) * foreLen, y: elbow.y + Math.sin(a) * foreLen };
+  } else {
+    // COUNTER-CLOCKWISE volt: the WHOLE arm swings off the bar, down and back
+    // toward the rider's seat — a "slap the butt" flick — then returns. Both
+    // bones rotate rigidly about the shoulder (keeping their shape and length),
+    // aimed from the bar toward the butt.
+    const butt = L(-0.42, -0.40);  // slap target (rear of the seat)
+    const restArmA = Math.atan2(restHand.y - shoulder.y, restHand.x - shoulder.x);
+    let dArm = Math.atan2(butt.y - shoulder.y, butt.x - shoulder.x) - restArmA;
+    dArm -= Math.PI * 2 * Math.floor((dArm + Math.PI) / (Math.PI * 2)); // shortest turn
+    const rot = dArm * 0.95 * reach;  // rigid swing of the whole arm
+    const c = Math.cos(rot), s = Math.sin(rot);
+    const swing = (pt) => ({
+      x: shoulder.x + (pt.x - shoulder.x) * c - (pt.y - shoulder.y) * s,
+      y: shoulder.y + (pt.x - shoulder.x) * s + (pt.y - shoulder.y) * c,
+    });
+    elbow = swing(restElbow);
+    hand = swing(restHand);
+  }
   strokeSeg(ctx, shoulder, elbow, 0.10, '#15151a'); // upper arm
 
   if (!headless) {

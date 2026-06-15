@@ -574,6 +574,15 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   EDITOR.action('rider');                       // the Rider row emits this
   if (EDITOR.riderPreview === rider0) bad('the View menu Rider row should toggle the preview');
   EDITOR.action('rider');                       // toggle it back
+  // the Background row blacks out the theme backdrop (view state, not map data)
+  if (!EDITOR.background) bad('the theme background should start on');
+  const polysBg = JSON.stringify(EDITOR.map.polygons);
+  EDITOR.action('background');                   // the Background row emits this
+  if (EDITOR.background) bad('the View menu Background row should toggle the backdrop off');
+  pumpFrames(1, 1 / 60);                         // draw with the backdrop off (must not throw)
+  if (JSON.stringify(EDITOR.map.polygons) !== polysBg) bad('toggling the background must not edit the map');
+  EDITOR.action('background');                   // restore the backdrop
+  if (!EDITOR.background) bad('the Background row should toggle the backdrop back on');
   clickBtn(viewBtn);                            // clicking View again closes it
   if (EDITOR.menu !== null) bad('clicking View again should close its dropdown');
   // open the Theme dropdown and pick a theme through a row action (closes it)
