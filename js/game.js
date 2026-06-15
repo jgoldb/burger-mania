@@ -111,6 +111,18 @@
   let cam = { x: level.start.x, y: level.start.y };
   const CAM_LEAD = 4.2; // how far the view centers ahead of the bike's facing
   let camLead = CAM_LEAD; // smoothed, so turning around pans rather than snaps
+  // wheel-touchdown sound: drop speed (m/s) below which a landing is silent,
+  // and the span above it over which the thud ramps to full volume
+  const WHEEL_HIT_MIN = 1.3, WHEEL_HIT_SPAN = 5.0;
+  // suspension "crank": how hard the springs are working — each grounded wheel's
+  // spring deflection away from its resting sag (SUSP_REST) plus how fast that
+  // spring is moving, weighted and summed. SUSP_FULL is the load that drives the
+  // crank to full drama; the per-sim-frame peak is held in suspLevel and bled off
+  // by SUSP_RELEASE each frame, so a slam cranks loud and rings down while a
+  // sustained press (climbing a ramp) holds the sound up
+  const SUSP_REST = PHYS.frameM * PHYS.g / 2 / PHYS.springK; // static sag
+  const SUSP_DEV_W = 1.0, SUSP_VEL_W = 0.12, SUSP_FULL = 1.0, SUSP_RELEASE = 0.88;
+  let suspLevel = 0; // smoothed suspension drama, ~0..SUSP_FULL
   let flipQueued = false;
   const keys = { up: false, down: false, left: false, right: false };
   // the input the sim consumed this frame (from keys, or from a replay
@@ -149,6 +161,7 @@
       for (const b of level.flipBurgers) burgers.push({ x: b[0], y: b[1], got: false, flip: true });
     }
     headBody = null;
+    suspLevel = 0; // silence any crank still ringing from the last life at once
     stylePts = 0;
     spinAcc = 0;
     wheelieT = 0;
@@ -180,7 +193,7 @@
   // the engine drone and one-shot effects feed sfxGain, the soundtrack
   // feeds musicGain, and both meet in masterGain — the three sliders on
   // the audio settings screen
-  let AC = null, engineSnd = null, muted = false;
+  let AC = null, engineSnd = null, suspSnd = null, muted = false;
   let masterGain = null, musicGain = null, sfxGain = null;
 
   const VOLUME_KEY = 'burger-mania-volume';
@@ -232,6 +245,38 @@
       gain.connect(sfxGain);
       osc.start();
       engineSnd = { osc, gain };
+      // the suspension "crank": a heavy mechanical spring wound under load.
+      // A sawtooth rung through a resonant BANDPASS (a metallic formant, not a
+      // soft tone), then bitten by a square-wave tremolo so it ratchets like a
+      // crank turning. Always on, gated to silence until the springs work; the
+      // pitch, brightness and ratchet rate all climb as they load harder
+      const sOsc = AC.createOscillator();
+      sOsc.type = 'sawtooth';
+      sOsc.frequency.value = 40;
+      const sFilt = AC.createBiquadFilter();
+      sFilt.type = 'bandpass';
+      sFilt.frequency.value = 150;
+      sFilt.Q.value = 2.6;
+      // tremolo: a square LFO chops the signal between 0.38 and 0.98 so the
+      // tone reads as a turning ratchet rather than a steady drone
+      const sTrem = AC.createGain();
+      sTrem.gain.value = 0.68;
+      const sLfo = AC.createOscillator();
+      sLfo.type = 'square';
+      sLfo.frequency.value = 9;
+      const sLfoDepth = AC.createGain();
+      sLfoDepth.gain.value = 0.30;
+      sLfo.connect(sLfoDepth);
+      sLfoDepth.connect(sTrem.gain);
+      const sGain = AC.createGain();
+      sGain.gain.value = 0;
+      sOsc.connect(sFilt);
+      sFilt.connect(sTrem);
+      sTrem.connect(sGain);
+      sGain.connect(sfxGain);
+      sOsc.start();
+      sLfo.start();
+      suspSnd = { osc: sOsc, gain: sGain, filt: sFilt, lfo: sLfo };
       MUSIC.init(AC, musicGain);
     } catch (e) { /* no audio available */ }
   }
@@ -301,6 +346,58 @@
     engineSnd.osc.frequency.setTargetAtTime(f, AC.currentTime, 0.05);
   }
 
+  // how hard the suspension is working this instant: summed over the wheels in
+  // contact (ground OR wall — wheelContacts flags both), each wheel's spring
+  // deflection away from its resting sag plus how fast that spring is moving.
+  // Airborne wheels contribute nothing, so the crank is a CONTACT sound — it
+  // answers landings, wall bangs, hard wheelie drops and a body pressed into a
+  // ramp, and stays silent in clean air and at rest. Called every substep so a
+  // brief peak compression isn't missed
+  function suspLoad() {
+    const c = Math.cos(bike.angle), s = Math.sin(bike.angle);
+    let load = 0;
+    for (let i = 0; i < 2; i++) {
+      const w = bike.wheels[i];
+      if (!w.onGround) continue;
+      const lx = (i === 0 ? -1 : 1) * PHYS.anchorX, ly = PHYS.anchorY;
+      const ax = bike.pos.x + lx * c - ly * s;
+      const ay = bike.pos.y + lx * s + ly * c;
+      let ux = w.pos.x - ax, uy = w.pos.y - ay;
+      const d = Math.hypot(ux, uy);
+      const dev = Math.abs(d - SUSP_REST); // spring stretch away from rest sag
+      if (d > 1e-6) { ux /= d; uy /= d; }
+      // wheel velocity relative to its anchor, along the spring axis = how fast
+      // the spring is compressing/extending
+      const rx = ax - bike.pos.x, ry = ay - bike.pos.y;
+      const avx = bike.vel.x - bike.avel * ry, avy = bike.vel.y + bike.avel * rx;
+      const vN = Math.abs((w.vel.x - avx) * ux + (w.vel.y - avy) * uy);
+      load += SUSP_DEV_W * dev + SUSP_VEL_W * vN;
+    }
+    return load;
+  }
+
+  function updateSuspensionSound() {
+    if (!suspSnd) return;
+    let g = 0, f = 40, cut = 150, rate = 9;
+    // also voices through the crash/finish aftermath so a hard hit that kills
+    // the rider rings the crank out naturally instead of cutting dead; reset()
+    // zeroes suspLevel so a respawn silences it at once
+    if (!muted && (state === 'playing' || state === 'replay' ||
+                   state === 'editorTest' || state === 'dead' ||
+                   state === 'replayEnd' || state === 'editorTestEnd' ||
+                   state === 'finished')) {
+      const L = Math.min(1, suspLevel / SUSP_FULL); // 0..1 drama
+      g = 0.40 * L;          // bandpass is thinner than a lowpass — push it
+      f = 40 + L * 60;       // the heavy spring winds up in pitch as it loads
+      cut = 150 + L * 650;   // brighter, harsher metallic ring on a hard hit
+      rate = 9 + L * 17;     // and the crank ratchets faster the harder it works
+    }
+    suspSnd.gain.gain.setTargetAtTime(g, AC.currentTime, 0.02);
+    suspSnd.osc.frequency.setTargetAtTime(f, AC.currentTime, 0.02);
+    suspSnd.filt.frequency.setTargetAtTime(cut, AC.currentTime, 0.02);
+    suspSnd.lfo.frequency.setTargetAtTime(rate, AC.currentTime, 0.05);
+  }
+
   function blip(freq, dur) {
     if (!AC || muted) return;
     const o = AC.createOscillator(), g = AC.createGain();
@@ -354,6 +451,49 @@
     o.start(t0);
     o.stop(t0 + 0.38);
     whoosh(0.18, up ? 900 : 360, 0.25);
+  }
+
+  // the rider's volt: a meaty low "thwup" — the weight-throw that whips the
+  // bike around — with a puff of air over it. Punchy but short, so it reads on
+  // every volt without the ~2-per-second cadence of held volts turning to mush
+  function voltThump() {
+    if (!AC || muted) return;
+    const t0 = AC.currentTime;
+    const o = AC.createOscillator(), g = AC.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(240, t0);
+    o.frequency.exponentialRampToValueAtTime(85, t0 + 0.11);
+    g.gain.setValueAtTime(0.0001, t0); // exponential ramps can't leave 0
+    g.gain.exponentialRampToValueAtTime(0.20, t0 + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.16);
+    o.connect(g);
+    g.connect(sfxGain);
+    o.start(t0);
+    o.stop(t0 + 0.17);
+    whoosh(0.09, 520, 0.22);
+  }
+
+  // a wheel touching down: a short earthy thud — a low body thump plus a click
+  // of tire-on-ground grit. `power` (0..1) is how hard the wheel was dropping
+  // in, so a gentle plant ticks softly and a big slam lands with a real thud
+  function wheelHit(power) {
+    if (!AC || muted) return;
+    const t0 = AC.currentTime;
+    const vol = 0.12 + 0.32 * power; // punchy, scales hard with impact speed
+    // low thump body
+    const o = AC.createOscillator(), g = AC.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(190, t0);
+    o.frequency.exponentialRampToValueAtTime(50, t0 + 0.10);
+    g.gain.setValueAtTime(0.0001, t0); // exponential ramps can't leave 0
+    g.gain.exponentialRampToValueAtTime(vol, t0 + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.17);
+    o.connect(g);
+    g.connect(sfxGain);
+    o.start(t0);
+    o.stop(t0 + 0.18);
+    // a slap of tire-on-ground grit over the thump, much louder on a slam
+    whoosh(0.06, 300, 0.14 + 0.30 * power);
   }
 
   // quick rising arpeggio when style points land, each note sliding up a
@@ -1773,14 +1913,40 @@
     }
     simInput = input;
     const angle0 = bike.angle;
+    const voltCd0 = bike.voltCd;
+    // wheel touchdowns are caught per substep, not per frame: a hard landing
+    // rebounds within a single 60 Hz frame (airborne → planted → airborne), so
+    // a frame-boundary check would miss exactly the biggest hits. Track each
+    // wheel's contact across substeps and thud the instant it plants, scaled by
+    // how fast it was dropping in (speed along gravity, so a flipped bike reads
+    // its ceiling as the floor); the WHEEL_HIT_MIN gate keeps rolling chatter
+    // and feather-soft plants silent
+    const wasGround = bike.wheels.map(w => w.onGround);
+    let frameSusp = 0;
     for (let i = 0; i < SUB; i++) {
+      const drop = bike.wheels.map(w => w.vel.y * bike.grav);
       bike.step(FDT / SUB, input, level.segments, level.nuts);
+      bike.wheels.forEach((w, k) => {
+        if (!wasGround[k] && w.onGround && drop[k] > WHEEL_HIT_MIN) {
+          wheelHit(Math.min(1, (drop[k] - WHEEL_HIT_MIN) / WHEEL_HIT_SPAN));
+        }
+        wasGround[k] = w.onGround;
+      });
+      frameSusp = Math.max(frameSusp, suspLoad()); // peak compression this frame
       if (bike.dead) break;
     }
+    // peak-hold the suspension load then bleed it off, so a hard compression
+    // cranks the sound up at once and rings down, while a sustained press holds
+    suspLevel = Math.max(frameSusp, suspLevel * SUSP_RELEASE);
     if (bike.dead) {
       onDeath();
     } else {
       time += FDT;
+      // a volt fired this frame iff the cooldown was just re-armed: it only
+      // jumps back up (to voltEvery) at the instant of a volt and otherwise
+      // only ticks down. Sound the rider's weight-throw (the arm-pump it
+      // animates is driven straight off voltCd over in render.js)
+      if (bike.voltCd > voltCd0 + 1e-6) voltThump();
       // net rotation, airborne or not (a ground loop-the-loop is style
       // too): every full lap pays out, wobble cancels itself
       spinAcc += bike.angle - angle0;
@@ -1880,6 +2046,13 @@
         for (let i = 0; i < SUB; i++) stepHead(FDT / SUB);
       }
       flipQueued = false;
+      // the bike has stopped being simmed in these aftermath states, so keep
+      // bleeding the suspension crank down here (simFrame normally does it) —
+      // that's what lets a fatal-hit crank ring out rather than freeze on
+      if (state === 'dead' || state === 'replayEnd' ||
+          state === 'editorTestEnd' || state === 'finished') {
+        suspLevel *= SUSP_RELEASE;
+      }
       // victoryFade stays in this list: the frozen finish frame under the
       // dissolve keeps its settling camera and rising toasts
       if (state !== 'loading' && state !== 'intro' && state !== 'menu' &&
@@ -1897,6 +2070,7 @@
     draw();
     TOUCH.draw(ctx, W, H, { state, saveBusy });
     updateEngineSound();
+    updateSuspensionSound();
     updateMusic();
     requestAnimationFrame(frame);
   }

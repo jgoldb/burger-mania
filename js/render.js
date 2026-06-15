@@ -1066,12 +1066,45 @@ function drawBike(ctx, bike, headless) {
   strokeSeg(ctx, hip, knee, 0.11, '#15151a');
   strokeSeg(ctx, knee, foot, 0.09, '#15151a');
   strokeSeg(ctx, hip, shoulder, 0.14, '#15151a');
-  strokeSeg(ctx, shoulder, handle, 0.08, '#15151a');
+
+  // The arm is two bones hinged at the elbow: a fixed upper arm
+  // (shoulder→elbow) and a forearm (elbow→hand). At rest the hand grips the
+  // bar; on a volt only the FOREARM swings up — rotating about the fixed
+  // elbow to bring the hand up to the helmet and back, the Elasto-Mania
+  // volting flick. voltCd is re-armed to voltEvery the instant a volt fires
+  // and only ticks down after, so voltEvery - voltCd is the time since that
+  // volt; the forearm tops out at the helmet at the midpoint of a short
+  // window and returns, the whole arc inside one volt interval. The bar
+  // itself never moves — only the rider's hand leaves it.
+  const VOLT_PUMP = 0.26;
+  const cd = bike.voltCd == null ? PHYS.voltEvery + 9 : bike.voltCd;
+  const sinceVolt = PHYS.voltEvery - cd;
+  const reach = sinceVolt >= 0 && sinceVolt < VOLT_PUMP
+    ? Math.sin(Math.PI * sinceVolt / VOLT_PUMP) : 0;
+  const elbow = L(0.16, -0.56);
+  // the forearm is a rigid bone: rotate its rest direction (elbow→bar) by
+  // `reach` of the way around toward the helmet, keeping its length, so the
+  // hand swings on an arc instead of stretching. atan2 in world space means
+  // the swing follows the bike's tilt and mirrors with its facing for free.
+  const foreLen = Math.hypot(handle.x - elbow.x, handle.y - elbow.y);
+  const restA = Math.atan2(handle.y - elbow.y, handle.x - elbow.x);
+  const headPt = L(PHYS.headX + 0.14, PHYS.headY + 0.08); // front of the helmet
+  let dA = Math.atan2(headPt.y - elbow.y, headPt.x - elbow.x) - restA;
+  dA -= Math.PI * 2 * Math.floor((dA + Math.PI) / (Math.PI * 2)); // shortest turn
+  // take a little less than the full elbow→helmet turn so the flick stops
+  // just shy of the head rather than mashing into it
+  const VOLT_SWING = 0.85;
+  const a = restA + dA * VOLT_SWING * reach;
+  const hand = { x: elbow.x + Math.cos(a) * foreLen, y: elbow.y + Math.sin(a) * foreLen };
+  strokeSeg(ctx, shoulder, elbow, 0.10, '#15151a'); // upper arm
 
   if (!headless) {
     const head = L(PHYS.headX, PHYS.headY);
     drawHead(ctx, head.x, head.y, m, bike.angle);
   }
+  // forearm is drawn last, OVER the helmet, so the raised volt hand passes
+  // in front of the head instead of disappearing behind it
+  strokeSeg(ctx, elbow, hand, 0.08, '#15151a');     // forearm
 }
 
 function fmt(t) {
