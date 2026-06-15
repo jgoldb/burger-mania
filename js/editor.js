@@ -32,6 +32,14 @@ const EDITOR = (() => {
   const ZOOM_MIN = 4, ZOOM_MAX = 140;
   const UNDO_MAX = 200;
   const FONT = '"Consolas","Courier New",monospace';
+  // the Select tool's rotate handle (a fully-selected polygon or a doodad): a
+  // grabbable disc floating above the object, in screen px so it stays a
+  // constant size at any zoom. Dragging it spins the object about its pivot,
+  // snapped to ROT_SNAP unless Shift is held (then free).
+  const ROT_SNAP = Math.PI / 12;     // 15-degree rotation detents
+  const ROT_GAP = 26;                // handle's lift above the object (screen px)
+  const ROT_DISC = 7;                // handle disc radius (screen px)
+  const ROT_HIT = 12;                // handle grab radius (screen px)
 
   // game.js supplies these: leaving to the menu, starting a test ride,
   // and the shared UI blip
@@ -98,6 +106,16 @@ const EDITOR = (() => {
   }
 
   const round2 = v => Math.round(v * 100) / 100;
+  // rotation is stored in radians; keep four places so detents (multiples of
+  // 15 degrees) round-trip cleanly without float dust
+  const round4 = v => Math.round(v * 10000) / 10000;
+  // fold an angle into (-PI, PI] so saved values stay small after many turns
+  function normAngle(a) {
+    a = a % (Math.PI * 2);
+    if (a > Math.PI) a -= Math.PI * 2;
+    else if (a <= -Math.PI) a += Math.PI * 2;
+    return a;
+  }
   // round to the live grid, then trim binary float noise (0.1-style grids
   // aren't exact in floating point, so 0.3 would land as 0.30000000000000004)
   const snap = v => Math.round(Math.round(v / SNAP) * SNAP * 1e6) / 1e6;
@@ -120,8 +138,13 @@ const EDITOR = (() => {
     if (map.flipBurgers.length) L.flipBurgers = map.flipBurgers.map(b => [round2(b[0]), round2(b[1])]);
     if (map.glassEdges.length) L.glassEdges = map.glassEdges.map(e => [e[0], e[1]]);
     if (map.doodads.length) {
-      L.doodads = map.doodads.map(d =>
-        ({ type: d.type, x: round2(d.x), y: round2(d.y), layer: d.layer }));
+      L.doodads = map.doodads.map(d => {
+        const o = { type: d.type, x: round2(d.x), y: round2(d.y), layer: d.layer };
+        // angle is optional + inert: omitted on upright props, so older
+        // maps (and the renderer's default) are unaffected
+        if (d.angle) o.angle = round4(d.angle);
+        return o;
+      });
     }
     return L;
   }
@@ -147,6 +170,21 @@ const EDITOR = (() => {
   function doodadBox(d) {
     const def = DOODAD_BY_ID[d.type] || { w: 1, h: 1 };
     return { x0: d.x - def.w / 2, y0: d.y - def.h, x1: d.x + def.w / 2, y1: d.y + 0.12 };
+  }
+
+  // is (wx, wy) inside a doodad's footprint? A tilted doodad rotates about its
+  // base anchor, so inverse-rotate the cursor into the prop's upright frame and
+  // test it against the axis-aligned footprint box there.
+  function doodadHit(d, wx, wy) {
+    let px = wx, py = wy;
+    const a = d.angle || 0;
+    if (a) {
+      const dx = wx - d.x, dy = wy - d.y, c = Math.cos(a), s = Math.sin(a);
+      px = d.x + dx * c + dy * s;
+      py = d.y - dx * s + dy * c;
+    }
+    const b = doodadBox(d);
+    return px >= b.x0 && px <= b.x1 && py >= b.y0 && py <= b.y1;
   }
 
   // validates enough that the renderer, the sim, and a LEVELS entry can't
@@ -194,7 +232,8 @@ const EDITOR = (() => {
       glassEdges: parseGlass(d, polygons),
       doodads: Array.isArray(d.doodads) ? d.doodads.map(o =>
         ({ type: String(o.type), x: Number(o.x), y: Number(o.y),
-           layer: o.layer === 'front' ? 'front' : 'back' })) : [],
+           layer: o.layer === 'front' ? 'front' : 'back',
+           angle: isFinite(o.angle) ? Number(o.angle) : 0 })) : [],
     };
   }
 
@@ -448,7 +487,7 @@ const EDITOR = (() => {
 
   function addDoodad(w) {
     pushUndo();
-    map.doodads.push({ type: doodadType, x: snap(w.x), y: snap(w.y), layer: doodadLayer });
+    map.doodads.push({ type: doodadType, x: snap(w.x), y: snap(w.y), layer: doodadLayer, angle: 0 });
     commit(true);
   }
 
@@ -747,8 +786,7 @@ const EDITOR = (() => {
     // doodads after the point handles (so a burger over an A/C unit still wins),
     // topmost first (later in the list draws on top)
     for (let di = map.doodads.length - 1; di >= 0; di--) {
-      const b = doodadBox(map.doodads[di]);
-      if (wx >= b.x0 && wx <= b.x1 && wy >= b.y0 && wy <= b.y1) return { kind: 'doodad', di };
+      if (doodadHit(map.doodads[di], wx, wy)) return { kind: 'doodad', di };
     }
     // edges last, so handles win where they overlap
     return pickEdge(wx, wy, 10 / zoom);
@@ -773,6 +811,91 @@ const EDITOR = (() => {
 
   function hitRect(r, x, y) {
     return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+  }
+
+  // ---------- rotate handle (Select tool) ----------
+
+  // only a whole-polygon selection or a doodad can be spun; a lone vertex/edge,
+  // a burger, the start/goal cannot
+  function rotatable(p) {
+    return !!p && (p.kind === 'poly' || p.kind === 'doodad');
+  }
+
+  // a polygon spins about the average of its vertices: that point is fixed
+  // under rotation about itself, so the handle doesn't drift between turns
+  function polyCentroid(poly) {
+    let sx = 0, sy = 0;
+    for (const v of poly) { sx += v[0]; sy += v[1]; }
+    return { x: sx / poly.length, y: sy / poly.length };
+  }
+
+  // the rotate handle's world geometry for a selection: { pivot, handle }, or
+  // null when nothing rotatable is selected. The handle floats ROT_GAP px above
+  // the object's top; a doodad's handle rides its tilt (so it stays pinned to
+  // the sprite's crown), a polygon's sits straight above its centroid.
+  function rotGeom(p) {
+    if (!rotatable(p)) return null;
+    if (p.kind === 'poly') {
+      const poly = map.polygons[p.pi];
+      if (!poly) return null;
+      const c = polyCentroid(poly);
+      let minY = Infinity;
+      for (const v of poly) if (v[1] < minY) minY = v[1];
+      return { pivot: c, handle: { x: c.x, y: minY - ROT_GAP / zoom } };
+    }
+    const d = map.doodads[p.di];
+    if (!d) return null;
+    const def = DOODAD_BY_ID[d.type] || { w: 1, h: 1 };
+    const off = def.h + ROT_GAP / zoom;          // anchor-to-handle distance
+    const a = d.angle || 0;
+    return { pivot: { x: d.x, y: d.y },
+             handle: { x: d.x + off * Math.sin(a), y: d.y - off * Math.cos(a) } };
+  }
+
+  // is the screen point (sx, sy) on the current selection's rotate handle?
+  function rotHandleHit(sx, sy) {
+    const g = rotGeom(sel);
+    if (!g) return false;
+    const h = w2s(g.handle.x, g.handle.y);
+    return Math.hypot(sx - h.x, sy - h.y) <= ROT_HIT;
+  }
+
+  function overRotateHandle() { return tool === 'select' && rotHandleHit(mx, my); }
+
+  // begin a rotate drag from the handle: freeze the pivot and the starting
+  // pointer angle, and snapshot what we'll spin (the polygon's vertices, or the
+  // doodad's current angle)
+  function beginRotate(w) {
+    const g = rotGeom(sel);
+    const pivot = g.pivot;
+    drag = {
+      kind: 'rotate', moved: false, pivot, delta: 0,
+      startAng: Math.atan2(w.y - pivot.y, w.x - pivot.x),
+      handleVec: { x: g.handle.x - pivot.x, y: g.handle.y - pivot.y },
+    };
+    if (sel.kind === 'poly') drag.orig = map.polygons[sel.pi].map(v => v.slice());
+    else drag.origAngle = map.doodads[sel.di].angle || 0;
+  }
+
+  // spin the selection to follow the pointer. Snaps to ROT_SNAP detents unless
+  // `free` (Shift) is held. The handle (drawn from drag.delta) tracks along.
+  function applyRotate(w, free) {
+    const pivot = drag.pivot;
+    let delta = Math.atan2(w.y - pivot.y, w.x - pivot.x) - drag.startAng;
+    if (!free) delta = Math.round(delta / ROT_SNAP) * ROT_SNAP;
+    drag.delta = delta;
+    if (sel.kind === 'poly') {
+      const poly = map.polygons[sel.pi], cos = Math.cos(delta), sin = Math.sin(delta);
+      for (let i = 0; i < poly.length; i++) {
+        const ox = drag.orig[i][0] - pivot.x, oy = drag.orig[i][1] - pivot.y;
+        poly[i] = [round2(pivot.x + ox * cos - oy * sin),
+                   round2(pivot.y + ox * sin + oy * cos)];
+      }
+    } else {
+      map.doodads[sel.di].angle = round4(normAngle(drag.origAngle + delta));
+    }
+    const deg = Math.round(delta * 180 / Math.PI);
+    note('Rotated ' + deg + '°' + (free ? ' (free)' : ''));
   }
 
   // ---------- input (game.js routes these while state === 'editor') ----------
@@ -828,7 +951,9 @@ const EDITOR = (() => {
       paintGlassAt(w);
       return;
     }
-    // select tool
+    // select tool. The rotate handle floats over the current selection and is
+    // drawn on top, so a grab on it wins over whatever lies beneath.
+    if (rotatable(sel) && rotHandleHit(x, y)) { beginRotate(w); return; }
     const p = pick(w.x, w.y);
     // Shift turns a vertex/edge grab into a whole-polygon select + move, so a
     // shape translates as one piece instead of a vertex at a time
@@ -863,6 +988,12 @@ const EDITOR = (() => {
       }
       if (drag.kind === 'paint') {
         paintGlassAt(w);
+        return;
+      }
+      if (drag.kind === 'rotate' && sel) {
+        if (!drag.moved) { pushUndo(); drag.moved = true; }
+        applyRotate(w, shift);
+        commit();
         return;
       }
       if (drag.kind === 'move' && sel) {
@@ -943,6 +1074,7 @@ const EDITOR = (() => {
       note('Glass painted - the tires barely grip it');
     }
     if (drag && drag.kind === 'move' && drag.moved) commit(true);
+    if (drag && drag.kind === 'rotate' && drag.moved) commit(true);
     drag = null;
   }
 
@@ -1056,13 +1188,14 @@ const EDITOR = (() => {
       for (const b of confirmRects) if (hitRect(b, mx, my)) return 'pointer';
       return 'default';
     }
-    if (drag && drag.kind === 'pan') return 'grabbing';
+    if (drag && (drag.kind === 'pan' || drag.kind === 'rotate')) return 'grabbing';
     for (const b of uiRects) if (hitRect(b, mx, my)) return 'pointer';
     for (let i = popups.length - 1; i >= 0; i--) {
       const p = popups[i];
       if (hitRect(p.bounds, mx, my)) return p.rects.some(b => hitRect(b, mx, my)) ? 'pointer' : 'default';
     }
     if (tool !== 'select') return 'crosshair';
+    if (overRotateHandle()) return 'grab';
     return hov ? 'pointer' : 'default';
   }
 
@@ -1125,6 +1258,7 @@ const EDITOR = (() => {
     if (showRider) drawRiderPreview(ctx);
     drawDrafts(ctx, rt);
     drawSelectionRing(ctx);
+    drawRotateHandle(ctx);
     ctx.restore();
 
     drawWorldLabels(ctx);
@@ -1397,7 +1531,7 @@ const EDITOR = (() => {
     ctx.save();
     ctx.lineCap = 'round';
     map.doodads.forEach((d, di) => {
-      const b = doodadBox(d);
+      const def = DOODAD_BY_ID[d.type] || { w: 1, h: 1 };
       const isSel = sel && sel.kind === 'doodad' && sel.di === di;
       const isHov = hov && hov.kind === 'doodad' && hov.di === di;
       const tint = doodadTint(d.layer);
@@ -1405,8 +1539,13 @@ const EDITOR = (() => {
         : isHov ? 'rgba(' + tint + ',0.95)' : 'rgba(' + tint + ',0.4)';
       ctx.lineWidth = (isSel ? 2.5 : isHov ? 2 : 1.2) / zoom;
       ctx.setLineDash([7 / zoom, 5 / zoom]);
-      roundRectPath(ctx, b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0, 6 / zoom);
+      // the footprint box rides the doodad's tilt about its base anchor
+      ctx.save();
+      ctx.translate(d.x, d.y);
+      if (d.angle) ctx.rotate(d.angle);
+      roundRectPath(ctx, -def.w / 2, -def.h, def.w, def.h + 0.12, 6 / zoom);
       ctx.stroke();
+      ctx.restore();
     });
     ctx.setLineDash([]);
     ctx.restore();
@@ -1507,6 +1646,69 @@ const EDITOR = (() => {
         ring(map.goal[0], map.goal[1], 0.75, hot);
       }
     }
+  }
+
+  // the rotate handle for the current selection (a whole polygon or a doodad):
+  // a dashed spoke from the pivot up to a grabbable disc bearing a little
+  // curved arrow. Mid-drag the spoke swings with the pointer so the rotation
+  // reads directly. Sized in screen px (via /zoom) so it's constant at any zoom.
+  function drawRotateHandle(ctx) {
+    if (tool !== 'select' || !rotatable(sel)) return;
+    let pivot, handle;
+    if (drag && drag.kind === 'rotate') {
+      pivot = drag.pivot;
+      const c = Math.cos(drag.delta), s = Math.sin(drag.delta);
+      const vx = drag.handleVec.x, vy = drag.handleVec.y;
+      handle = { x: pivot.x + vx * c - vy * s, y: pivot.y + vx * s + vy * c };
+    } else {
+      const g = rotGeom(sel);
+      if (!g) return;
+      pivot = g.pivot; handle = g.handle;
+    }
+    const hot = (drag && drag.kind === 'rotate') || overRotateHandle();
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    // spoke from the pivot to the handle
+    ctx.strokeStyle = hot ? '#f9c623' : 'rgba(249,198,35,0.75)';
+    ctx.lineWidth = 1.5 / zoom;
+    ctx.setLineDash([5 / zoom, 4 / zoom]);
+    ctx.beginPath();
+    ctx.moveTo(pivot.x, pivot.y);
+    ctx.lineTo(handle.x, handle.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // pivot pip
+    ctx.fillStyle = hot ? '#f9c623' : 'rgba(249,198,35,0.9)';
+    ctx.beginPath();
+    ctx.arc(pivot.x, pivot.y, 2.6 / zoom, 0, Math.PI * 2);
+    ctx.fill();
+    // the disc
+    const r = ROT_DISC / zoom;
+    ctx.beginPath();
+    ctx.arc(handle.x, handle.y, r, 0, Math.PI * 2);
+    ctx.fillStyle = hot ? 'rgba(120,62,16,0.95)' : 'rgba(20,12,6,0.92)';
+    ctx.fill();
+    ctx.lineWidth = (hot ? 2.5 : 1.5) / zoom;
+    ctx.strokeStyle = hot ? '#f9c623' : 'rgba(249,198,35,0.85)';
+    ctx.stroke();
+    // a curved arrow glyph inside the disc, hinting "spin me"
+    const gr = r * 0.5;
+    ctx.strokeStyle = hot ? '#ffe27a' : '#f9c623';
+    ctx.lineWidth = 1.3 / zoom;
+    ctx.beginPath();
+    ctx.arc(handle.x, handle.y, gr, -Math.PI * 0.55, Math.PI * 0.95);
+    ctx.stroke();
+    // arrowhead on the open end of the arc
+    const ah = Math.PI * 0.95, tip = { x: handle.x + gr * Math.cos(ah), y: handle.y + gr * Math.sin(ah) };
+    const back = 2.6 / zoom;
+    ctx.beginPath();
+    ctx.moveTo(tip.x, tip.y);
+    ctx.lineTo(tip.x - back, tip.y - back * 0.2);
+    ctx.moveTo(tip.x, tip.y);
+    ctx.lineTo(tip.x - back * 0.2, tip.y + back);
+    ctx.stroke();
+    ctx.restore();
   }
 
   // screen-space tags so the lettering stays crisp at any zoom
@@ -1815,7 +2017,7 @@ const EDITOR = (() => {
   }
 
   const TOOL_HINTS = {
-    select: 'drag vertices, edges, burgers, START, GOAL - Shift+drag moves a whole polygon (or Shift while dragging a lone vertex snaps it to the grid) - double-click an edge to add a vertex (a vertex to remove it) - Del removes (a glassed edge clears its glass; Shift+Del the whole polygon)',
+    select: 'drag vertices, edges, burgers, START, GOAL - Shift+drag moves a whole polygon (or Shift while dragging a lone vertex snaps it to the grid) - a whole polygon or a doodad shows a rotate handle above it (drag to spin, 15° detents unless Shift) - double-click an edge to add a vertex (a vertex to remove it) - Del removes (a glassed edge clears its glass; Shift+Del the whole polygon)',
     poly: 'click to lay vertices - click the first one (or Enter) closes the polygon - Esc cancels',
     burger: 'pick Burger or Flip Burger from the palette, then click to drop it - a flip burger reverses gravity when collected (identical to a normal one in play; badged only here)',
     glass: 'click or drag along an edge to glass it (obsidian the tires barely grip) - paints the one edge nearest the cursor - clear it by selecting the edge and pressing Del',
@@ -1862,6 +2064,7 @@ const EDITOR = (() => {
     ['5 / K', 'Nut: click to drop a nut mound - a lethal hazard the rider dies on contact with (Del removes a selected one)'],
     ['6 / F', 'Flip Burger: same as the burger tool but arms the gravity-flip kind - collecting it reverses gravity'],
     ['7 / D', 'Doodad: drop an inert decorative sprite - pick the sprite and its layer (behind or in front of the rider) from the palette panel; it never collides'],
+    ['rotate handle', 'a whole-polygon or doodad selection floats a handle above it - drag it to spin the object (snaps to 15°; hold Shift to rotate freely)'],
     ['double-click', 'on an edge adds a vertex; on a vertex removes it'],
     ['Del', 'remove the selection - a glassed edge clears its glass (Shift+Del: its whole polygon)'],
     ['R', 'toggle the rider preview: wheel (blue) + head (red) colliders parked under the cursor (also under the View menu)'],
@@ -1968,6 +2171,9 @@ const EDITOR = (() => {
     get doodadLayer() { return doodadLayer; },
     get menu() { return menu; },
     get confirmOpen() { return !!confirmPrompt; },
+    // the current selection's rotate-handle world point (or null when nothing
+    // rotatable is selected) — exposed so the headless test can grab it
+    get rotateHandle() { const g = rotGeom(sel); return g ? g.handle : null; },
     action,
     // a toolbar button's last-drawn hitbox by id (exposed for the headless tests)
     buttonRect(id) { return uiRects.find(b => b.id === id) || null; },

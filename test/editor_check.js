@@ -391,6 +391,55 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
     bad('undo should restore the moved polygon');
   }
 
+  // ---- rotate handle: spin a doodad about its anchor and a whole polygon
+  //      about its centroid; both snap to 15° detents and undo cleanly ----
+  key('1');
+  // a selected doodad floats a handle straight above its base anchor
+  const rdx = EDITOR.map.doodads[dood0].x, rdy = EDITOR.map.doodads[dood0].y;
+  let rsel = w2s(rdx, rdy);
+  mouseDown(rsel.x, rsel.y); mouseUp(rsel.x, rsel.y);
+  if (!EDITOR.sel || EDITOR.sel.kind !== 'doodad') bad('clicking a doodad should select it for rotation');
+  const rh = EDITOR.rotateHandle;
+  if (!rh) bad('a selected doodad should expose a rotate handle');
+  else {
+    const rhs = w2s(rh.x, rh.y);
+    const rtgt = w2s(rdx + 3, rdy);            // drag the handle due-right of the anchor: a +90° turn
+    mouseDown(rhs.x, rhs.y); mouseMove(rtgt.x, rtgt.y); mouseUp(rtgt.x, rtgt.y);
+    if (Math.abs(EDITOR.map.doodads[dood0].angle - Math.PI / 2) > 0.02) {
+      bad('dragging the rotate handle should spin the doodad ~90°, got ' + EDITOR.map.doodads[dood0].angle);
+    }
+    // the angle survives a .bmm round trip
+    const rtrip = EDITOR.parse(EDITOR.serialize());
+    if (!rtrip.doodads[dood0] || Math.abs(rtrip.doodads[dood0].angle - Math.PI / 2) > 0.02) {
+      bad('round trip should preserve the doodad angle, got ' + JSON.stringify(rtrip.doodads[dood0]));
+    }
+    key('z', { ctrlKey: true });               // undo the spin -> upright again
+    if (Math.abs(EDITOR.map.doodads[dood0].angle || 0) > 1e-6) bad('undo should restore the doodad upright');
+  }
+  // a whole-polygon selection spins about its vertex centroid
+  key('1');
+  const poly0 = EDITOR.map.polygons[1].map(v => v.slice());
+  const pcx = (poly0[0][0] + poly0[1][0] + poly0[2][0]) / 3;
+  const pcy = (poly0[0][1] + poly0[1][1] + poly0[2][1]) / 3;
+  let pgrab = w2s(poly0[0][0], poly0[0][1]);
+  mouseDown(pgrab.x, pgrab.y, { shiftKey: true }); mouseUp(pgrab.x, pgrab.y);
+  if (!EDITOR.sel || EDITOR.sel.kind !== 'poly') bad('Shift+click should select the whole polygon for rotation');
+  const prh = EDITOR.rotateHandle;
+  if (!prh) bad('a polygon selection should expose a rotate handle');
+  else {
+    const prhs = w2s(prh.x, prh.y);
+    const ptgt = w2s(pcx + 3, pcy);            // drag the handle due-right of the centroid: a +90° turn
+    mouseDown(prhs.x, prhs.y); mouseMove(ptgt.x, ptgt.y); mouseUp(ptgt.x, ptgt.y);
+    const exp = poly0.map(([x, y]) => [pcx - (y - pcy), pcy + (x - pcx)]);
+    const got = EDITOR.map.polygons[1];
+    if (!got.every((v, i) => Math.abs(v[0] - exp[i][0]) < 0.1 && Math.abs(v[1] - exp[i][1]) < 0.1)) {
+      bad('rotating a polygon +90° should land vertices at ' + JSON.stringify(exp) + ', got ' + JSON.stringify(got));
+    }
+    key('z', { ctrlKey: true });               // undo the spin -> back to the unrotated triangle
+    if (JSON.stringify(EDITOR.map.polygons[1]) !== JSON.stringify(poly0)) bad('undo should restore the rotated polygon');
+  }
+  key('1');
+
   // ---- delete: a triangle keeps 3 points; Shift+Del drops the whole polygon ----
   s = w2s(20, 2);
   mouseDown(s.x, s.y); mouseUp(s.x, s.y);     // select an island corner vertex

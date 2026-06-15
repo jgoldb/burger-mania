@@ -1567,12 +1567,15 @@ const DOODADS = [
 const DOODAD_BY_ID = {};
 for (const d of DOODADS) DOODAD_BY_ID[d.id] = d;
 
-// draw one doodad sprite centred at its base on (x, y)
-function drawDoodad(ctx, type, x, y, t) {
+// draw one doodad sprite centred at its base on (x, y), optionally tilted by
+// `angle` radians about that base anchor (0/absent = upright). Editor-placed
+// props may carry a rotation; baked-in level doodads omit it and draw upright.
+function drawDoodad(ctx, type, x, y, t, angle) {
   const d = DOODAD_BY_ID[type];
   if (!d) return;                   // unknown id (e.g. a sprite from a newer build): skip
   ctx.save();
   ctx.translate(x, y);
+  if (angle) ctx.rotate(angle);
   d.draw(ctx, t || 0);
   ctx.restore();
 }
@@ -1581,7 +1584,7 @@ function drawDoodad(ctx, type, x, y, t) {
 function drawDoodadLayer(ctx, doodads, layer, t) {
   if (!doodads) return;
   for (const d of doodads) {
-    if ((d.layer === 'front' ? 'front' : 'back') === layer) drawDoodad(ctx, d.type, d.x, d.y, t);
+    if ((d.layer === 'front' ? 'front' : 'back') === layer) drawDoodad(ctx, d.type, d.x, d.y, t, d.angle);
   }
 }
 
