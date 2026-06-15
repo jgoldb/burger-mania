@@ -1715,7 +1715,8 @@ function drawBike(ctx, bike, headless) {
   // volt; the forearm tops out at the helmet at the midpoint of a short
   // window and returns, the whole arc inside one volt interval. The bar
   // itself never moves — only the rider's hand leaves it.
-  const VOLT_PUMP = 0.26;
+  const VOLT_PUMP = 0.5;  // arm-flick duration (cosmetic flourish, longer than
+                          // the snappy PHYS.voltDur boost — they're decoupled)
   const cd = bike.voltCd == null ? PHYS.voltEvery + 9 : bike.voltCd;
   const sinceVolt = PHYS.voltEvery - cd;
   const reach = sinceVolt >= 0 && sinceVolt < VOLT_PUMP

@@ -35,15 +35,24 @@ const PHYS = {
                    // springing back. The spring RATE (plushness/give-per-bump)
                    // is untouched — this is the fall-toughness lever: higher =
                    // tougher + more planted, lower = bouncier and dies lower
-  maxStretch: 1.2,  // hard cap on suspension travel from the raw anchor. Set
-                    // well above spinExtMax so a fast air spin can sling the
-                    // wheels right out to the elastic-bar limit and the front
-                    // wheel stretches far on the momentum, Elasto Mania style.
-                    // Raised 0.7->1.2: now that the spin winds up much faster,
-                    // the wheels were hitting this travel cap and couldn't fling
-                    // out as far as they should. This is the loop-SAFE stretch
-                    // lever (momentum overshoot); spinExtMax (the steady sling)
-                    // is the loop-fatal one, so it's left alone
+  maxStretch: 5.0,  // FAR safety backstop on suspension travel from the raw
+                    // anchor — the wheels can never escape past this, but it's
+                    // set way out so normal play never reaches it. The real
+                    // limiter on the spin-fling is now the progressive extension
+                    // spring (stretchSoft/stretchK below), which resists more and
+                    // more the further the wheel flings instead of hard-capping.
+                    // Raised 1.2->4.0 so that progressive spring, not this wall,
+                    // shapes the fling
+  stretchSoft: 1.8, // wheel distance from the frame CENTRE (m) where the
+                    // progressive extension spring starts to bite. Set beyond the
+                    // wheel's normal fling reach so ordinary riding and landings
+                    // (the wheel sits closer to the centre under compression)
+                    // never feel it — only a fast spin flings a wheel out this far
+  stretchK: 200,    // stiffness of the progressive extension spring (force grows
+                    // with overshoot² past stretchSoft). Higher = wheels fling
+                    // less far and snap back harder; lower = they stretch further.
+                    // At 200 a wheel reaches ~2.4 from centre at 15 rad/s spin,
+                    // ~3.4 at 30 (vs the old flat 1.83 cap), and keeps growing
   frameR: 0.45,    // frame body radius — used ONLY as the body's lethal contact
                    // radius against nut mounds now (see Bike.step). The body has
                    // no terrain collider, so this never touches rock
@@ -59,7 +68,7 @@ const PHYS = {
                    // wheel spin, gone by engineKnee. Steep-hill starts get
                    // the grunt without raising cruise acceleration
   engineKnee: 12,  // wheel spin (rad/s, ~4.8 m/s) where the extra runs out
-  engineR: 8.5,    // reaction torque on the frame while the engine spins up
+  engineR: 6.5,    // reaction torque on the frame while the engine spins up
   wheelieRate: 0.5, // rad/s pitch-back rate the engine reaction saturates at
   maxSpin: 55,     // rad/s cap on driven wheel spin
   brakeRate: 30,   // exponential lock rate for both wheels
@@ -86,46 +95,57 @@ const PHYS = {
                    // sets the break-away grade (~45deg): on steeper slopes
                    // the braked slow-roll never gets slow enough to clamp
 
-  voltT: 23,      // peak torque of one rider thrust ("volt"). Most of the
-                  // "heavier" feel comes from the bigger frameI above (slower to
-                  // spin up); this sets the ground lean's punch (28->21->23, a
-                  // touch stronger on the ground than the trimmed-back value)
-  voltAirBase: 0.52, // boost the FIRST airborne volt starts at (vs 1 on the
-                  // ground). It scales both the thrust AND the spin ceiling, so
-                  // it sets how fast the FIRST air volt gets going; the stack
-                  // below ramps subsequent ones up. Raised 0.4->0.52 so the
-                  // opening air volt starts off a bit quicker
-  voltDur: 0.2,   // thrust duration: torque follows a half-sine burst
-  voltEvery: 0.55, // interval between thrusts while a lean key is held:
-                   // short enough that grounded re-volts catch the bike
-                   // still tilted from the last one, so holding a lean key
-                   // ratchets it past the balance point and all the way
-                   // over (~2s from static; >=0.65 never tips)
-  voltRate: 4.6,  // rad/s spin rate one stack of thrust saturates toward — the
-                  // spin ceiling is voltRate*voltBoost. Raised 4.0->4.6 to lift
-                  // the air rotation speed at EVERY stack (so spamming volts
-                  // tops out faster, not just at the unreachable max-stack cap).
-                  // Barely touches ground volts (those tip the bike well before
-                  // hitting the ceiling, so they're torque/voltT-limited)
-  voltStack: 0.7,  // boost gain per consecutive same-direction AIR volt: both
-                   // the thrust and the spin ceiling scale with the stack, so a
-                   // held lean winds rotation up. Lowered 1.5->1.0->0.7 to slow
-                   // the wind-up — the spin was ramping up too fast after the
-                   // (good) gentle first volt, so each stack now adds less
-  voltStackMax: 24, // air volts stop compounding past this many stacks. Raised
-                   // 18->24 for more headroom on a long spam: the spin ceiling
-                   // is voltRate*(voltAirBase+voltStack*this), so combined with
-                   // the higher voltRate the absolute top is now ~13 rev/s. The
-                   // ramp pace (voltStack) is untouched; this top is only reached
-                   // on a very long airtime, voltRate raises the rest
-  avelDamp: 0.12,  // angular "drag" bled off avel per second (was a hardcoded
-                   // 0.12; promoted to a constant). Keeps rotation from feeling
-                   // floaty — a higher value settles spins faster
+  // Volt = the rider's lean: a DISCRETE thrust throttled to one per voltEvery,
+  // so holding a key can't spam rotation (Elasto Mania volting). GROUND and AIR
+  // use different models (see Bike.step): GROUNDED it's a smooth voltT torque
+  // burst (a weight shift for balance / wheelie / tip), faded toward voltGroundCap.
+  // MID-AIR it's a fixed instantaneous voltKick boost to the spin, clamped at
+  // voltMaxSpin — and airborne the frame spins freely (no spring/avelDamp bleed),
+  // so volts wind the spin cleanly up to voltMaxSpin and hold it there.
+  voltT: 26.75,       // GROUND volt torque (applied for voltDur). Tuned so 3 held
+                   // volts just barely tip the parked bike over (either way) and
+                   // a forward volt cancels the gas wheelie-pitch + a touch. Only
+                   // affects the GROUND volt — the air volt uses voltKick
+  voltDur: 0.1,    // how long one GROUND volt's torque burst lasts — the actual
+                   // physics "boost". Kept SHORT/snappy; the arm-flick (render.js
+                   // VOLT_PUMP) and volt sound run longer (0.5s) as a cosmetic
+                   // flourish, deliberately NOT matched to this. (Air volts are
+                   // instant; this only sets the grounded thrust length)
+  voltEvery: 1.0,  // throttle: minimum seconds between volts even while a key is
+                   // held (~1 volt/sec). Also paces the arm-flick + volt sound
+  voltMaxSpin: 15, // rad/s — THE max air-volt spin (genuinely reached now that
+                   // airborne spin doesn't bleed; see `grounded` in step()). This
+                   // is your top rotation rate: set it to the spin you want. Air
+                   // volts wind up to exactly this and hold there
+  voltKick: 1.5,    // rad/s a single AIR volt adds to the spin, INSTANTLY (fixed).
+                   // Purely the WIND-UP SPEED now: how fast you climb to
+                   // voltMaxSpin (reached in ~voltMaxSpin/voltKick volts), NOT the
+                   // ceiling. Bigger = punchier per volt + fewer volts to top out.
+                   // Ground volts ignore this — they use the voltT torque burst
+  voltGroundCap: 12, // GROUND volt's own spin-fade reference (rad/s): the ground
+                   // torque burst eases off as the bike spins toward this. Pinned
+                   // separate from voltMaxSpin so the air cap can't change ground
+                   // feel — voltT alone sets grounded lean strength
+  avelDamp: 0.12,  // angular "drag" bled off avel per second. Keeps rotation
+                   // from feeling floaty — a higher value settles spins faster
 
   mu: 1.1,         // tire friction coefficient
   muGlass: 0.06,   // tire friction on obsidian glass: the engine can barely
                    // push and the brakes barely bite, so glass is crossed on
                    // momentum alone (the parking clamp never engages on it)
+  gripSlip: 2,     // contact slip (m/s, tyre-surface speed vs ground) past which
+                   // the tyre BITES harder on rock — below this, normal traction
+                   // (cruising/accel slip is only ~0.1-0.4) is untouched
+  gripBite: 4,     // how much harder the tyre grips at high slip (× mu). Lands a
+                   // spun-up wheel HARD: instead of skating ~0.2s while a fast-
+                   // spinning wheel syncs to the ground, the slip hooks it up fast
+                   // — the weight slams it toward a halt. Glass & braking exempt
+  gripGasResist: 0.5, // fraction of the extra grip-bite the DRIVEN wheel keeps
+                   // while the THROTTLE is held (1 = full bite, 0 = no bite/base
+                   // grip). The engine fights the grip's deceleration, so a
+                   // powered wheel keeps spinning a bit longer (more wheelspin)
+                   // before it hooks up, vs a freewheeling wheel that grips clean.
+                   // A subtle but noticeable on-power-vs-coasting landing difference
   rollRes: 9,      // rolling resistance (spin decel, rad/s^2, on contact)
   dragV0: 19,      // speed (m/s) below which there is no air drag at all:
                    // the tuned maps top out ~17 m/s (Sriracha's spiral dive),
@@ -261,12 +281,10 @@ class Bike {
     this.avel = 0;
     this.facing = 1; // 1 = right, -1 = left
     this.turnT = 9;  // seconds since last turn-around (drives the flip animation)
-    this.voltCd = 0;  // time until the next volt may start
-    this.voltAge = 9; // time since the current volt began (>= voltDur = idle)
-    this.voltDir = 0;
-    this.voltCombo = 0;     // consecutive same-direction airborne volts
-    this.voltWasAir = false; // last volt fired while fully airborne
-    this.voltBoost = 1;     // strength multiplier locked in at volt start
+    this.voltCd = 0;  // throttle timer: time until the next volt may fire (also
+                      // drives the rider's arm-flick in render.js + volt sound)
+    this.voltAge = 9; // time since the current volt thrust began (>=voltDur=idle)
+    this.voltDir = 0; // direction (-1/+1) of the current volt thrust
     this.grav = 1;          // gravity direction: +1 pulls down (normal), -1 up.
                             // An upside-down burger flips it, Elasto-Mania
                             // gravity-apple style, so the bike rides ceilings
@@ -306,6 +324,12 @@ class Bike {
     if (this.dead) return;
     this.turnT += dt;
     const P = PHYS;
+    // grounded = at least one wheel touched last step (contacts run later, so
+    // this is the previous step's state — a 1-frame lag that doesn't matter).
+    // Airborne, the frame rotates FREELY (volt-driven): the wheel-spring torque
+    // and avelDamp are both skipped, so an air spin holds and air volts wind it
+    // up cleanly to voltMaxSpin instead of the suspension bleeding it back down.
+    const grounded = this.wheels.some(w => w.onGround);
     const c = Math.cos(this.angle), s = Math.sin(this.angle);
     // gravity acceleration, signed by this.grav so an upside-down burger can
     // invert it (the whole bike — frame and both wheels — shares the one sign,
@@ -313,41 +337,53 @@ class Bike {
     const gy = P.g * this.grav;
 
     let fx = 0, fy = P.frameM * gy, torque = 0;
-    // lean ("volt") control: the rider throws his weight in one big thrust,
-    // Elasto Mania style — at most one per voltEvery, same strength on the
-    // ground and in the air, re-volting on the interval while a key is held.
-    // Torque follows a half-sine burst so the rotation winds up smoothly,
-    // and it fades as the spin rate approaches voltRate, so repeated volts
-    // top the spin back up to a ceiling instead of winding it up forever
+    // lean ("volt"): a DISCRETE rider thrust throttled to one per voltEvery, so
+    // holding a key can't spam rotation (Elasto Mania volting).
+    //  - GROUNDED (either wheel touching): a smooth torque burst over voltDur —
+    //    a weight shift for balance / wheelie / tip-over.
+    //  - MID-AIR (both wheels off): an INSTANTANEOUS boost instead — each volt
+    //    adds a FIXED voltKick to the spin (same size at any voltMaxSpin), so it
+    //    reads as a discrete thrust rather than a smooth ramp. voltMaxSpin is a
+    //    plain ceiling that clamps the total; it does NOT scale the per-volt
+    //    boost. Only adds toward the lean, never pulls down spin already past the
+    //    cap (e.g. from a crash). Co-rotating the wheels makes the boost stick.
     this.voltCd -= dt;
     const lean = (input.right ? 1 : 0) - (input.left ? 1 : 0);
-    const air = !this.wheels.some(w => w.onGround);
-    if (!air) { this.voltCombo = 0; this.voltWasAir = false; }
     if (lean !== 0 && this.voltCd <= 0) {
-      // consecutive same-direction volts in the air compound: each one
-      // boosts both the thrust and the spin ceiling it saturates toward,
-      // so a few stacked thrusts wind up a fast spin. Ground contact or
-      // a direction change resets the stack
-      this.voltCombo = air && this.voltWasAir && lean === this.voltDir
-        ? Math.min(P.voltStackMax, this.voltCombo + 1) : 0;
-      // an airborne volt RAMPS from a gentle base (voltAirBase < 1) instead of
-      // starting at full strength: the free-spinning frame would otherwise snap
-      // straight to a fast rotation off the first thrust. The boost scales the
-      // spin ceiling too, so early air volts are slow AND weak and it takes a
-      // few in a row to wind speed up. Grounded volts start at boost 1 (combo
-      // is 0 on the ground), so the ground feel is unchanged
-      const base = air ? P.voltAirBase : 1;
-      this.voltBoost = base + P.voltStack * this.voltCombo;
-      this.voltWasAir = air;
-      this.voltCd = P.voltEvery;
-      this.voltAge = 0;
-      this.voltDir = lean;
+      this.voltCd = P.voltEvery;  // throttle: no next volt until this elapses
+      if (grounded) {
+        this.voltAge = 0;         // grounded: start a smooth torque burst
+        this.voltDir = lean;
+      } else {
+        // mid-air: a FIXED instantaneous boost (voltKick) per volt — the SAME
+        // size at ANY voltMaxSpin, so the cap is purely a ceiling, not a volt-
+        // strength knob (raising it just takes more volts to reach the top, it
+        // doesn't make each volt punchier). Hard-clamped at voltMaxSpin in the
+        // lean direction; never pulls down spin already past the cap (e.g. from
+        // a crash). Reads as a discrete thrust per volt.
+        const before = this.avel;
+        this.avel += lean * P.voltKick;
+        if (lean > 0) this.avel = Math.min(this.avel, Math.max(P.voltMaxSpin, before));
+        else          this.avel = Math.max(this.avel, Math.min(-P.voltMaxSpin, before));
+        // co-rotate the wheels by the boost actually applied (v += dav × r) so
+        // the suspension doesn't drag the jump straight back down — it sticks
+        // instead of sagging. (The spin still tops out where voltKick can no
+        // longer overcome the wheels' rising centripetal-sling cost; that ceiling
+        // scales with voltKick, and voltMaxSpin caps below it.)
+        const dav = this.avel - before;
+        for (const w of this.wheels) {
+          w.vel.x -= dav * (w.pos.y - this.pos.y);
+          w.vel.y += dav * (w.pos.x - this.pos.x);
+        }
+        this.voltAge = P.voltDur; // no ground-style burst for an air volt
+      }
     }
     if (this.voltAge < P.voltDur) {
-      const env = Math.sin(Math.PI * this.voltAge / P.voltDur);
-      const sat = Math.min(1, Math.max(0,
-        1 - this.voltDir * this.avel / (P.voltRate * this.voltBoost)));
-      torque += this.voltDir * P.voltT * this.voltBoost * env * sat;
+      const spinDir = this.voltDir * this.avel; // current spin toward the lean
+      // ground burst eases off toward voltGroundCap (its OWN reference, not the
+      // air voltMaxSpin) so the air cap can't secretly change ground strength
+      const room = Math.min(1, Math.max(0, 1 - spinDir / P.voltGroundCap));
+      torque += this.voltDir * P.voltT * room;
       this.voltAge += dt;
     }
 
@@ -385,7 +421,33 @@ class Bike {
       w.vel.y += (Fy / P.wheelM + gy) * dt;
       fx -= Fx;
       fy -= Fy;
-      torque += rx * (-Fy) - ry * (-Fx);
+      // wheel-spring reaction torque on the frame — only while grounded. In the
+      // air this is the transient that bled an air volt's boost straight back
+      // down (boost to 20 → sag to ~15), which is what made voltMaxSpin unable
+      // to bind; skipping it lets the spin hold and reach the cap. The spring
+      // FORCE on the wheel (Fx/Fy) still applies, so the wheels still sling out.
+      if (grounded) torque += rx * (-Fy) - ry * (-Fx);
+
+      // progressive extension spring: as a wheel is flung far from the frame
+      // CENTRE (fast spin), a steeply rising force resists it — the further out,
+      // the exponentially harder it is to pull (force ∝ overshoot², a stiffening
+      // spring), so there's no hard travel cap, just mounting resistance that
+      // stores the energy and slings the wheel back when the spin drops. It's
+      // purely RADIAL (toward the centre), so it adds NO torque — the free air
+      // spin is untouched. Only engages past stretchSoft, which is well beyond
+      // the wheel's normal travel, so ordinary riding and landings (the wheel
+      // sits closer to the centre under compression) never feel it.
+      const cwx = w.pos.x - this.pos.x, cwy = w.pos.y - this.pos.y;
+      const crad = Math.hypot(cwx, cwy);
+      if (crad > P.stretchSoft) {
+        const over = crad - P.stretchSoft;
+        const fProg = P.stretchK * over * over;     // stiffening (progressive)
+        const ux = cwx / crad, uy = cwy / crad;     // outward radial unit
+        w.vel.x -= (ux * fProg / P.wheelM) * dt;    // pull the wheel inward
+        w.vel.y -= (uy * fProg / P.wheelM) * dt;
+        fx += ux * fProg;                            // equal/opposite on frame
+        fy += uy * fProg;                            // (radial → no torque)
+      }
 
       // the engine only winds the wheel UP to maxSpin; it never reaches in
       // to slow a wheel that traction has already spun past the cap on a
@@ -440,7 +502,9 @@ class Bike {
     this.vel.x += (fx / P.frameM) * dt;
     this.vel.y += (fy / P.frameM) * dt;
     this.avel += (torque / P.frameI) * dt;
-    this.avel *= 1 - P.avelDamp * dt;
+    // angular drag only while grounded (settles ground rotation, tames floaty
+    // leans). Airborne there's no drag, so a spin holds (Elasto free air spin).
+    if (grounded) this.avel *= 1 - P.avelDamp * dt;
 
     // quadratic linear drag on the speed above dragV0: a mass-independent
     // deceleration applied to the frame and both wheels so the whole bike
@@ -519,7 +583,7 @@ class Bike {
       }
     }
 
-    for (const w of this.wheels) this.wheelContacts(w, segs, dt, input.brake);
+    for (const w of this.wheels) this.wheelContacts(w, segs, dt, input.brake, input.throttle);
 
     // The body has NO terrain collider — only the wheels and the head touch
     // rock. This is what makes a hard slam fatal: nothing holds the frame off
@@ -574,7 +638,7 @@ class Bike {
     }
   }
 
-  wheelContacts(w, segs, dt, braking) {
+  wheelContacts(w, segs, dt, braking, throttle) {
     const P = PHYS;
     w.onGround = false;
     for (const seg of segs) {
@@ -660,8 +724,21 @@ class Bike {
       // a held brake bites far harder than rolling traction (brakeGrip), so
       // the bike stops in a much shorter distance — but only on rock, and
       // only while braking, so acceleration/climbing and glass are unchanged
-      const grip = (braking && !seg.glass) ? P.mu * P.brakeGrip
-                                           : (seg.glass ? P.muGlass : P.mu);
+      let grip = (braking && !seg.glass) ? P.mu * P.brakeGrip
+                                         : (seg.glass ? P.muGlass : P.mu);
+      // landing/over-spin bite: on rock and off the brake, a wheel slipping hard
+      // (tyre surface far off the ground speed — e.g. a spun-up wheel slamming
+      // down) grabs much harder so it syncs to the ground FAST instead of skating
+      // for ~0.2s. Ramps in only past gripSlip, so normal traction (slip ~0.1-0.4
+      // m/s) is unchanged; glass never bites, the brake has its own grip already
+      if (!seg.glass && !braking) {
+        // the driven wheel under throttle resists the grip's decel (the engine
+        // fights it), so it keeps spinning a touch longer — a weaker bite than a
+        // freewheeling wheel, which hooks up clean
+        const driven = throttle && w === this.wheels[this.rearIndex];
+        const biteMax = driven ? 1 + (P.gripBite - 1) * P.gripGasResist : P.gripBite;
+        grip *= Math.min(biteMax, Math.max(1, Math.abs(vt) / P.gripSlip));
+      }
       const maxF = grip * jn;
       if (jt > maxF) jt = maxF;
       if (jt < -maxF) jt = -maxF;

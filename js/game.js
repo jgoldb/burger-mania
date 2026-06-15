@@ -453,24 +453,25 @@
     whoosh(0.18, up ? 900 : 360, 0.25);
   }
 
-  // the rider's volt: a meaty low "thwup" — the weight-throw that whips the
-  // bike around — with a puff of air over it. Punchy but short, so it reads on
-  // every volt without the ~2-per-second cadence of held volts turning to mush
+  // the rider's volt: a meaty low "thwuup" — the weight-throw that whips the
+  // bike around — with a puff of air over it. A ~0.5s drawn-out flourish (longer
+  // than the snappy 0.15s physics boost — they're decoupled), matched to the
+  // arm-flick; the ~1/voltEvery cadence still leaves a gap so volts don't mush
   function voltThump() {
     if (!AC || muted) return;
     const t0 = AC.currentTime;
     const o = AC.createOscillator(), g = AC.createGain();
     o.type = 'sine';
     o.frequency.setValueAtTime(240, t0);
-    o.frequency.exponentialRampToValueAtTime(85, t0 + 0.11);
+    o.frequency.exponentialRampToValueAtTime(85, t0 + 0.22); // slow pitch drop
     g.gain.setValueAtTime(0.0001, t0); // exponential ramps can't leave 0
-    g.gain.exponentialRampToValueAtTime(0.20, t0 + 0.008);
-    g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.16);
+    g.gain.exponentialRampToValueAtTime(0.20, t0 + 0.015);   // quick onset
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.40);   // long, drawn-out tail
     o.connect(g);
     g.connect(sfxGain);
     o.start(t0);
-    o.stop(t0 + 0.17);
-    whoosh(0.09, 520, 0.22);
+    o.stop(t0 + 0.42);
+    whoosh(0.18, 520, 0.22); // longer air puff to match
   }
 
   // a wheel touching down: a short earthy thud — a low body thump plus a click
