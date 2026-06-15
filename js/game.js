@@ -2182,17 +2182,30 @@
     ctx.translate(-cam.x, -cam.y);
     const hw = W / 2 / Z + 1, hh = H / 2 / Z + 1;
     drawWorld(ctx, level, theme,
-      { x0: cam.x - hw, y0: cam.y - hh, x1: cam.x + hw, y1: cam.y + hh }, rt);
+      { x0: cam.x - hw, y0: cam.y - hh, x1: cam.x + hw, y1: cam.y + hh }, rt, bike);
     // back-layer doodads sit in the scene behind every actor; front-layer ones
     // (below) ride over the rider so he passes behind the prop
     drawDoodadLayer(ctx, level.doodads, 'back', rt);
     if (level.nuts) for (const n of level.nuts) drawNutMound(ctx, n[0], n[1], rt);
     for (const b of burgers) if (!b.got) drawBurger(ctx, b.x, b.y, rt);
     drawPopcorn(ctx, level.goal[0], level.goal[1], rt);
-    drawBike(ctx, bike, !!headBody);
+    drawBike(ctx, bike, !!headBody, false, theme.dark);
     if (headBody) drawHead(ctx, headBody.x, headBody.y, bike.facing, headBody.rot);
     drawDoodadLayer(ctx, level.doodads, 'front', rt);
+    // dark worlds (cave): the rider's screen position before we drop the world
+    // transform, for the darkness pass below
+    const lightX = W / 2 + (bike.pos.x - cam.x) * Z;
+    const lightY = H / 2 + (bike.pos.y - cam.y) * Z;
     ctx.restore();
+
+    // black out the playfield except the rider's headlight and taillight cones
+    // (screen space, over the world but under the HUD). Only while playing —
+    // the editor's design canvas returns long before this, so editing stays lit.
+    if (theme.dark) {
+      drawCaveDarkness(ctx, W, H, {
+        x: lightX, y: lightY, dir: bike.facing, ang: bike.angle, Z, t: rt,
+      });
+    }
 
     // floating "+N" awards ride above the biker in world coordinates but
     // are lettered in screen space so the text stays crisp

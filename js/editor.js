@@ -89,15 +89,20 @@ const EDITOR = (() => {
   // ---------- map data ----------
 
   // a simple box to sculpt: ceiling, right wall, long flat floor, left
-  // wall. Two starter burgers so a fresh map is instantly finishable.
+  // wall. Two starter burgers so a fresh map is instantly finishable. The
+  // bottom-left corner sits at the world origin (0,0) and groundY:0 pins the
+  // theme's backdrop ground to that floor, so a fresh map reads as sitting on
+  // the ground (not floating above it) in every theme. Shipped levels carry no
+  // groundY and are untouched.
   function template() {
     return {
       name: 'Untitled Map',
       theme: 'meadow',
-      polygons: [[[-5, -8], [60, -8], [60, 8], [-5, 8]]],
-      start: { x: 2.5, y: 7.25 },
-      burgers: [[20, 7.3], [40, 7.3]],
-      goal: [55, 7.25],
+      groundY: 0,
+      polygons: [[[0, -16], [65, -16], [65, 0], [0, 0]]],
+      start: { x: 7.5, y: -0.75 },
+      burgers: [[25, -0.7], [45, -0.7]],
+      goal: [60, -0.75],
       nuts: [],
       flipBurgers: [],
       glassEdges: [],
@@ -134,6 +139,9 @@ const EDITOR = (() => {
       burgers: map.burgers.map(b => [round2(b[0]), round2(b[1])]),
       goal: [round2(map.goal[0]), round2(map.goal[1])],
     };
+    // optional render hint: where to pin the theme backdrop's ground line.
+    // Inert when absent (older maps, shipped levels), so no version bump.
+    if (map.groundY != null) L.groundY = round2(map.groundY);
     if (map.nuts.length) L.nuts = map.nuts.map(n => [round2(n[0]), round2(n[1])]);
     if (map.flipBurgers.length) L.flipBurgers = map.flipBurgers.map(b => [round2(b[0]), round2(b[1])]);
     if (map.glassEdges.length) L.glassEdges = map.glassEdges.map(e => [e[0], e[1]]);
@@ -223,6 +231,8 @@ const EDITOR = (() => {
     return {
       name: typeof d.name === 'string' && d.name ? d.name : 'Mystery Map',
       theme: typeof d.theme === 'string' ? d.theme : 'meadow',
+      // optional backdrop-ground pin; undefined on older maps -> no shift
+      groundY: typeof d.groundY === 'number' && isFinite(d.groundY) ? Number(d.groundY) : undefined,
       polygons,
       start: { x: Number(d.start.x), y: Number(d.start.y) },
       burgers: d.burgers.map(b => [Number(b[0]), Number(b[1])]),
@@ -714,7 +724,11 @@ const EDITOR = (() => {
   }
 
   function newMap() {
+    // a fresh map keeps the theme you were already working in — only the
+    // geometry resets, so you don't have to re-pick the world every New
+    const keepTheme = map && THEMES[map.theme] ? map.theme : null;
     map = template();
+    if (keepTheme) map.theme = keepTheme;
     sel = null; hov = null; draft = null;
     resetHistory();
     commit(true);

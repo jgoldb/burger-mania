@@ -6,6 +6,7 @@
 const ASSET_MANIFEST = {
   images: {
     biker: 'assets/biker.webp',
+    bikerBack: 'assets/biker-back.png',   // back of the head, for mirror reflections
     astro: 'assets/astro.webp',
   },
 };

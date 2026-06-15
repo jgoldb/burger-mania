@@ -250,7 +250,7 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   // ---- glass: paint an edge, then clear it by selecting + Delete ----
   key('4');
   if (EDITOR.tool !== 'glass') bad('key 4 should pick the glass tool');
-  let s = w2s(25, 8), s2;                     // a point on the box floor (edge 2)
+  let s = w2s(30, 0), s2;                     // a point on the box floor (edge 2)
   mouseDown(s.x, s.y); mouseUp(s.x, s.y);
   if (EDITOR.map.glassEdges.length !== 1) {
     bad('painting should glass one edge, got ' + JSON.stringify(EDITOR.map.glassEdges));
@@ -259,7 +259,7 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   }
   key('1');                                   // select tool
   if (EDITOR.tool !== 'select') bad('key 1 should pick the select tool');
-  s = w2s(25, 8);                             // click the glassed floor edge
+  s = w2s(30, 0);                             // click the glassed floor edge
   mouseDown(s.x, s.y); mouseUp(s.x, s.y);
   if (!EDITOR.sel || EDITOR.sel.kind !== 'edge') bad('clicking the floor should select its edge');
   key('Delete');                              // Del clears glass off a selected edge
@@ -269,16 +269,16 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
 
   // ---- vertex drag: pull the floor-right corner (the map bounds) ----
   key('1');
-  s = w2s(60, 8); s2 = w2s(62, 9);
+  s = w2s(65, 0); s2 = w2s(67, 1);
   mouseDown(s.x, s.y); mouseMove(s2.x, s2.y); mouseUp(s2.x, s2.y);
   const corner = EDITOR.map.polygons[0][2];
-  if (Math.abs(corner[0] - 62) > 0.2 || Math.abs(corner[1] - 9) > 0.2) {
-    bad('vertex drag landed at ' + JSON.stringify(corner) + ', wanted ~[62,9]');
+  if (Math.abs(corner[0] - 67) > 0.2 || Math.abs(corner[1] - 1) > 0.2) {
+    bad('vertex drag landed at ' + JSON.stringify(corner) + ', wanted ~[67,1]');
   }
 
   // ---- double-click an edge to add a vertex ----
   const verts0 = EDITOR.map.polygons[0].length;
-  s = w2s(27.5, -8);                         // the ceiling's midpoint
+  s = w2s(32.5, -16);                        // the ceiling's midpoint
   dblClick(s.x, s.y);
   if (EDITOR.map.polygons[0].length !== verts0 + 1) {
     bad('double-clicking an edge should insert a vertex');
@@ -286,20 +286,20 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
 
   // ---- island polygon ----
   key('2');
-  for (const [px, py] of [[20, 2], [30, 2], [25, 5.5]]) {
+  for (const [px, py] of [[25, -6], [35, -6], [30, -2.5]]) {
     s = w2s(px, py);
     mouseDown(s.x, s.y); mouseUp(s.x, s.y);
   }
   key('Enter');
   if (EDITOR.map.polygons.length !== 2) bad('the poly tool should close an island');
   key('1');
-  s = w2s(25, 2);                            // the island's top edge
+  s = w2s(30, -6);                            // the island's top edge
   mouseDown(s.x, s.y); mouseUp(s.x, s.y);
 
   // ---- rider preview: a non-destructive collider gauge ----
   if (EDITOR.riderPreview) bad('rider preview should start off');
   const polysBefore = JSON.stringify(EDITOR.map.polygons);
-  s = w2s(25, 2);
+  s = w2s(30, -6);
   mouseMove(s.x, s.y);                        // park the cursor over the world
   key('r');
   if (!EDITOR.riderPreview) bad('R should turn the rider preview on');
@@ -342,6 +342,7 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
     bad('glass edge should track the vertex insert to [0,3], got ' + JSON.stringify(back.glassEdges[0]));
   }
   if (JSON.stringify(back.goal) !== JSON.stringify(EDITOR.map.goal)) bad('round trip moved the goal');
+  if (back.groundY !== 0) bad('round trip lost the backdrop ground pin (groundY:0), got ' + back.groundY);
   for (const junk of ['{"format":"nope"}', '{"format":"burger-mania-map","version":1}']) {
     try { EDITOR.parse(junk); bad('parse accepted junk: ' + junk); }
     catch (e) { /* good */ }
@@ -377,7 +378,7 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   // ---- whole-polygon move: Shift+drag the island translates every vertex ----
   key('1');
   const isle0 = EDITOR.map.polygons[1].map(v => v.slice());
-  s = w2s(20, 2); s2 = w2s(23, 4);            // grab a corner, drag by ~(+3,+2)
+  s = w2s(25, -6); s2 = w2s(28, -4);           // grab a corner, drag by ~(+3,+2)
   mouseDown(s.x, s.y, { shiftKey: true });
   if (!EDITOR.sel || EDITOR.sel.kind !== 'poly') bad('Shift+click should select the whole polygon');
   mouseMove(s2.x, s2.y); mouseUp(s2.x, s2.y);
@@ -441,7 +442,7 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   key('1');
 
   // ---- delete: a triangle keeps 3 points; Shift+Del drops the whole polygon ----
-  s = w2s(20, 2);
+  s = w2s(25, -6);
   mouseDown(s.x, s.y); mouseUp(s.x, s.y);     // select an island corner vertex
   if (!EDITOR.sel || EDITOR.sel.kind !== 'vertex') bad('clicking a corner should select a vertex');
   key('Delete');                              // refused: a triangle can't lose a vertex
@@ -454,48 +455,48 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   // ---- placement grid: [ coarsens the snap step, ] refines it ----
   key('3');                                   // burger tool
   key('['); key('['); key('[');               // 0.1 -> 0.25 -> 0.5 -> 1.0
-  let cgp = w2s(33.4, 5.2);
+  let cgp = w2s(38.4, -2.8);
   mouseDown(cgp.x, cgp.y); mouseUp(cgp.x, cgp.y);
   let cgb = EDITOR.map.burgers[EDITOR.map.burgers.length - 1];
-  if (Math.abs(cgb[0] - 33) > 0.02 || Math.abs(cgb[1] - 5) > 0.02) {
+  if (Math.abs(cgb[0] - 38) > 0.02 || Math.abs(cgb[1] + 3) > 0.02) {
     bad('the coarsened grid should snap a burger to whole units, got ' + JSON.stringify(cgb));
   }
   key('z', { ctrlKey: true });                // remove the test burger
   key(']'); key(']'); key(']');               // back to the 0.1 fine grid
   mouseDown(cgp.x, cgp.y); mouseUp(cgp.x, cgp.y);
   cgb = EDITOR.map.burgers[EDITOR.map.burgers.length - 1];
-  if (Math.abs(cgb[0] - 33.4) > 0.02) {
+  if (Math.abs(cgb[0] - 38.4) > 0.02) {
     bad('the fine grid should keep a ~0.1 burger coordinate, got ' + JSON.stringify(cgb));
   }
   key('z', { ctrlKey: true });                // remove that one too
 
   // ---- grid toggle + Shift-snap a lone vertex to the visible grid ----
   key('1');
-  let gv = w2s(62, 9);                         // the box's dragged corner vertex
+  let gv = w2s(67, 1);                         // the box's dragged corner vertex
   mouseDown(gv.x, gv.y);                       // no Shift at grab = single-vertex drag
   const gvSel = EDITOR.sel;
   if (!gvSel || gvSel.kind !== 'vertex') bad('grabbing a corner should select a vertex');
-  // grid is off by default, so Shift snaps to whole units -> (58, 6)
-  mouseMove(w2s(58.4, 6.3).x, w2s(58.4, 6.3).y, { shiftKey: true });
+  // grid is off by default, so Shift snaps to whole units -> (63, -2)
+  mouseMove(w2s(63.4, -1.7).x, w2s(63.4, -1.7).y, { shiftKey: true });
   let gvv = EDITOR.map.polygons[gvSel.pi][gvSel.vi];
-  if (Math.abs(gvv[0] - 58) > 0.01 || Math.abs(gvv[1] - 6) > 0.01) {
+  if (Math.abs(gvv[0] - 63) > 0.01 || Math.abs(gvv[1] + 2) > 0.01) {
     bad('with the grid off, Shift-drag should snap to whole units, got ' + JSON.stringify(gvv));
   }
   key('#');                                    // show the grid -> Shift snaps to half-units
-  mouseMove(w2s(58.4, 6.3).x, w2s(58.4, 6.3).y, { shiftKey: true });
+  mouseMove(w2s(63.4, -1.7).x, w2s(63.4, -1.7).y, { shiftKey: true });
   gvv = EDITOR.map.polygons[gvSel.pi][gvSel.vi];
-  if (Math.abs(gvv[0] - 58.5) > 0.01 || Math.abs(gvv[1] - 6.5) > 0.01) {
+  if (Math.abs(gvv[0] - 63.5) > 0.01 || Math.abs(gvv[1] + 1.5) > 0.01) {
     bad('with the grid on, Shift-drag should snap to half-units, got ' + JSON.stringify(gvv));
   }
   // releasing Shift mid-drag returns to the fine placement grid
-  mouseMove(w2s(58.4, 6.3).x, w2s(58.4, 6.3).y);
+  mouseMove(w2s(63.4, -1.7).x, w2s(63.4, -1.7).y);
   gvv = EDITOR.map.polygons[gvSel.pi][gvSel.vi];
-  if (Math.abs(gvv[0] - 58.4) > 0.02) {
+  if (Math.abs(gvv[0] - 63.4) > 0.02) {
     bad('without Shift the drag should use the fine grid, got ' + JSON.stringify(gvv));
   }
   key('#');                                    // restore the grid to its default (off)
-  mouseUp(w2s(58.4, 6.3).x, w2s(58.4, 6.3).y);
-  key('z', { ctrlKey: true });                // restore the corner to (62, 9)
+  mouseUp(w2s(63.4, -1.7).x, w2s(63.4, -1.7).y);
+  key('z', { ctrlKey: true });                // restore the corner to (67, 1)
 
   // ---- test ride: keys go to the bike, not the tools ----
   key('Enter', { ctrlKey: true });

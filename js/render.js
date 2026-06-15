@@ -28,6 +28,10 @@ const THEMES = {
     ] },
     background: drawMeadowBack,
     edge: drawGrassEdge,
+    // world height of the backdrop's ground line (here the near hills' feet).
+    // A level may ask drawWorld to render the backdrop ground at a different
+    // height (see level.groundY); the editor's fresh maps put it on the floor.
+    groundY: 9.9,
     turfFill: '#3f8d27', turfBlade: '#2f7a1d',
     outline: 'rgba(40,20,5,0.5)',
     miniGround: '#6b4a24', miniSky: '#a7c4de',
@@ -49,8 +53,106 @@ const THEMES = {
     ] },
     background: drawVolcanoBack,
     edge: drawLavaEdge,
+    groundY: 10.8,                          // the erupting cones' bases
     outline: 'rgba(255,120,40,0.45)',
     miniGround: '#352529', miniSky: '#c75a2a',
+  },
+  // Planet-Fitness-style gym: a speckled rubber floor under a lit purple
+  // wall. The "sky" is the back wall; drawGymBack dresses the room into a
+  // full indoor scene — ceiling lights, a yellow accent stripe with
+  // motivational signage, and two depth ranks of machines worked by curling,
+  // pressing, squatting meatheads. A Map-Editor world; no shipped track uses
+  // it yet.
+  gym: {
+    ground: { base: '#44474d', layers: [
+      { n: 230, rMin: 1.6, rMax: 5.5, colors: ['rgba(26,28,32,0.34)',
+        'rgba(92,96,103,0.28)', 'rgba(18,19,22,0.30)', 'rgba(116,120,128,0.20)'] },
+      // stray flecks of colour in the rubber matting
+      { n: 26, rMin: 0.6, rMax: 1.5, colors: ['rgba(150,110,200,0.30)',
+        'rgba(245,205,40,0.24)', 'rgba(220,80,70,0.20)'] },
+    ] },
+    skyStops: [[0, '#4a3072'], [0.45, '#5d3f86'], [0.8, '#6f4f98'], [1, '#7a5aa3']],
+    // no drifting haze indoors — the back wall stays clear (haze:false skips the
+    // whole drifting-tile pass, so the sky tile below is built but never drawn)
+    skyTile: { layers: [] },
+    haze: false,
+    background: drawGymBack,
+    edge: drawGymEdge,
+    groundY: 11.5,                          // ground line sits a touch above the rider's floor, so the box bottom tucks under the gym floor
+    outline: 'rgba(16,14,22,0.5)',
+    miniGround: '#3c3f45', miniSky: '#5d3f86',
+  },
+  // Egyptian desert: rippled gold sand under a hot hazy sky. drawDesertBack
+  // dresses the horizon with a rank of casing-stone pyramids (polished
+  // limestone faces, gilded gold caps) past soft dunes and a sphinx, then a
+  // foreground of standing sarcophagi, shambling mummies and tomb treasure.
+  // An outdoor world, so it keeps the drifting dust haze. A Map-Editor world.
+  desert: {
+    ground: { base: '#d9bd86', layers: [
+      { n: 220, rMin: 1.6, rMax: 5.5, colors: ['rgba(150,120,70,0.22)',
+        'rgba(225,205,160,0.28)', 'rgba(120,92,52,0.18)', 'rgba(245,230,190,0.20)'] },
+      // scattered pebbles and grit
+      { n: 30, rMin: 0.5, rMax: 1.3, colors: ['rgba(110,84,50,0.30)',
+        'rgba(80,60,36,0.26)', 'rgba(250,240,205,0.30)'] },
+    ] },
+    skyStops: [[0, '#5a9bd0'], [0.5, '#9fc3dd'], [0.82, '#e9d9b3'], [1, '#f3e6c5']],
+    skyTile: { layers: [
+      // thin high haze / dust drifting on the wind
+      { n: 14, rMin: 12, rMax: 30, colors: ['rgba(245,235,205,0.10)',
+        'rgba(255,250,235,0.09)', 'rgba(220,205,170,0.08)'] },
+    ] },
+    background: drawDesertBack,
+    edge: drawDesertEdge,
+    groundY: 11.0,                          // the sand line the monuments stand on (DESERT_FLOOR)
+    outline: 'rgba(70,50,24,0.5)',
+    miniGround: '#c2a567', miniSky: '#9fc3dd',
+  },
+  // Rainbow Road in space: the track body is dark cosmos flecked with rainbow
+  // stardust, its driving surface a glowing rainbow band edged by a twinkling
+  // star railing (drawSpaceEdge). drawSpaceBack fills the void with twinkling
+  // starfields, spiral galaxies, ringed planets, nebulae and asteroids that
+  // fly through. Like the gym it has no drifting haze tile. A Map-Editor world.
+  space: {
+    ground: { base: '#141233', layers: [
+      // rainbow stardust glowing in the translucent track body
+      { n: 70, rMin: 1.2, rMax: 4.5, colors: ['rgba(255,70,110,0.12)',
+        'rgba(70,200,255,0.12)', 'rgba(150,90,255,0.12)', 'rgba(70,224,120,0.10)',
+        'rgba(255,226,60,0.10)', 'rgba(255,120,220,0.10)'] },
+      // bright pinpoint stars in the surface
+      { n: 42, rMin: 0.3, rMax: 0.9, colors: ['rgba(255,255,255,0.85)',
+        'rgba(255,233,168,0.7)', 'rgba(180,220,255,0.7)'] },
+    ] },
+    skyStops: [[0, '#05030f'], [0.5, '#0a0820'], [1, '#150b2e']],
+    skyTile: { layers: [] },
+    haze: false,
+    background: drawSpaceBack,
+    edge: drawSpaceEdge,
+    outline: 'rgba(150,200,255,0.6)',     // neon track edge
+    miniGround: '#241b4a', miniSky: '#070414',
+  },
+  // Cave: a dark underground world (Map-Editor only). drawCaveBack fills it
+  // with stalactites, stalagmites, columns, glowing crystals, glowworm patches,
+  // still pools and flitting bats. The `dark` flag makes game.js black out the
+  // playfield except for the rider's headlight/taillight cones WHILE PLAYING
+  // (the editor's design canvas returns before that code, so editing — and the
+  // whole picture — stays fully lit). Haze off.
+  cave: {
+    ground: { base: '#2a2420', layers: [
+      { n: 230, rMin: 1.6, rMax: 5.5, colors: ['rgba(12,9,7,0.40)',
+        'rgba(64,54,44,0.30)', 'rgba(20,15,11,0.34)', 'rgba(84,72,58,0.20)'] },
+      // damp mineral flecks in the rock
+      { n: 24, rMin: 0.5, rMax: 1.3, colors: ['rgba(150,180,200,0.25)',
+        'rgba(180,150,210,0.22)', 'rgba(140,200,180,0.20)'] },
+    ] },
+    skyStops: [[0, '#171109'], [0.5, '#241a12'], [1, '#15110d']],
+    skyTile: { layers: [] },
+    haze: false,
+    dark: true,
+    groundY: 11,                           // pin the floor formations to the map's ground (= CAVE_GROUND)
+    background: drawCaveBack,
+    edge: drawCaveEdge,
+    outline: 'rgba(8,6,4,0.6)',
+    miniGround: '#241d16', miniSky: '#1a130c',
   },
 };
 
@@ -215,8 +317,11 @@ function ridgeLayer(ctx, view, p, baseY, amp, period, color) {
   ctx.fill();
 }
 
-// meadow backdrop: a soft sun and two ranks of rolling hills
-function drawMeadowBack(ctx, view, t) {
+// meadow backdrop: a soft sun and two ranks of rolling hills. gdy shifts the
+// ground-anchored hills when a map pins its backdrop ground (see drawWorld);
+// the sun tracks the camera ("at infinity"), so it is left unshifted.
+function drawMeadowBack(ctx, view, t, actor, gdy) {
+  gdy = gdy || 0;
   const w = view.x1 - view.x0;
   const sx = view.x0 + w * 0.78, sy = view.y0 + 2.6;
   const g = ctx.createRadialGradient(sx, sy, 0.2, sx, sy, 3.4);
@@ -227,14 +332,15 @@ function drawMeadowBack(ctx, view, t) {
   ctx.beginPath();
   ctx.arc(sx, sy, 3.4, 0, Math.PI * 2);
   ctx.fill();
-  hillLayer(ctx, view, 0.22, 10.0, 3.0, 0.42, 'rgba(158,196,164,0.65)');
-  hillLayer(ctx, view, 0.42, 10.9, 2.0, 0.66, 'rgba(118,168,116,0.72)');
+  hillLayer(ctx, view, 0.22, 9.0 + gdy, 3.0, 0.42, 'rgba(158,196,164,0.65)');
+  hillLayer(ctx, view, 0.42, 9.9 + gdy, 2.0, 0.66, 'rgba(118,168,116,0.72)');
 }
 
 // volcano backdrop: a far jagged ridge, then a rank of cones with
 // pulsing crater glows and lava streaks down their flanks
-function drawVolcanoBack(ctx, view, t) {
-  ridgeLayer(ctx, view, 0.16, 11.0, 5.2, 21, 'rgba(54,26,30,0.60)');
+function drawVolcanoBack(ctx, view, t, actor, gdy) {
+  gdy = gdy || 0;
+  ridgeLayer(ctx, view, 0.16, 10.0 + gdy, 5.2, 21, 'rgba(54,26,30,0.60)');
   const p = 0.36, spacing = 30;
   const u = (view.x0 + view.x1) / 2 * (1 - p);
   const first = Math.floor((view.x0 - u - 9) / spacing) * spacing;
@@ -243,7 +349,7 @@ function drawVolcanoBack(ctx, view, t) {
     const r = srand(s * 0.013 + 3.7);
     const h = 5.5 + r * 2.5, half = 4.6 + r * 1.8;
     const capW = 0.9 + r * 0.5;
-    const baseY = 11.8, py = baseY - h;
+    const baseY = 10.8 + gdy, py = baseY - h;
     ctx.fillStyle = 'rgba(46,22,26,0.88)';
     ctx.beginPath();
     ctx.moveTo(x - half, baseY);
@@ -271,6 +377,1702 @@ function drawVolcanoBack(ctx, view, t) {
   }
 }
 
+// ---------- gym world (the indoor Planet-Fitness backdrop) ----------
+//
+// The wall gradient (skyStops) paints the lit purple room; everything below
+// is fixed in world space and laid back-to-front so panning and climbing
+// reveal more of the gym, exactly like the meadow's hills. The floor line
+// (where the back wall meets the rubber floor and the machines stand) sits at
+// floorY, matching the hill convention so it lines up with the menu/victory
+// floor too.
+const GYM = {
+  yellow: '#f4cb27', purpleDk: '#3a2658',
+  metal: '#c6cbd2', metalDk: '#7f868f', frame: '#2b2f36', frameLo: '#1d2025',
+  pad: '#23262c', chrome: '#d8dde3', screen: '#2bd0e0',
+  // skin tones and tank-top colours, picked per gym-goer so a row isn't all
+  // the same guy
+  skin: ['#caa07a', '#b9895f', '#9c7550', '#e0b48f', '#8a6a4a'],
+  tank: ['#e7533b', '#3f8fd0', '#46b06a', '#e8a93a', '#cf4fa0', '#d8dde3'],
+};
+const GYM_FLOOR = 11.0;
+// how much the gym furniture and gym-goers are shrunk in place, so the room
+// reads bigger and the props recede into the background
+const GYM_DETAIL = 0.6;
+
+// stable per-slot pick from an array (srand keyed on the slot lattice coord,
+// so the choice never flickers as the camera pans)
+function gymPick(arr, key) { return arr[Math.floor(srand(key) * arr.length) % arr.length]; }
+
+// walk the repeating slots of one parallax layer across the view, calling
+// draw(worldX, slotKey) for each. slotKey is the lattice coordinate (stable
+// regardless of camera), so callers seed their per-item variety on it.
+function gymRow(ctx, view, p, spacing, draw) {
+  const u = (view.x0 + view.x1) / 2 * (1 - p);
+  const lo = view.x0 - u - spacing, hi = view.x1 - u + spacing;
+  const first = Math.floor(lo / spacing) * spacing;
+  const count = Math.floor((hi - first) / spacing) + 1;
+  for (let i = 0, s = first; i < count; i++, s += spacing) draw(s + u, s);
+}
+
+// draw one gym prop shrunk by GYM_DETAIL about its own footing (ax, ay), so it
+// stays grounded/wall-anchored while reading smaller
+function gymItem(ctx, ax, ay, draw) {
+  ctx.save();
+  ctx.translate(ax, ay);
+  ctx.scale(GYM_DETAIL, GYM_DETAIL);
+  ctx.translate(-ax, -ay);
+  draw();
+  ctx.restore();
+}
+
+// crisp text in the scaled world context: rasterise the glyphs near their
+// real on-screen size (a sane font px) and scale into place, rather than
+// setting a sub-pixel font that would rasterise tiny and then blur up
+function gymText(ctx, str, x, y, worldH, color, weight) {
+  ctx.save();
+  ctx.translate(x, y);
+  const k = worldH / 14;
+  ctx.scale(k, k);
+  ctx.fillStyle = color;
+  ctx.font = (weight || '700') + ' 14px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(str, 0, 0);
+  ctx.restore();
+}
+
+// a small dumbbell in a lifter's hand
+function drawDumbbellSmall(ctx, cx, cy) {
+  ctx.fillStyle = '#23262c';
+  ctx.beginPath(); ctx.arc(cx - 0.10, cy, 0.075, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(cx + 0.10, cy, 0.075, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#4a4f57'; ctx.lineWidth = 0.05; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(cx - 0.08, cy); ctx.lineTo(cx + 0.08, cy); ctx.stroke();
+}
+
+// a stylised dumbbell glyph for wall signs
+function drawDumbbellIcon(ctx, cx, cy, color) {
+  ctx.save();
+  ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 0.1; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(cx - 0.36, cy); ctx.lineTo(cx + 0.36, cy); ctx.stroke();
+  for (const sx of [-1, 1]) {
+    ctx.fillRect(cx + sx * 0.36 - 0.05, cy - 0.2, 0.1, 0.4);
+    ctx.fillRect(cx + sx * 0.5 - 0.05, cy - 0.13, 0.1, 0.26);
+  }
+  ctx.restore();
+}
+
+// a chrome barbell loaded with plates, centred at (cx, cy)
+function drawBarbell(ctx, cx, cy, half) {
+  ctx.fillStyle = GYM.chrome;
+  ctx.fillRect(cx - half, cy - 0.035, half * 2, 0.07);
+  for (const sx of [-1, 1]) {
+    ctx.fillStyle = GYM.frameLo;
+    ctx.fillRect(cx + sx * (half - 0.14) - 0.03, cy - 0.05, 0.06, 0.1);
+    ctx.fillStyle = '#33373e';
+    roundRectPath(ctx, cx + sx * (half - 0.02) - 0.07, cy - 0.3, 0.13, 0.6, 0.03); ctx.fill();
+    ctx.fillStyle = GYM.yellow;
+    roundRectPath(ctx, cx + sx * (half - 0.02) - 0.07, cy - 0.3, 0.13, 0.12, 0.03); ctx.fill();
+  }
+}
+
+// a barbell seen end-on — looking straight down the bar, so we only see the
+// round plate stack with the bar's chrome end poking through. Used by the
+// side-on bench press, where the bar runs into the screen and just rises/falls.
+function drawBarbellEnd(ctx, cx, cy) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.fillStyle = '#33373e';                               // plate disc
+  ctx.beginPath(); ctx.arc(0, 0, 0.2, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = GYM.frameLo; ctx.lineWidth = 0.04;     // plate rim
+  ctx.beginPath(); ctx.arc(0, 0, 0.2, 0, Math.PI * 2); ctx.stroke();
+  ctx.strokeStyle = GYM.yellow; ctx.lineWidth = 0.05;      // weight-class ring
+  ctx.beginPath(); ctx.arc(0, 0, 0.13, 0, Math.PI * 2); ctx.stroke();
+  ctx.fillStyle = GYM.chrome;                              // bar end / collar hub
+  ctx.beginPath(); ctx.arc(0, 0, 0.06, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+
+// one arm of a meathead, posed by the lift. side is +1 (near) / -1 (far);
+// the far arm is dimmed so it reads behind the torso. Returns nothing.
+function drawMeatArm(ctx, pose, cyc, t, ph, side, sw, shY, skin, far) {
+  const shx = side * sw, shy = shY + 0.02;
+  let hx, hy, weight = null;
+  if (pose === 'curl') {
+    const lx = shx * 0.7, ly = shY + 0.55, ux = shx * 0.5, uy = shY + 0.04;
+    hx = lx + (ux - lx) * cyc; hy = ly + (uy - ly) * cyc; weight = 'db';
+  } else if (pose === 'press') {
+    const lx = shx * 0.85, ly = shY - 0.02, ux = shx * 0.55, uy = shY - 0.62;
+    hx = lx + (ux - lx) * cyc; hy = ly + (uy - ly) * cyc; weight = 'db';
+  } else if (pose === 'pull') {
+    hx = shx * 1.15; hy = (shY - 0.64) + 0.54 * cyc;
+  } else if (pose === 'squat') {
+    hx = shx * 1.2; hy = shY - 0.04;
+  } else if (pose === 'ellip') { // hands reach up to the swinging handle grips
+    const g = ellipGrip(side, ellipStride(t, ph));
+    hx = g.x; hy = g.y;
+  } else { // run: arms pump out of phase with the legs
+    const s = t * 8.5 + ph + (side < 0 ? Math.PI : 0);
+    hx = shx * 0.6 + side * 0.05; hy = shY + 0.34 - 0.14 * Math.sin(s);
+  }
+  ctx.save();
+  if (far) ctx.globalAlpha = 0.8;
+  ctx.strokeStyle = skin; ctx.lineWidth = far ? 0.12 : 0.135;
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  const mx = (shx + hx) / 2, my = (shy + hy) / 2;
+  const ddx = hx - shx, ddy = hy - shy, L = Math.hypot(ddx, ddy) || 1;
+  // the elbow bows out of the shoulder-hand line. Pressers (hand overhead),
+  // runners (hand swinging below) and pulldowns (elbows flaring as the bar comes
+  // down) must throw the elbow OUT/forward; tucking it in reads as a
+  // backward-bending, hyperextended joint. Curl/squat/ellip tuck in.
+  let bend;
+  if (pose === 'press') bend = 0.1 * side;
+  else if (pose === 'run') bend = -0.12 * side;
+  else if (pose === 'pull') bend = 0.1 * side;
+  else bend = 0.12 * side;                                  // curl, squat, ellip
+  const ex = mx + (-ddy / L) * bend - 0.04 * side, ey = my + (ddx / L) * bend;
+  ctx.beginPath(); ctx.moveTo(shx, shy); ctx.lineTo(ex, ey); ctx.lineTo(hx, hy); ctx.stroke();
+  if (weight === 'db') { ctx.globalAlpha = far ? 0.8 : 1; drawDumbbellSmall(ctx, hx, hy); }
+  ctx.restore();
+}
+
+// one buff gym-goer, feet at the origin, ~1.5 tall, facing right. pose drives
+// the working limbs through a slow effort loop (curl / press / run / squat /
+// pull); ph offsets the loop so a rank of them isn't in lockstep. Flat tone
+// shapes so they still read at background scale. (The bench presser is drawn
+// inline by its station — he's lying down.)
+function drawMeathead(ctx, pose, t, ph, skin, tank) {
+  const fast = pose === 'run';
+  const cyc = 0.5 - 0.5 * Math.cos(t * (fast ? 8.5 : 3.0) + ph); // 0..1 effort
+  const sw = 0.23, shY = -1.16, hipY = -0.62, headR = 0.135, neckY = -1.2;
+  const leg = '#2b2e35', legHi = '#3a3e46';
+  let dy = 0;
+  if (pose === 'squat') dy = 0.24 * cyc;            // squat dips the frame
+  if (fast) dy = 0.05 * Math.abs(Math.sin(t * 8.5 + ph)); // run bobs it
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.16)';               // floor shadow (not lifted)
+  ctx.beginPath(); ctx.ellipse(0, 0.02, 0.3, 0.055, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.translate(0, dy);
+
+  // legs
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  if (fast) {
+    const s = t * 8.5 + ph;
+    for (const sg of [1, -1]) {
+      const a = Math.sin(s + (sg < 0 ? Math.PI : 0));
+      const footx = 0.22 * a, footy = -Math.max(0, a) * 0.14;
+      ctx.strokeStyle = sg < 0 ? leg : legHi; ctx.lineWidth = 0.16;
+      ctx.beginPath();
+      ctx.moveTo(0, hipY); ctx.lineTo(footx * 0.5, -0.3); ctx.lineTo(footx, footy);
+      ctx.stroke();
+    }
+  } else if (pose === 'squat') {
+    const knee = 0.18 + 0.16 * cyc, ky = -0.3 + 0.05 * cyc;
+    for (const sg of [1, -1]) {
+      ctx.strokeStyle = sg < 0 ? leg : legHi; ctx.lineWidth = 0.17;
+      ctx.beginPath();
+      ctx.moveTo(sg * 0.05, hipY); ctx.lineTo(sg * knee, ky); ctx.lineTo(sg * 0.2, 0);
+      ctx.stroke();
+    }
+  } else if (pose === 'ellip') {            // feet planted on the gliding pedals
+    const s = ellipStride(t, ph);
+    for (const sg of [1, -1]) {
+      const f = ellipPedal(sg, s);
+      const kx = f.x * 0.5 + 0.12, ky = (hipY + f.y) / 2;   // knee juts toward the machine
+      ctx.strokeStyle = sg < 0 ? leg : legHi; ctx.lineWidth = 0.16;
+      ctx.beginPath();
+      ctx.moveTo(0, hipY); ctx.lineTo(kx, ky); ctx.lineTo(f.x, f.y);
+      ctx.stroke();
+    }
+  } else {
+    for (const sg of [1, -1]) {
+      ctx.strokeStyle = sg < 0 ? leg : legHi; ctx.lineWidth = 0.16;
+      ctx.beginPath();
+      ctx.moveTo(sg * 0.05, hipY); ctx.lineTo(sg * 0.11, -0.3); ctx.lineTo(sg * 0.14, 0);
+      ctx.stroke();
+    }
+  }
+
+  drawMeatArm(ctx, pose, cyc, t, ph, -1, sw, shY, skin, true);  // far arm
+
+  // torso: broad shoulders tapering to the waist (the meathead V)
+  ctx.fillStyle = tank;
+  ctx.beginPath();
+  ctx.moveTo(-sw - 0.05, shY + 0.04);
+  ctx.quadraticCurveTo(-0.205, (shY + hipY) / 2, -0.13, hipY + 0.02);
+  ctx.lineTo(0.13, hipY + 0.02);
+  ctx.quadraticCurveTo(0.205, (shY + hipY) / 2, sw + 0.05, shY + 0.04);
+  ctx.quadraticCurveTo(0, shY - 0.1, -sw - 0.05, shY + 0.04);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.12)'; ctx.lineWidth = 0.025;
+  ctx.beginPath(); ctx.moveTo(0, shY + 0.02); ctx.lineTo(0, hipY); ctx.stroke();
+
+  // neck + head
+  ctx.strokeStyle = skin; ctx.lineWidth = 0.14; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(0, shY + 0.02); ctx.lineTo(0, neckY); ctx.stroke();
+  ctx.fillStyle = skin;
+  ctx.beginPath(); ctx.arc(0, neckY - headR * 0.7, headR, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = 'rgba(0,0,0,0.28)';               // hair cap
+  ctx.beginPath(); ctx.arc(0, neckY - headR * 0.95, headR, Math.PI * 1.05, Math.PI * 2.05); ctx.fill();
+
+  drawMeatArm(ctx, pose, cyc, t, ph, 1, sw, shY, skin, false); // near arm
+  ctx.restore();
+}
+
+// ceiling: a dark soffit with a row of recessed light panels and their soft
+// downward glow. Mostly seen only when the camera climbs.
+function drawGymCeiling(ctx, view, t) {
+  const ceilY = 3.5;            // lowered with the rest of the wall so the lights ride lower
+  const g = ctx.createLinearGradient(0, ceilY - 2.4, 0, ceilY + 0.4);
+  g.addColorStop(0, 'rgba(20,14,30,0.55)');
+  g.addColorStop(1, 'rgba(20,14,30,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(view.x0, ceilY - 2.4, view.x1 - view.x0, 2.8);
+  gymRow(ctx, view, 0.07, 3.0, (x) => {
+    const lg = ctx.createLinearGradient(0, ceilY - 0.42, 0, ceilY + 0.08);
+    lg.addColorStop(0, 'rgba(255,252,236,0.9)');
+    lg.addColorStop(1, 'rgba(255,246,210,0.3)');
+    ctx.fillStyle = lg;
+    roundRectPath(ctx, x - 1.0, ceilY - 0.42, 2.0, 0.5, 0.06); ctx.fill();
+    const gl = ctx.createLinearGradient(0, ceilY + 0.08, 0, ceilY + 1.9);
+    gl.addColorStop(0, 'rgba(255,250,225,0.16)');
+    gl.addColorStop(1, 'rgba(255,250,225,0)');
+    ctx.fillStyle = gl;
+    ctx.fillRect(x - 1.0, ceilY + 0.08, 2.0, 1.8);
+  });
+}
+
+// the bold yellow accent stripe banding the wall, with the gym's repeated
+// wordmark riding it
+function drawAccentStripe(ctx, view, p, y) {
+  const h = 0.5, w = view.x1 - view.x0;
+  ctx.fillStyle = GYM.yellow;
+  ctx.fillRect(view.x0, y, w, h);
+  ctx.fillStyle = 'rgba(58,38,88,0.85)';
+  ctx.fillRect(view.x0, y - 0.04, w, 0.04);
+  ctx.fillRect(view.x0, y + h, w, 0.04);
+  gymRow(ctx, view, p, 7.0, (x) => {
+    gymText(ctx, 'JUDGEMENT  FREE  ZONE', x, y + h / 2 + 0.02, 0.32, GYM.purpleDk, '800');
+  });
+}
+
+// a framed wall mirror with cool glass. When `actor` (the live bike) rolls in
+// front of this pane, a dim copy of him is rendered into the glass — from
+// BEHIND, since the mirror is on the back wall and catches the back of his
+// head — tracked to his position and clipped to the frame, so the reflection
+// slides past as he goes by. With no actor (editor/menus) the glass just shows
+// its gradient and sheen. `gdy` is drawGymBack's ground-pin shift, used to put
+// his world height into this backdrop's shifted frame.
+function drawMirror(ctx, x, yTop, w, h, t, key, actor, gdy) {
+  gdy = gdy || 0;
+  const gx = x - w / 2;
+  ctx.fillStyle = GYM.frameLo;                          // frame
+  roundRectPath(ctx, gx - 0.06, yTop - 0.06, w + 0.12, h + 0.12, 0.05); ctx.fill();
+  const g = ctx.createLinearGradient(0, yTop, 0, yTop + h); // glass base
+  g.addColorStop(0, '#b9c6d6'); g.addColorStop(0.5, '#94a6b9'); g.addColorStop(1, '#7e93a8');
+  ctx.fillStyle = g;
+  ctx.fillRect(gx, yTop, w, h);
+
+  // only render the reflection when the rider is roughly in front of this pane
+  // (keeps it to ~one mirror, so the per-frame drawBike cost is bounded). His
+  // real y lives in the world frame; subtract gdy to put it in this backdrop's
+  // shifted frame, then measure how far he floats above the glass floor so the
+  // reflection rises as he jumps.
+  if (actor && actor.pos && Math.abs(actor.pos.x - x) < w / 2 + 1.5) {
+    const rs = 0.7;                                      // reflection a touch smaller than life
+    const air = Math.max(0, (yTop + h) - (actor.pos.y - gdy));
+    const refCy = yTop + h * 0.7 - air * 0.5;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(gx, yTop, w, h); ctx.clip();
+    ctx.translate(actor.pos.x, refCy);                   // tracks him 1:1 horizontally
+    // a wall mirror runs parallel to his travel, so the reflection faces the
+    // same way he rides (no left/right flip); the head is the back-of-head image
+    ctx.scale(rs, rs);
+    ctx.translate(-actor.pos.x, -actor.pos.y);
+    ctx.globalAlpha = 0.5;
+    drawBike(ctx, actor, false, true);
+    ctx.restore();
+    // a cool wash so the reflection reads as sitting behind the glass
+    ctx.save();
+    ctx.beginPath(); ctx.rect(gx, yTop, w, h); ctx.clip();
+    const wash = ctx.createLinearGradient(0, yTop, 0, yTop + h);
+    wash.addColorStop(0, 'rgba(170,186,205,0.34)');
+    wash.addColorStop(1, 'rgba(120,140,162,0.46)');
+    ctx.fillStyle = wash;
+    ctx.fillRect(gx, yTop, w, h);
+    ctx.restore();
+  }
+
+  ctx.save();                                            // diagonal sheen streaks
+  ctx.beginPath(); ctx.rect(gx, yTop, w, h); ctx.clip();
+  ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.lineWidth = 0.06; ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(gx + 0.12, yTop + h); ctx.lineTo(gx + 0.6, yTop);
+  ctx.moveTo(gx + 0.4, yTop + h); ctx.lineTo(gx + 0.88, yTop);
+  ctx.stroke();
+  ctx.restore();
+
+  ctx.strokeStyle = GYM.frame; ctx.lineWidth = 0.05;     // frame outline
+  roundRectPath(ctx, gx, yTop, w, h, 0.02); ctx.stroke();
+}
+
+// a motivational wall plaque (purple-on-yellow or the reverse), some with a
+// dumbbell crest
+function drawWallSign(ctx, x, y, key) {
+  const w = 2.6, h = 1.5, r = srand(key * 0.3 + 0.1), invert = r < 0.5;
+  const bg = invert ? GYM.purpleDk : GYM.yellow;
+  const ink = invert ? GYM.yellow : GYM.purpleDk;
+  ctx.fillStyle = bg;
+  roundRectPath(ctx, x - w / 2, y, w, h, 0.1); ctx.fill();
+  ctx.strokeStyle = ink; ctx.lineWidth = 0.07;
+  roundRectPath(ctx, x - w / 2, y, w, h, 0.1); ctx.stroke();
+  if (r < 0.33) {
+    gymText(ctx, 'NO LUNKS', x, y + 0.42, 0.34, ink, '800');
+    gymText(ctx, 'ALLOWED', x, y + 0.92, 0.34, ink, '800');
+  } else if (r < 0.66) {
+    drawDumbbellIcon(ctx, x, y + 0.5, ink);
+    gymText(ctx, 'PLANET BURGER', x, y + 1.06, 0.3, ink, '800');
+  } else {
+    gymText(ctx, 'YOU GOT', x, y + 0.42, 0.34, ink, '800');
+    gymText(ctx, 'THIS!', x, y + 0.92, 0.4, ink, '800');
+  }
+}
+
+// far cardio rank: a treadmill with a running meathead
+function drawTreadmill(ctx, x, baseY, t, key) {
+  ctx.save();
+  ctx.translate(x, baseY);
+  ctx.scale(srand(key) < 0.5 ? -1 : 1, 1);
+  ctx.fillStyle = GYM.frame;
+  roundRectPath(ctx, -0.7, -0.18, 1.4, 0.18, 0.05); ctx.fill();
+  ctx.fillStyle = '#15171b';
+  roundRectPath(ctx, -0.62, -0.3, 1.05, 0.16, 0.04); ctx.fill();   // belt
+  ctx.fillStyle = GYM.metalDk;
+  roundRectPath(ctx, 0.3, -0.34, 0.34, 0.34, 0.05); ctx.fill();    // motor cowl
+  ctx.fillStyle = GYM.frame;
+  ctx.fillRect(-0.66, -1.5, 0.1, 1.32);                            // upright
+  ctx.fillRect(-0.6, -1.5, 0.52, 0.08);                            // handle
+  ctx.fillStyle = GYM.metalDk;
+  roundRectPath(ctx, -0.76, -1.8, 0.52, 0.34, 0.05); ctx.fill();   // console
+  ctx.fillStyle = GYM.screen;
+  roundRectPath(ctx, -0.72, -1.76, 0.44, 0.22, 0.03); ctx.fill();
+  ctx.save();
+  ctx.translate(-0.06, -0.3); ctx.scale(0.92, 0.92);
+  drawMeathead(ctx, 'run', t, key, gymPick(GYM.skin, key), gymPick(GYM.tank, key + 1));
+  ctx.restore();
+  ctx.restore();
+}
+
+// elliptical kinematics, machine-local. One shared stride `s` drives both the
+// machine (pedals + swing handles) and the rider (feet + hands), so they move as
+// one unit. `sg` = +1 near / -1 far; the two sides glide in opposition.
+function ellipStride(t, key) { return Math.sin(t * 5 + key); }
+function ellipPedal(sg, s) { return { x: -0.1 + 0.34 * s * sg, y: -0.04 - 0.05 * Math.max(0, s * sg) }; }
+function ellipGrip(sg, s) {
+  const tx = -0.1 - 0.2 * s * sg;                       // top of this side's swing pole
+  return { x: 0.52 + 0.6 * (tx - 0.52), y: -1.29 };     // hand rides 60% up the pole
+}
+
+// far cardio rank: an elliptical with a striding meathead. Feet ride the pedals
+// and hands ride the swing handles — all keyed off the same stride, so the rider
+// and machine move in lockstep.
+function drawElliptical(ctx, x, baseY, t, key) {
+  ctx.save();
+  ctx.translate(x, baseY);
+  ctx.scale(srand(key + 3) < 0.5 ? -1 : 1, 1);
+  const s = ellipStride(t, key);
+  ctx.fillStyle = GYM.frame;
+  roundRectPath(ctx, 0.34, -0.95, 0.5, 0.95, 0.08); ctx.fill();    // flywheel housing
+  ctx.fillStyle = GYM.metalDk;
+  ctx.beginPath(); ctx.arc(0.59, -0.5, 0.26, 0, Math.PI * 2); ctx.fill();
+  // foot pedals on their crank arms
+  ctx.lineCap = 'round';
+  for (const sg of [1, -1]) {
+    const p = ellipPedal(sg, s);
+    ctx.strokeStyle = GYM.metal; ctx.lineWidth = 0.07;
+    ctx.beginPath(); ctx.moveTo(0.5, -0.55); ctx.lineTo(p.x, p.y); ctx.stroke();
+    ctx.fillStyle = GYM.frameLo; ctx.fillRect(p.x - 0.12, p.y, 0.26, 0.06);
+  }
+  // swing handles: one pole per side, with a foam grip where the rider holds on
+  for (const sg of [1, -1]) {
+    const tx = -0.1 - 0.2 * s * sg;
+    ctx.strokeStyle = GYM.frame; ctx.lineWidth = 0.08;
+    ctx.beginPath(); ctx.moveTo(0.52, -0.9); ctx.lineTo(tx, -1.55); ctx.stroke();
+    ctx.strokeStyle = GYM.frameLo; ctx.lineWidth = 0.13;     // foam grip straddling the hold
+    ctx.beginPath();
+    ctx.moveTo(0.52 + 0.5 * (tx - 0.52), -0.9 + 0.5 * -0.65);
+    ctx.lineTo(0.52 + 0.72 * (tx - 0.52), -0.9 + 0.72 * -0.65);
+    ctx.stroke();
+  }
+  ctx.fillStyle = GYM.metalDk;
+  roundRectPath(ctx, 0.36, -1.5, 0.4, 0.3, 0.05); ctx.fill();
+  ctx.fillStyle = GYM.screen;
+  roundRectPath(ctx, 0.4, -1.46, 0.32, 0.2, 0.03); ctx.fill();
+  drawMeathead(ctx, 'ellip', t, key, gymPick(GYM.skin, key), gymPick(GYM.tank, key + 2));
+  ctx.restore();
+}
+
+// near strength rank: a power rack with a meathead squatting under the bar
+function drawSquatStation(ctx, x, baseY, t, key) {
+  ctx.save();
+  ctx.translate(x, baseY);
+  const cyc = 0.5 - 0.5 * Math.cos(t * 3 + key);
+  ctx.fillStyle = GYM.frame;
+  ctx.fillRect(-0.92, -2.4, 0.16, 2.4); ctx.fillRect(0.76, -2.4, 0.16, 2.4);
+  ctx.fillRect(-0.92, -2.4, 1.84, 0.16);                 // top tie
+  ctx.fillStyle = GYM.yellow;
+  ctx.fillRect(-0.92, -1.2, 0.22, 0.07); ctx.fillRect(0.7, -1.2, 0.22, 0.07); // J-hooks
+  drawMeathead(ctx, 'squat', t, key, gymPick(GYM.skin, key), gymPick(GYM.tank, key + 1));
+  drawBarbell(ctx, 0, -1.16 + 0.24 * cyc, 0.86);         // bar across the shoulders
+  ctx.restore();
+}
+
+// near strength rank: a cable tower; a meathead does a standing pulldown and
+// the selected plates ride up as he pulls
+function drawCableStack(ctx, x, baseY, t, key) {
+  ctx.save();
+  ctx.translate(x, baseY);
+  const cyc = 0.5 - 0.5 * Math.cos(t * 3 + key);         // 1 = pulled down
+  ctx.fillStyle = GYM.frame;
+  ctx.fillRect(0.5, -2.5, 0.18, 2.5); ctx.fillRect(0.42, -2.5, 0.6, 0.16);
+  ctx.fillStyle = GYM.frameLo;
+  roundRectPath(ctx, 0.46, -2.1, 0.5, 1.65, 0.04); ctx.fill();    // stack housing
+  const lift = 0.42 * cyc;
+  for (let i = 0; i < 7; i++) {
+    const py = -0.55 - i * 0.18 - (i < 3 ? lift : 0);
+    ctx.fillStyle = i < 3 ? '#6b7280' : '#3a3e45';
+    roundRectPath(ctx, 0.52, py, 0.4, 0.13, 0.02); ctx.fill();
+  }
+  ctx.strokeStyle = GYM.metal; ctx.lineWidth = 0.05;
+  ctx.beginPath(); ctx.arc(0.72, -2.4, 0.09, 0, Math.PI * 2); ctx.stroke();  // pulley
+  const barY = -1.82 + 0.54 * cyc;
+  ctx.strokeStyle = '#cfd5db'; ctx.lineWidth = 0.03;
+  ctx.beginPath(); ctx.moveTo(0.72, -2.38); ctx.lineTo(0, barY - 0.02); ctx.stroke();
+  ctx.fillStyle = GYM.chrome; ctx.fillRect(-0.28, barY - 0.03, 0.56, 0.06);  // lat bar
+  drawMeathead(ctx, 'pull', t, key, gymPick(GYM.skin, key), gymPick(GYM.tank, key + 1));
+  ctx.restore();
+}
+
+// near strength rank: a flat bench with a meathead pressing a barbell. He's
+// lying down, so he's drawn inline rather than via drawMeathead.
+function drawBenchStation(ctx, x, baseY, t, key) {
+  ctx.save();
+  ctx.translate(x, baseY);
+  ctx.scale(srand(key + 5) < 0.5 ? -1 : 1, 1);
+  const cyc = 0.5 - 0.5 * Math.cos(t * 3 + key);         // 1 = locked out
+  const skin = gymPick(GYM.skin, key), tank = gymPick(GYM.tank, key + 1);
+  ctx.fillStyle = GYM.frame;
+  ctx.fillRect(-0.66, -1.15, 0.1, 1.15); ctx.fillRect(0.56, -1.15, 0.1, 1.15); // uprights
+  ctx.fillStyle = GYM.pad;
+  roundRectPath(ctx, -0.55, -0.52, 1.1, 0.16, 0.05); ctx.fill();   // bench top
+  ctx.fillStyle = GYM.frame;
+  ctx.fillRect(-0.5, -0.4, 0.07, 0.4); ctx.fillRect(0.43, -0.4, 0.07, 0.4); // legs
+  ctx.fillStyle = tank;
+  roundRectPath(ctx, -0.34, -0.66, 0.62, 0.18, 0.07); ctx.fill();  // torso
+  ctx.fillStyle = skin;
+  ctx.beginPath(); ctx.arc(-0.42, -0.6, 0.12, 0, Math.PI * 2); ctx.fill(); // head
+  ctx.strokeStyle = '#2c2f36'; ctx.lineWidth = 0.12; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.beginPath(); ctx.moveTo(0.24, -0.5); ctx.lineTo(0.5, -0.3); ctx.lineTo(0.62, 0); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0.2, -0.5); ctx.lineTo(0.42, -0.28); ctx.lineTo(0.5, 0); ctx.stroke();
+  const handY = -0.7 - 0.55 * cyc;
+  ctx.strokeStyle = skin; ctx.lineWidth = 0.11;
+  ctx.beginPath(); ctx.moveTo(0.0, -0.62); ctx.lineTo(0.06, handY); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-0.08, -0.62); ctx.lineTo(0.0, handY); ctx.stroke();
+  drawBarbellEnd(ctx, 0.03, handY);                                // bar runs into the screen
+  ctx.restore();
+}
+
+// near strength rank: a free-weight guy curling or pressing dumbbells beside
+// a small dumbbell rack
+function drawFreeWeightGuy(ctx, x, baseY, t, key) {
+  ctx.save();
+  ctx.translate(x, baseY);
+  ctx.save();
+  ctx.translate(1.0, 0);                                  // rack to his side
+  ctx.fillStyle = GYM.frame;
+  roundRectPath(ctx, -0.5, -0.72, 1.0, 0.72, 0.06); ctx.fill();
+  ctx.fillStyle = GYM.frameLo;
+  ctx.fillRect(-0.5, -0.46, 1.0, 0.05);
+  for (let r = 0; r < 2; r++) for (let i = 0; i < 4; i++) drawDumbbellSmall(ctx, -0.32 + i * 0.21, -0.5 + r * 0.3);
+  ctx.restore();
+  const pose = srand(key + 7) < 0.5 ? 'curl' : 'press';
+  drawMeathead(ctx, pose, t, key, gymPick(GYM.skin, key), gymPick(GYM.tank, key + 1));
+  ctx.restore();
+}
+
+// the whole indoor gym scene, painted over the purple wall gradient. `actor`
+// (optional) is the live bike, reflected in the wall mirrors.
+function drawGymBack(ctx, view, t, actor, gdy) {
+  gdy = gdy || 0;
+  // the indoor scene is one rigid room (ceiling, wall, mirrors, floor all at
+  // fixed world heights), so a ground pin shifts the whole thing as a unit
+  ctx.save();
+  if (gdy) ctx.translate(0, gdy);
+  const floorY = GYM_FLOOR;
+  drawGymCeiling(ctx, view, t);
+  // back wall (one depth, parallax 0.12): the accent stripe, then a row that
+  // alternates motivational signage with mirrors that reflect the rider. The
+  // wall sits low — the mirrors' feet end just above the floor (their 2.8 tall
+  // panes start at 7.9, so bottoms land at 10.7, a touch over the 11.0 ground).
+  drawAccentStripe(ctx, view, 0.12, 7.15);
+  gymRow(ctx, view, 0.12, 4.6, (x, key) => {
+    if (srand(key * 0.07 + 1.3) < 0.5) gymItem(ctx, x, 8.0, () => drawWallSign(ctx, x, 8.0, key));
+    else drawMirror(ctx, x, 7.9, 2.0, 2.8, t, key, actor, gdy);
+  });
+  // far cardio rank
+  gymRow(ctx, view, 0.3, 5.4, (x, key) => gymItem(ctx, x, floorY, () => {
+    if (srand(key * 0.05 + 4.1) < 0.5) drawTreadmill(ctx, x, floorY, t, key);
+    else drawElliptical(ctx, x, floorY, t, key);
+  }));
+  // near strength rank (bigger, faster parallax, a touch lower so it reads
+  // as the foreground row)
+  gymRow(ctx, view, 0.46, 8.8, (x, key) => gymItem(ctx, x, floorY + 0.25, () => {
+    const r = srand(key * 0.09 + 2.7);
+    if (r < 0.25) drawSquatStation(ctx, x, floorY + 0.25, t, key);
+    else if (r < 0.5) drawCableStack(ctx, x, floorY + 0.25, t, key);
+    else if (r < 0.75) drawBenchStation(ctx, x, floorY + 0.25, t, key);
+    else drawFreeWeightGuy(ctx, x, floorY + 0.25, t, key);
+  }));
+  ctx.restore();
+}
+
+// the lip of the rubber gym floor: a dark mat edge with a worn safety stripe
+// and a faint sheen — the gym world's answer to grass/lava
+function drawGymEdge(ctx, s, theme, t) {
+  const dx = s.bx - s.ax, dy = s.by - s.ay;
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-4) return;
+  const ux = dx / len, uy = dy / len;
+  let nx = uy, ny = -ux;            // normal pointing up into the playable area
+  if (ny > 0) { nx = -nx; ny = -ny; }
+  ctx.fillStyle = '#2b2e34';
+  ctx.beginPath();
+  ctx.moveTo(s.ax - nx * 0.015, s.ay - ny * 0.015);
+  ctx.lineTo(s.bx - nx * 0.015, s.by - ny * 0.015);
+  ctx.lineTo(s.bx + nx * 0.12, s.by + ny * 0.12);
+  ctx.lineTo(s.ax + nx * 0.12, s.ay + ny * 0.12);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = 'rgba(233,196,42,0.5)'; ctx.lineWidth = 0.04;
+  ctx.beginPath();
+  ctx.moveTo(s.ax + nx * 0.05, s.ay + ny * 0.05);
+  ctx.lineTo(s.bx + nx * 0.05, s.by + ny * 0.05);
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(200,210,222,0.28)'; ctx.lineWidth = 0.02;
+  ctx.beginPath();
+  ctx.moveTo(s.ax + nx * 0.005, s.ay + ny * 0.005);
+  ctx.lineTo(s.bx + nx * 0.005, s.by + ny * 0.005);
+  ctx.stroke();
+}
+
+// ---------- desert world (the Egyptian-pyramids backdrop) ----------
+//
+// Like the other backdrops, everything is fixed in world space and laid
+// back-to-front so panning/climbing reveals more of the scene. The sand
+// horizon (where dunes, monuments and props stand) sits at sandY, matching the
+// hill convention. Reuses the gymRow/gymText/gymPick helpers (generic parallax
+// row / world-text / stable per-slot pick, first written for the gym world).
+const DESERT = {
+  limeLit: '#efe4c4', limeSh: '#cdbb8e', limeEdge: '#fff7de',  // polished casing stone
+  gold: '#f2cf3e', goldHi: '#ffe98a', goldSh: '#b5860f',       // gilded caps / treasure
+  stone: '#caa86e', stoneSh: '#9c7f4c',                        // weathered sandstone
+  granite: '#7c5a52', graniteSh: '#583e39',                    // obelisk granite
+  wrapLt: '#e8dec5', wrapSh: '#c9bc98', wrapLine: '#a99c78',    // mummy bandages
+  nemesBlue: '#2f6fa8', kohl: '#23324a',                       // headdress / eye paint
+  sandDrift: 'rgba(214,190,140,0.55)',
+};
+const DESERT_FLOOR = 11.0;
+
+// the hot sun high over the dunes, plus a warm dusty heat-haze band low on the
+// horizon. The sun tracks the camera (it sits "at infinity"), like the meadow's.
+function drawDesertSun(ctx, view, t, gdy) {
+  gdy = gdy || 0;
+  const w = view.x1 - view.x0;
+  const sx = view.x0 + w * 0.72, sy = view.y0 + 2.2;
+  const g = ctx.createRadialGradient(sx, sy, 0.2, sx, sy, 6.5);
+  g.addColorStop(0, 'rgba(255,247,214,0.92)');
+  g.addColorStop(0.16, 'rgba(255,238,182,0.5)');
+  g.addColorStop(1, 'rgba(255,235,170,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(sx, sy, 6.5, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = 'rgba(255,250,228,0.95)';
+  ctx.beginPath(); ctx.arc(sx, sy, 1.45, 0, Math.PI * 2); ctx.fill();
+  // warm haze pooling on the horizon (over the dunes/monuments), ground-anchored
+  const hy = 9.7 + gdy;
+  const hg = ctx.createLinearGradient(0, hy, 0, 11.3 + gdy);
+  hg.addColorStop(0, 'rgba(244,231,197,0)');
+  hg.addColorStop(1, 'rgba(244,231,197,0.34)');
+  ctx.fillStyle = hg;
+  ctx.fillRect(view.x0, hy, w, 1.6);
+}
+
+// one pyramid: two casing faces (sunlit / shadowed) of polished limestone, a
+// soft specular sheen, bright sunlit corner edges, and a gilded gold
+// pyramidion that twinkles. base centred at (px, baseY).
+function drawPyramid(ctx, px, baseY, hw, h, t, glintKey) {
+  const apexX = px, apexY = baseY - h;
+  const nearX = px + hw * 0.16;              // foot of the near vertical edge
+  // shadowed (right) face
+  ctx.fillStyle = DESERT.limeSh;
+  ctx.beginPath();
+  ctx.moveTo(apexX, apexY); ctx.lineTo(nearX, baseY); ctx.lineTo(px + hw, baseY);
+  ctx.closePath(); ctx.fill();
+  // sunlit (left) face
+  ctx.fillStyle = DESERT.limeLit;
+  ctx.beginPath();
+  ctx.moveTo(apexX, apexY); ctx.lineTo(px - hw, baseY); ctx.lineTo(nearX, baseY);
+  ctx.closePath(); ctx.fill();
+  // polished sheen sweeping across the lit face
+  const sg = ctx.createLinearGradient(px - hw, 0, nearX, 0);
+  sg.addColorStop(0, 'rgba(255,255,255,0)');
+  sg.addColorStop(0.6, 'rgba(255,253,238,0.26)');
+  sg.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = sg;
+  ctx.beginPath();
+  ctx.moveTo(apexX, apexY); ctx.lineTo(px - hw, baseY); ctx.lineTo(nearX, baseY);
+  ctx.closePath(); ctx.fill();
+  // bright sunlit casing edges
+  ctx.strokeStyle = DESERT.limeEdge; ctx.lineWidth = 0.04; ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(px - hw, baseY); ctx.lineTo(apexX, apexY); ctx.lineTo(nearX, baseY);
+  ctx.stroke();
+  // gilded pyramidion (top cf of the height)
+  const cf = 0.14, cy = apexY + h * cf;
+  const cl = px - hw * cf, cr = px + hw * cf, cn = px + hw * 0.16 * cf;
+  ctx.fillStyle = DESERT.goldSh;
+  ctx.beginPath(); ctx.moveTo(apexX, apexY); ctx.lineTo(cn, cy); ctx.lineTo(cr, cy);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = DESERT.gold;
+  ctx.beginPath(); ctx.moveTo(apexX, apexY); ctx.lineTo(cl, cy); ctx.lineTo(cn, cy);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = 'rgba(120,90,20,0.5)'; ctx.lineWidth = 0.03;
+  ctx.beginPath(); ctx.moveTo(cl, cy); ctx.lineTo(cr, cy); ctx.stroke();
+  // a sun-glint twinkle on the cap
+  const tw = 0.55 + 0.45 * Math.sin(t * 2 + glintKey * 1.7);
+  if (tw > 0.2) {
+    ctx.strokeStyle = 'rgba(255,253,235,' + (0.8 * tw).toFixed(3) + ')'; ctx.lineWidth = 0.025;
+    ctx.beginPath();
+    ctx.moveTo(apexX - 0.2 * tw, apexY + 0.05); ctx.lineTo(apexX + 0.2 * tw, apexY + 0.05);
+    ctx.moveTo(apexX, apexY - 0.16 * tw); ctx.lineTo(apexX, apexY + 0.26 * tw);
+    ctx.stroke();
+  }
+  // sand drift banked against the base
+  ctx.fillStyle = DESERT.sandDrift;
+  ctx.beginPath();
+  ctx.moveTo(px - hw - 0.5, baseY);
+  ctx.quadraticCurveTo(px - hw, baseY - 0.2, px - hw + 0.6, baseY);
+  ctx.closePath(); ctx.fill();
+}
+
+// a Giza-style cluster: a great pyramid flanked by a smaller one behind and a
+// little queen's pyramid in front
+function drawPyramidGroup(ctx, x, baseY, t, key) {
+  const r = srand(key * 0.013 + 0.5);
+  const big = 4.8 + r * 1.6;
+  drawPyramid(ctx, x - 4.3 - r, baseY, big * 0.66, big * 0.72, t, key + 2);
+  drawPyramid(ctx, x, baseY, big * 0.92, big, t, key);
+  drawPyramid(ctx, x + 3.1 + r * 0.6, baseY, 1.1, 1.7, t, key + 5);
+}
+
+// the Great Sphinx, a weathered sandstone silhouette: reclining lion body,
+// outstretched forepaws and a nemes-crowned pharaoh head (nose long gone)
+function drawSphinx(ctx, x, baseY, t, key) {
+  ctx.save();
+  ctx.translate(x, baseY);
+  ctx.scale(srand(key + 1) < 0.5 ? -1 : 1, 1);
+  ctx.fillStyle = DESERT.stone;
+  ctx.beginPath();
+  ctx.moveTo(-1.5, 0);
+  ctx.lineTo(-1.5, -0.5);
+  ctx.quadraticCurveTo(-1.4, -0.95, -0.85, -1.0);   // haunch
+  ctx.lineTo(0.7, -1.0);
+  ctx.lineTo(0.92, -1.5);                           // chest up to the neck
+  ctx.lineTo(1.28, -1.5);
+  ctx.lineTo(1.34, -1.0);
+  ctx.lineTo(1.78, -0.95);                          // forepaws reaching out
+  ctx.lineTo(1.78, 0);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = DESERT.stoneSh; ctx.lineWidth = 0.04; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(1.34, -0.5); ctx.lineTo(1.74, -0.5); ctx.stroke(); // paw split
+  // head + nemes headdress
+  ctx.fillStyle = DESERT.stone;
+  ctx.beginPath();
+  ctx.moveTo(0.84, -1.5); ctx.lineTo(0.82, -2.02);
+  ctx.lineTo(0.98, -2.2); ctx.lineTo(1.32, -2.2); ctx.lineTo(1.48, -2.02);
+  ctx.lineTo(1.46, -1.5); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = DESERT.stoneSh; ctx.lineWidth = 0.03;
+  for (let i = 0; i < 3; i++) {
+    ctx.beginPath(); ctx.moveTo(0.9, -2.0 + i * 0.15); ctx.lineTo(1.42, -2.0 + i * 0.15); ctx.stroke();
+  }
+  ctx.fillStyle = DESERT.stoneSh;                   // worn face shadow
+  ctx.fillRect(1.16, -1.96, 0.28, 0.42);
+  ctx.restore();
+}
+
+// a granite obelisk: a tapering shaft with a gilded pyramidion tip and a
+// column of carved glyph ticks
+function drawObelisk(ctx, x, baseY, t, key) {
+  ctx.save();
+  ctx.translate(x, baseY);
+  const h = 3.4, wB = 0.3, wT = 0.15, ty = -h + 0.36;
+  ctx.fillStyle = DESERT.granite;
+  ctx.beginPath();
+  ctx.moveTo(-wB, 0); ctx.lineTo(-wT, ty); ctx.lineTo(0, ty); ctx.lineTo(0, 0);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = DESERT.graniteSh;
+  ctx.beginPath();
+  ctx.moveTo(0, 0); ctx.lineTo(0, ty); ctx.lineTo(wT, ty); ctx.lineTo(wB, 0);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = DESERT.gold;
+  ctx.beginPath(); ctx.moveTo(-wT, ty); ctx.lineTo(0, -h); ctx.lineTo(0, ty); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = DESERT.goldSh;
+  ctx.beginPath(); ctx.moveTo(0, -h); ctx.lineTo(wT, ty); ctx.lineTo(0, ty); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = 'rgba(40,28,22,0.4)'; ctx.lineWidth = 0.025;
+  for (let i = 0; i < 7; i++) {
+    const yy = -0.5 - i * 0.4;
+    ctx.beginPath(); ctx.moveTo(-0.06, yy); ctx.lineTo(0.06, yy); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// a date palm with a curved trunk and drooping fronds that sway on the wind
+function drawPalm(ctx, x, baseY, t, key) {
+  ctx.save();
+  ctx.translate(x, baseY);
+  ctx.scale(srand(key + 4) < 0.5 ? -1 : 1, 1);
+  const h = 2.6, sway = 0.14 * Math.sin(t * 0.9 + key);
+  const cx = 0.45 + sway, cy = -h;
+  ctx.strokeStyle = '#9c7b4c'; ctx.lineWidth = 0.17; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(0, 0); ctx.quadraticCurveTo(0.22, -h * 0.55, cx, cy); ctx.stroke();
+  ctx.strokeStyle = 'rgba(80,60,36,0.5)'; ctx.lineWidth = 0.04;
+  for (let i = 1; i < 6; i++) {
+    const f = i / 6, tx = 0.22 * 2 * f * (1 - f) + cx * f, tyy = -h * f;
+    ctx.beginPath(); ctx.moveTo(tx - 0.08, tyy); ctx.lineTo(tx + 0.08, tyy); ctx.stroke();
+  }
+  // date cluster
+  ctx.fillStyle = '#b5862f';
+  ctx.beginPath(); ctx.arc(cx, cy + 0.06, 0.1, 0, Math.PI * 2); ctx.fill();
+  // fronds fanning from the crown, drooping at the tips
+  ctx.strokeStyle = '#4f7a3a'; ctx.lineCap = 'round';
+  for (let i = 0; i < 7; i++) {
+    const a = -Math.PI * (0.12 + i / 6 * 0.76) + sway * 0.4; // from right-up over to left-up
+    const ex = cx + Math.cos(a) * 1.25, ey = cy + Math.sin(a) * 1.25 + 0.5;
+    const mxp = cx + Math.cos(a) * 0.7, myp = cy + Math.sin(a) * 0.7 - 0.1;
+    ctx.lineWidth = 0.08;
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.quadraticCurveTo(mxp, myp, ex, ey); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// a round-topped stela with a winged-disc lunette and rows of carved glyphs
+function drawStela(ctx, x, baseY, t, key) {
+  ctx.save();
+  ctx.translate(x, baseY);
+  const w = 1.0, h = 2.0;
+  ctx.fillStyle = DESERT.stone;
+  ctx.beginPath();
+  ctx.moveTo(-w / 2, 0); ctx.lineTo(-w / 2, -h + w / 2);
+  ctx.arc(0, -h + w / 2, w / 2, Math.PI, 0); ctx.lineTo(w / 2, 0); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = DESERT.stoneSh; ctx.lineWidth = 0.04; ctx.stroke();
+  // winged sun disc near the top
+  ctx.fillStyle = DESERT.gold;
+  ctx.beginPath(); ctx.arc(0, -h + 0.42, 0.1, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = DESERT.goldSh; ctx.lineWidth = 0.04;
+  ctx.beginPath(); ctx.moveTo(-0.34, -h + 0.42); ctx.lineTo(0.34, -h + 0.42); ctx.stroke();
+  // glyph rows
+  ctx.strokeStyle = 'rgba(60,44,28,0.45)'; ctx.lineWidth = 0.03;
+  for (let i = 0; i < 6; i++) {
+    const yy = -h + 0.78 + i * 0.22;
+    ctx.beginPath(); ctx.moveTo(-w / 2 + 0.16, yy); ctx.lineTo(w / 2 - 0.16, yy); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// a standing anthropoid sarcophagus: a gilded mummiform coffin with a
+// nemes-striped golden mask, a false beard, a crook-and-flail and a glyph band
+function drawSarcophagus(ctx, x, baseY, t, key) {
+  ctx.save();
+  ctx.translate(x, baseY);
+  const H = 1.9, W = 0.58;
+  // gold coffin body
+  ctx.fillStyle = DESERT.gold;
+  ctx.beginPath();
+  ctx.moveTo(-W * 0.5, 0);
+  ctx.lineTo(-W * 0.62, -H * 0.5);
+  ctx.quadraticCurveTo(-W * 0.72, -H * 0.78, -W * 0.36, -H * 0.86);
+  ctx.quadraticCurveTo(0, -H * 0.97, W * 0.36, -H * 0.86);
+  ctx.quadraticCurveTo(W * 0.72, -H * 0.78, W * 0.62, -H * 0.5);
+  ctx.lineTo(W * 0.5, 0);
+  ctx.closePath(); ctx.fill();
+  // shadowed right half for volume
+  ctx.fillStyle = 'rgba(120,90,20,0.2)';
+  ctx.beginPath();
+  ctx.moveTo(0, 0); ctx.lineTo(0, -H * 0.86); ctx.lineTo(W * 0.36, -H * 0.86);
+  ctx.quadraticCurveTo(W * 0.72, -H * 0.78, W * 0.62, -H * 0.5); ctx.lineTo(W * 0.5, 0);
+  ctx.closePath(); ctx.fill();
+  // nemes headdress
+  const fy = -H * 0.86;
+  ctx.fillStyle = DESERT.gold;
+  ctx.beginPath();
+  ctx.moveTo(-W * 0.42, fy + 0.06);
+  ctx.quadraticCurveTo(0, -H * 0.99, W * 0.42, fy + 0.06);
+  ctx.lineTo(W * 0.42, fy + 0.4); ctx.lineTo(-W * 0.42, fy + 0.4);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = DESERT.nemesBlue; ctx.lineWidth = 0.035;
+  for (let i = 0; i < 4; i++) {
+    const yy = fy + 0.12 + i * 0.09;
+    ctx.beginPath(); ctx.moveTo(-W * 0.4, yy); ctx.lineTo(W * 0.4, yy); ctx.stroke();
+  }
+  // golden face
+  ctx.fillStyle = DESERT.goldHi;
+  ctx.beginPath(); ctx.ellipse(0, fy + 0.3, W * 0.24, 0.25, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = DESERT.kohl;
+  ctx.fillRect(-0.12, fy + 0.26, 0.08, 0.035); ctx.fillRect(0.04, fy + 0.26, 0.08, 0.035);
+  // broad collar + false beard
+  ctx.fillStyle = DESERT.nemesBlue;
+  ctx.beginPath(); ctx.ellipse(0, fy + 0.5, W * 0.3, 0.1, 0, 0, Math.PI); ctx.fill();
+  ctx.fillStyle = DESERT.gold;
+  ctx.fillRect(-0.04, fy + 0.46, 0.08, 0.22);
+  // crook & flail crossed on the chest
+  ctx.strokeStyle = DESERT.goldSh; ctx.lineWidth = 0.05; ctx.lineCap = 'round';
+  const chY = -H * 0.52;
+  ctx.beginPath();
+  ctx.moveTo(-0.15, chY - 0.16); ctx.lineTo(0.15, chY + 0.16);
+  ctx.moveTo(0.15, chY - 0.16); ctx.lineTo(-0.15, chY + 0.16);
+  ctx.stroke();
+  // central glyph band down the lower body
+  ctx.fillStyle = 'rgba(60,44,20,0.45)';
+  ctx.fillRect(-0.1, -H * 0.4, 0.2, H * 0.32);
+  ctx.strokeStyle = 'rgba(255,240,200,0.4)'; ctx.lineWidth = 0.02;
+  for (let i = 0; i < 5; i++) {
+    const yy = -H * 0.38 + i * 0.12;
+    ctx.beginPath(); ctx.moveTo(-0.07, yy); ctx.lineTo(0.07, yy); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// a wrapped mummy that shambles forward, arms outstretched, a loose bandage
+// trailing — slow lean + bob driven by t
+function drawMummy(ctx, x, baseY, t, key) {
+  const sway = 0.07 * Math.sin(t * 1.6 + key);
+  const bob = 0.035 * Math.abs(Math.sin(t * 1.6 + key));
+  const face = srand(key + 2) < 0.5 ? -1 : 1;
+  ctx.save();
+  ctx.translate(x, baseY);
+  ctx.fillStyle = 'rgba(0,0,0,0.16)';                 // ground shadow (stays put)
+  ctx.beginPath(); ctx.ellipse(0, 0.02, 0.28, 0.05, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.rotate(sway);                                   // lean as it shuffles
+  ctx.translate(0, -bob);
+  const wrap = DESERT.wrapLt, line = DESERT.wrapLine;
+  // bound lower body and tapering torso
+  ctx.fillStyle = wrap;
+  roundRectPath(ctx, -0.16, -0.86, 0.32, 0.86, 0.1); ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(-0.2, -0.8); ctx.lineTo(-0.22, -1.3);
+  ctx.quadraticCurveTo(-0.22, -1.46, -0.1, -1.49);
+  ctx.lineTo(0.1, -1.49);
+  ctx.quadraticCurveTo(0.22, -1.46, 0.22, -1.3);
+  ctx.lineTo(0.2, -0.8); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.arc(0, -1.59, 0.16, 0, Math.PI * 2); ctx.fill(); // head
+  // shadow side
+  ctx.fillStyle = 'rgba(120,108,80,0.16)';
+  ctx.fillRect(0.02, -1.49, 0.2, 1.46);
+  // diagonal bandage wraps
+  ctx.strokeStyle = line; ctx.lineWidth = 0.03;
+  for (let i = 0; i < 9; i++) {
+    const yy = -0.05 - i * 0.18;
+    ctx.beginPath(); ctx.moveTo(-0.22, yy); ctx.lineTo(0.22, yy + 0.1); ctx.stroke();
+  }
+  // dark eye sockets
+  ctx.fillStyle = 'rgba(20,16,10,0.7)';
+  ctx.fillRect(-0.09, -1.62, 0.06, 0.04); ctx.fillRect(0.03, -1.62, 0.06, 0.04);
+  // arms outstretched to the facing side, bobbing
+  const af = 0.05 * Math.sin(t * 1.6 + key + 1);
+  ctx.save();
+  ctx.scale(face, 1);
+  ctx.strokeStyle = wrap; ctx.lineWidth = 0.13; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(0.08, -1.3); ctx.lineTo(0.52, -1.14 + af); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0.08, -1.22); ctx.lineTo(0.5, -1.04 - af); ctx.stroke();
+  ctx.strokeStyle = line; ctx.lineWidth = 0.025;
+  ctx.beginPath(); ctx.moveTo(0.3, -1.22); ctx.lineTo(0.34, -1.1); ctx.stroke();
+  ctx.restore();
+  // a loose bandage end fluttering off the hip
+  ctx.strokeStyle = DESERT.wrapSh; ctx.lineWidth = 0.04;
+  ctx.beginPath();
+  ctx.moveTo(-0.2, -0.5);
+  ctx.quadraticCurveTo(-0.42, -0.28 + 0.1 * Math.sin(t * 2 + key), -0.32, 0);
+  ctx.stroke();
+  ctx.restore();
+}
+
+// a small canopic jar: a pale stone body with a striped pharaoh-head lid
+function drawCanopicJar(ctx, cx, cy, key) {
+  ctx.fillStyle = '#dcc79a';
+  roundRectPath(ctx, cx - 0.17, cy - 0.4, 0.34, 0.4, 0.08); ctx.fill();
+  ctx.strokeStyle = 'rgba(90,68,38,0.4)'; ctx.lineWidth = 0.02;
+  ctx.beginPath(); ctx.moveTo(cx - 0.13, cy - 0.18); ctx.lineTo(cx + 0.13, cy - 0.18); ctx.stroke();
+  // head lid
+  ctx.fillStyle = DESERT.gold;
+  ctx.beginPath(); ctx.arc(cx, cy - 0.46, 0.15, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = DESERT.nemesBlue; ctx.lineWidth = 0.025;
+  ctx.beginPath(); ctx.moveTo(cx - 0.13, cy - 0.5); ctx.lineTo(cx + 0.13, cy - 0.5); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx - 0.13, cy - 0.44); ctx.lineTo(cx + 0.13, cy - 0.44); ctx.stroke();
+}
+
+// a two-handled terracotta amphora
+function drawAmphora(ctx, cx, cy, key) {
+  ctx.fillStyle = '#b5703e';
+  ctx.beginPath();
+  ctx.moveTo(cx - 0.02, cy);
+  ctx.ellipse(cx, cy - 0.42, 0.22, 0.42, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#9c5e32';
+  ctx.fillRect(cx - 0.06, cy - 0.92, 0.12, 0.22);     // neck
+  ctx.strokeStyle = '#7d4a28'; ctx.lineWidth = 0.04; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(cx - 0.18, cy - 0.62); ctx.quadraticCurveTo(cx - 0.3, cy - 0.78, cx - 0.06, cy - 0.84); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx + 0.18, cy - 0.62); ctx.quadraticCurveTo(cx + 0.3, cy - 0.78, cx + 0.06, cy - 0.84); ctx.stroke();
+}
+
+// a foreground pile of tomb treasure: gold coins, an amphora and canopic jars
+function drawTombHoard(ctx, x, baseY, t, key) {
+  ctx.save();
+  ctx.translate(x, baseY);
+  drawAmphora(ctx, 0.5, 0, key);
+  drawCanopicJar(ctx, -0.72, 0, key);
+  drawCanopicJar(ctx, -0.98, 0, key + 3);
+  // spilled gold coins with little glints
+  ctx.fillStyle = DESERT.goldSh;
+  ctx.beginPath(); ctx.ellipse(-0.05, -0.08, 0.55, 0.14, 0, 0, Math.PI * 2); ctx.fill();
+  for (let i = 0; i < 7; i++) {
+    const cx = -0.42 + srand(key + i) * 0.78, cyc = -0.06 - srand(key + i * 2) * 0.12;
+    ctx.fillStyle = DESERT.goldHi;
+    ctx.beginPath(); ctx.arc(cx, cyc, 0.07, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = DESERT.goldSh; ctx.lineWidth = 0.015; ctx.stroke();
+  }
+  const tw = 0.5 + 0.5 * Math.sin(t * 3 + key);
+  ctx.fillStyle = 'rgba(255,252,230,' + (0.7 * tw).toFixed(3) + ')';
+  ctx.beginPath(); ctx.arc(0.1, -0.16, 0.03, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+
+// the whole Egyptian-desert scene, painted over the hazy sky gradient
+function drawDesertBack(ctx, view, t, actor, gdy) {
+  gdy = gdy || 0;
+  const sandY = DESERT_FLOOR + gdy;
+  drawDesertSun(ctx, view, t, gdy);
+  // soft far dunes rolling along the horizon
+  hillLayer(ctx, view, 0.08, 10.7 + gdy, 1.7, 0.45, 'rgba(216,193,143,0.55)');
+  hillLayer(ctx, view, 0.13, 11.0 + gdy, 1.2, 0.72, 'rgba(199,171,118,0.7)');
+  // pyramid clusters on the horizon
+  gymRow(ctx, view, 0.18, 24, (x, key) => drawPyramidGroup(ctx, x, sandY, t, key));
+  // mid rank: a sphinx, palms, obelisks and stelae
+  gymRow(ctx, view, 0.32, 9.5, (x, key) => {
+    const r = srand(key * 0.05 + 3.2);
+    if (r < 0.22) drawSphinx(ctx, x, sandY, t, key);
+    else if (r < 0.5) drawPalm(ctx, x, sandY, t, key);
+    else if (r < 0.75) drawObelisk(ctx, x, sandY, t, key);
+    else drawStela(ctx, x, sandY, t, key);
+  });
+  // near rank: standing sarcophagi, shambling mummies and tomb treasure
+  gymRow(ctx, view, 0.48, 6.8, (x, key) => {
+    const r = srand(key * 0.09 + 1.7);
+    if (r < 0.38) drawMummy(ctx, x, sandY + 0.2, t, key);
+    else if (r < 0.7) drawSarcophagus(ctx, x, sandY + 0.2, t, key);
+    else drawTombHoard(ctx, x, sandY + 0.2, t, key);
+  });
+}
+
+// the crest of the sand where it meets open air: a lit lip, a soft shadow
+// just under it, and a few wind-blown sand wisps — the desert's grass/lava
+function drawDesertEdge(ctx, s, theme, t) {
+  t = t || 0;
+  const dx = s.bx - s.ax, dy = s.by - s.ay;
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-4) return;
+  const ux = dx / len, uy = dy / len;
+  let nx = uy, ny = -ux;            // normal pointing up into the playable area
+  if (ny > 0) { nx = -nx; ny = -ny; }
+  // soft shadow band just under the crest
+  ctx.fillStyle = 'rgba(120,92,52,0.4)';
+  ctx.beginPath();
+  ctx.moveTo(s.ax + nx * 0.02, s.ay + ny * 0.02);
+  ctx.lineTo(s.bx + nx * 0.02, s.by + ny * 0.02);
+  ctx.lineTo(s.bx - nx * 0.13, s.by - ny * 0.13);
+  ctx.lineTo(s.ax - nx * 0.13, s.ay - ny * 0.13);
+  ctx.closePath(); ctx.fill();
+  // bright sunlit crest lip
+  ctx.strokeStyle = 'rgba(247,236,205,0.85)'; ctx.lineWidth = 0.05;
+  ctx.beginPath();
+  ctx.moveTo(s.ax + nx * 0.04, s.ay + ny * 0.04);
+  ctx.lineTo(s.bx + nx * 0.04, s.by + ny * 0.04);
+  ctx.stroke();
+  // wind-blown sand wisps drifting off the crest, with gaps
+  ctx.strokeStyle = 'rgba(230,212,170,0.45)'; ctx.lineWidth = 0.025; ctx.lineCap = 'round';
+  const n = Math.max(1, Math.floor(len / 0.9));
+  for (let i = 0; i <= n; i++) {
+    const r1 = srand(s.ax * 4.7 + s.ay * 2.3 + i * 6.1);
+    if (r1 < 0.5) continue;
+    const f = i / n;
+    const bx = s.ax + dx * f, by = s.ay + dy * f;
+    const drift = (0.18 + r1 * 0.22) * (0.7 + 0.4 * Math.sin(t * 2.5 + r1 * 17));
+    ctx.beginPath();
+    ctx.moveTo(bx + nx * 0.05, by + ny * 0.05);
+    ctx.quadraticCurveTo(bx + ux * drift + nx * 0.14, by + uy * drift + ny * 0.14,
+      bx + ux * drift * 2 + nx * 0.1, by + uy * drift * 2 + ny * 0.1);
+    ctx.stroke();
+  }
+}
+
+// ---------- space world (Rainbow Road in the cosmos) ----------
+//
+// The track surface is a Rainbow-Road rainbow band with a glowing star railing
+// (drawSpaceEdge, drawn along the level's surface segments). drawSpaceBack
+// fills the open void behind the track with twinkling starfields, slowly
+// turning spiral galaxies, ringed planets, soft nebulae and asteroids that fly
+// through. Stars sit at fixed world positions (slow parallax) while asteroids
+// and shooting stars are screen-relative, so they sweep past whatever the
+// camera is doing.
+const SPACE = {
+  rail: ['#ff3b6b', '#ff9b2f', '#ffe23b', '#46e06a', '#3bc6ff', '#7a6bff', '#e06bff'],
+  rock: '#6b6470', rockHi: '#a39cae', rockSh: '#3e3946',
+  nebula: ['120,70,210', '40,110,210', '210,60,150', '40,170,170'],
+};
+
+// a filled 5-point star centred at (cx, cy), outer radius r, spun by rot
+function drawStar(ctx, cx, cy, r, rot, color) {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  for (let i = 0; i < 5; i++) {
+    const a = rot + i * (2 * Math.PI / 5) - Math.PI / 2;
+    const x1 = cx + Math.cos(a) * r, y1 = cy + Math.sin(a) * r;
+    if (i) ctx.lineTo(x1, y1); else ctx.moveTo(x1, y1);
+    const a2 = a + Math.PI / 5;
+    ctx.lineTo(cx + Math.cos(a2) * r * 0.42, cy + Math.sin(a2) * r * 0.42);
+  }
+  ctx.closePath(); ctx.fill();
+}
+
+// a soft radial nebula cloud (rgb is an "r,g,b" string)
+function drawNebula(ctx, cx, cy, R, rgb, a) {
+  const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, R);
+  g.addColorStop(0, 'rgba(' + rgb + ',' + a + ')');
+  g.addColorStop(0.55, 'rgba(' + rgb + ',' + (a * 0.4).toFixed(3) + ')');
+  g.addColorStop(1, 'rgba(' + rgb + ',0)');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fill();
+}
+
+// a field of twinkling stars on a jittered lattice across the view. p is the
+// horizontal parallax; cell the lattice spacing; skip the fraction of empty
+// cells; maxR the largest star radius; warm tints the brightest ones gold.
+function drawSpaceStarfield(ctx, view, t, p, cell, skip, maxR, warm) {
+  const u = (view.x0 + view.x1) / 2 * (1 - p);
+  const gx0 = Math.floor((view.x0 - u) / cell) - 1, gx1 = Math.ceil((view.x1 - u) / cell) + 1;
+  const gy0 = Math.floor(view.y0 / cell) - 1, gy1 = Math.ceil(view.y1 / cell) + 1;
+  for (let gx = gx0; gx <= gx1; gx++) {
+    for (let gy = gy0; gy <= gy1; gy++) {
+      const r0 = srand(gx * 12.9 + gy * 78.2 + p * 31.7);
+      if (r0 < skip) continue;
+      const sx = (gx + srand(gx * 3.1 + gy * 1.7)) * cell + u;
+      const sy = (gy + srand(gx * 7.3 + gy * 2.9)) * cell;
+      const tw = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(t * (1.4 + r0 * 3) + r0 * 30));
+      const rr = (0.04 + r0 * maxR) * tw;
+      ctx.fillStyle = (warm && r0 > 0.72) ? 'rgba(255,233,168,' + tw.toFixed(2) + ')'
+        : 'rgba(253,249,230,' + tw.toFixed(2) + ')';
+      ctx.beginPath(); ctx.arc(sx, sy, rr, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+}
+
+// a tilted spiral galaxy: a bright core and two arms of fading dots, turning
+// slowly with t
+function drawGalaxy(ctx, cx, cy, R, t, key) {
+  const rot = t * 0.04 + key * 1.3;
+  drawNebula(ctx, cx, cy, R * 1.15, '170,150,255', 0.1);
+  const cg = ctx.createRadialGradient(cx, cy, 0, cx, cy, R * 0.36);
+  cg.addColorStop(0, 'rgba(255,250,236,0.95)');
+  cg.addColorStop(0.5, 'rgba(255,226,172,0.5)');
+  cg.addColorStop(1, 'rgba(255,212,150,0)');
+  ctx.fillStyle = cg;
+  ctx.beginPath(); ctx.arc(cx, cy, R * 0.36, 0, Math.PI * 2); ctx.fill();
+  const per = 44, cols = ['rgba(180,210,255,', 'rgba(255,182,230,', 'rgba(210,182,255,'];
+  for (let a = 0; a < 2; a++) {
+    for (let k = 4; k < per; k++) {
+      const f = k / per, ang = rot + a * Math.PI + f * 4.2, rr = R * f;
+      const px = cx + Math.cos(ang) * rr, py = cy + Math.sin(ang) * rr * 0.45;
+      ctx.fillStyle = cols[(a + k) % cols.length] + ((1 - f) * 0.6).toFixed(2) + ')';
+      ctx.beginPath(); ctx.arc(px, py, 0.05 + (1 - f) * 0.07, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+}
+
+// a ringed gas-giant: back ring half, lit planet disc, front ring half
+function drawRingedPlanet(ctx, cx, cy, R, key) {
+  const tilt = -0.32;
+  const hue = ['#5b8fd6', '#d68f5b', '#8f6fd0', '#5bc7b0'][Math.floor(srand(key * 1.7) * 4) % 4];
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(tilt);
+  ctx.strokeStyle = 'rgba(220,205,255,0.55)'; ctx.lineWidth = R * 0.13;
+  ctx.beginPath(); ctx.ellipse(0, 0, R * 1.9, R * 0.6, 0, Math.PI, 2 * Math.PI); ctx.stroke();
+  const g = ctx.createRadialGradient(-R * 0.35, -R * 0.35, R * 0.1, 0, 0, R);
+  g.addColorStop(0, hue);
+  g.addColorStop(1, 'rgba(10,8,26,0.95)');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(0, 0, R, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = 'rgba(220,205,255,0.75)'; ctx.lineWidth = R * 0.13;
+  ctx.beginPath(); ctx.ellipse(0, 0, R * 1.9, R * 0.6, 0, 0, Math.PI); ctx.stroke();
+  ctx.restore();
+}
+
+// a tumbling asteroid with a faint motion trail (dir = travel direction)
+function drawAsteroid(ctx, cx, cy, sz, rot, key, dir) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.fillStyle = 'rgba(170,180,205,0.1)';
+  ctx.beginPath(); ctx.ellipse(-dir * sz * 2.0, 0, sz * 2.0, sz * 0.5, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.rotate(rot);
+  ctx.fillStyle = SPACE.rock;
+  ctx.beginPath();
+  const m = 9;
+  for (let i = 0; i < m; i++) {
+    const a = i / m * Math.PI * 2, rr = sz * (0.68 + 0.34 * srand(key * 3.1 + i));
+    const px = Math.cos(a) * rr, py = Math.sin(a) * rr;
+    if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py);
+  }
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = SPACE.rockHi; ctx.lineWidth = sz * 0.12; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.arc(0, 0, sz * 0.72, Math.PI * 0.8, Math.PI * 1.5); ctx.stroke();
+  ctx.fillStyle = SPACE.rockSh;
+  for (let i = 0; i < 3; i++) {
+    const a = srand(key + i) * 6.28, rr = srand(key * 2 + i) * sz * 0.5;
+    ctx.beginPath();
+    ctx.arc(Math.cos(a) * rr, Math.sin(a) * rr, sz * (0.1 + srand(key + i * 3) * 0.12), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+// a shooting-star streak from (x, y), fading by a (0..1)
+function drawShootingStar(ctx, x, y, len, a) {
+  if (a <= 0) return;
+  const ang = Math.PI * 0.16;
+  const tx = x - Math.cos(ang) * len, ty = y - Math.sin(ang) * len;
+  const g = ctx.createLinearGradient(x, y, tx, ty);
+  g.addColorStop(0, 'rgba(255,255,255,' + (0.9 * a).toFixed(3) + ')');
+  g.addColorStop(1, 'rgba(180,210,255,0)');
+  ctx.strokeStyle = g; ctx.lineWidth = 0.06; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(tx, ty); ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,' + (0.9 * a).toFixed(3) + ')';
+  ctx.beginPath(); ctx.arc(x, y, 0.07, 0, Math.PI * 2); ctx.fill();
+}
+
+// the whole cosmic scene behind the rainbow track
+function drawSpaceBack(ctx, view, t) {
+  const vw = view.x1 - view.x0, vh = view.y1 - view.y0;
+  // far nebula clouds
+  gymRow(ctx, view, 0.05, 18, (x, key) => {
+    const r = srand(key * 0.07 + 2.1);
+    const cy = view.y0 + (0.14 + srand(key * 0.3 + 0.5) * 0.5) * vh;
+    drawNebula(ctx, x, cy, 5 + r * 3, SPACE.nebula[Math.floor(r * 4) % 4], 0.13);
+  });
+  // two twinkling star layers
+  drawSpaceStarfield(ctx, view, t, 0.03, 1.7, 0.5, 0.1, false);
+  drawSpaceStarfield(ctx, view, t, 0.08, 2.6, 0.62, 0.16, true);
+  // spiral galaxies and the occasional ringed planet
+  gymRow(ctx, view, 0.06, 22, (x, key) => {
+    const r = srand(key * 0.05 + 5.3);
+    const cy = view.y0 + (0.16 + srand(key * 0.6 + 0.2) * 0.4) * vh;
+    if (r < 0.55) drawGalaxy(ctx, x, cy, 2.4 + r, t, key);
+    else drawRingedPlanet(ctx, x, cy, 1.0 + r * 0.6, key);
+  });
+  // asteroids flying through (screen-relative, a fresh pass each cycle at a
+  // new height/size/direction so they read as "occasional")
+  for (let i = 0; i < 4; i++) {
+    const speed = 0.07 + srand(i * 5 + 1) * 0.06;
+    const cyc = t * speed + srand(i * 3 + 0.5);
+    const pass = Math.floor(cyc), prog = cyc - pass;
+    const span = vw + 12, dir = (pass + i) % 2 ? -1 : 1;
+    const ax = dir > 0 ? view.x0 - 6 + prog * span : view.x1 + 6 - prog * span;
+    const ay = view.y0 + (0.1 + srand(i * 7 + pass * 1.7) * 0.55) * vh;
+    const sz = 0.28 + srand(i * 9 + pass) * 0.5;
+    drawAsteroid(ctx, ax, ay, sz, t * (0.5 + srand(i * 2)), i * 3 + pass, dir);
+  }
+  // rare shooting stars (only briefly visible per cycle)
+  for (let i = 0; i < 2; i++) {
+    const cyc = t * (0.13 + srand(i * 11) * 0.1) + srand(i * 4);
+    const prog = cyc - Math.floor(cyc);
+    if (prog > 0.16) continue;
+    const pass = Math.floor(cyc), f = prog / 0.16;
+    const sx = view.x0 + (0.12 + f * 0.85) * vw;
+    const sy = view.y0 + (0.08 + srand(i * 7 + pass) * 0.38) * vh + f * vh * 0.12;
+    drawShootingStar(ctx, sx, sy, 1.5, Math.sin(f * Math.PI));
+  }
+}
+
+// the Rainbow-Road track surface: a glowing rainbow band laid into the lip, a
+// bright moving sheen, and a twinkling star railing posted along it — the
+// space world's grass/lava
+function drawSpaceEdge(ctx, s, theme, t) {
+  t = t || 0;
+  const dx = s.bx - s.ax, dy = s.by - s.ay, len = Math.hypot(dx, dy);
+  if (len < 1e-4) return;
+  const ux = dx / len, uy = dy / len;
+  let nx = uy, ny = -ux;            // normal pointing up into the playable area
+  if (ny > 0) { nx = -nx; ny = -ny; }
+  const cols = SPACE.rail, top = 0.05, band = 0.4, strip = band / cols.length;
+  // soft underglow below the band
+  ctx.strokeStyle = 'rgba(255,255,255,0.1)'; ctx.lineWidth = 0.5;
+  ctx.beginPath();
+  ctx.moveTo(s.ax - nx * 0.12, s.ay - ny * 0.12);
+  ctx.lineTo(s.bx - nx * 0.12, s.by - ny * 0.12);
+  ctx.stroke();
+  // rainbow strips stacked from just under the lip down into the track
+  for (let i = 0; i < cols.length; i++) {
+    const o0 = top - i * strip, o1 = top - (i + 1) * strip;
+    ctx.fillStyle = cols[i];
+    ctx.beginPath();
+    ctx.moveTo(s.ax + nx * o0, s.ay + ny * o0);
+    ctx.lineTo(s.bx + nx * o0, s.by + ny * o0);
+    ctx.lineTo(s.bx + nx * o1, s.by + ny * o1);
+    ctx.lineTo(s.ax + nx * o1, s.ay + ny * o1);
+    ctx.closePath(); ctx.fill();
+  }
+  // bright lip line
+  ctx.strokeStyle = 'rgba(255,255,255,0.92)'; ctx.lineWidth = 0.05;
+  ctx.beginPath();
+  ctx.moveTo(s.ax + nx * top, s.ay + ny * top);
+  ctx.lineTo(s.bx + nx * top, s.by + ny * top);
+  ctx.stroke();
+  // a sheen dash sliding along the lip
+  const slide = ((t * 0.3) % 1) * len, gl = Math.min(0.8, len);
+  ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 0.06; ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(s.ax + ux * slide + nx * top, s.ay + uy * slide + ny * top);
+  ctx.lineTo(s.ax + ux * Math.min(len, slide + gl) + nx * top,
+    s.ay + uy * Math.min(len, slide + gl) + ny * top);
+  ctx.stroke();
+  // star railing: glowing twinkling stars posted along the lip
+  const n = Math.max(1, Math.floor(len / 1.3));
+  for (let i = 0; i <= n; i++) {
+    const r1 = srand(s.ax * 5.3 + s.ay * 2.7 + i * 9.1);
+    if (r1 < 0.35) continue;
+    const f = i / n, bx = s.ax + dx * f, by = s.ay + dy * f;
+    const px = bx + nx * 0.16, py = by + ny * 0.16;
+    const tw = 0.5 + 0.5 * Math.sin(t * 4 + r1 * 25);
+    ctx.fillStyle = 'rgba(255,240,180,' + (0.18 * tw).toFixed(3) + ')';
+    ctx.beginPath(); ctx.arc(px, py, 0.16, 0, Math.PI * 2); ctx.fill();
+    drawStar(ctx, px, py, 0.1 + 0.03 * tw, t * 0.6 + r1 * 6, '#fff3c0');
+  }
+}
+
+// ---------- cave world (dark, lit only by the rider's lamps in play) ----------
+//
+// drawCaveBack paints the underground scene at full brightness (so the editor
+// shows everything); in play, game.js lays drawCaveDarkness over the whole
+// playfield, blacking it out except for feathered headlight/taillight cones
+// around the rider. The formations are placed relative to the VIEW (ceiling
+// along the top, floor along the bottom — see drawCaveBack) so the cave frames
+// whatever's on screen, with glowing crystals and glowworms for cold light and
+// bats flitting through the middle. Reuses gymRow/srand like the other worlds.
+const CAVE = {
+  rock: '#3b3127', rockLit: '#54473a', rockDk: '#241c15',
+  crystal: ['150,90,230', '90,200,235', '90,235,160', '235,170,90', '230,90,170'],
+};
+// the cave's natural floor line (matches the theme's groundY); drawCaveBack
+// shifts it by gdy so the floor formations land on the map's actual ground
+// instead of floating. The ceiling stays view-relative so it frames the top.
+const CAVE_GROUND = 11;
+
+// faint layered rock strata across the far wall
+function drawCaveStrata(ctx, view, ceilY, floorY) {
+  const p = 0.05, u = (view.x0 + view.x1) / 2 * (1 - p);
+  for (let i = 0; i < 8; i++) {
+    ctx.strokeStyle = i % 2 ? 'rgba(70,58,46,0.22)' : 'rgba(0,0,0,0.22)';
+    ctx.lineWidth = i % 2 ? 0.05 : 0.09;
+    const y = ceilY + (floorY - ceilY) * (0.06 + i * 0.12);
+    ctx.beginPath();
+    for (let x = view.x0; x <= view.x1; x += 1.4) {
+      const yy = y + 0.3 * Math.sin((x - u) * 0.22 + i * 1.3);
+      if (x === view.x0) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
+    }
+    ctx.stroke();
+  }
+}
+
+// a stalactite hanging down from topY (a tapering, ringed spike with a wet tip
+// and an occasional slow drip)
+function drawStalactite(ctx, x, topY, len, w, key, t) {
+  const tipY = topY + len;
+  ctx.fillStyle = CAVE.rock;
+  ctx.beginPath();
+  ctx.moveTo(x - w, topY);
+  ctx.quadraticCurveTo(x - w * 0.3, topY + len * 0.5, x, tipY);
+  ctx.quadraticCurveTo(x + w * 0.3, topY + len * 0.5, x + w, topY);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = 'rgba(120,104,84,0.5)'; ctx.lineWidth = 0.05;
+  ctx.beginPath();
+  ctx.moveTo(x - w, topY); ctx.quadraticCurveTo(x - w * 0.3, topY + len * 0.5, x, tipY);
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.lineWidth = 0.03;
+  for (let i = 1; i < 4; i++) {
+    const f = i / 4, yy = topY + len * f, ww = w * (1 - f);
+    ctx.beginPath(); ctx.moveTo(x - ww, yy); ctx.quadraticCurveTo(x, yy + 0.06, x + ww, yy); ctx.stroke();
+  }
+  ctx.fillStyle = 'rgba(150,180,190,0.4)';
+  ctx.beginPath(); ctx.arc(x, tipY - 0.04, 0.04, 0, Math.PI * 2); ctx.fill();
+  const dr = (t * 0.4 + srand(key * 3.3)) % 3;            // a drip every ~ few sec
+  if (dr < 0.6) {
+    const dy = dr / 0.6;
+    ctx.fillStyle = 'rgba(150,185,195,' + (0.5 * (1 - dy)).toFixed(2) + ')';
+    ctx.beginPath(); ctx.arc(x, tipY + 0.1 + dy * 0.8, 0.045, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+// a stalagmite rising from baseY (a stalactite flipped)
+function drawStalagmite(ctx, x, baseY, h, w, key) {
+  const tipY = baseY - h;
+  ctx.fillStyle = CAVE.rock;
+  ctx.beginPath();
+  ctx.moveTo(x - w, baseY);
+  ctx.quadraticCurveTo(x - w * 0.3, baseY - h * 0.5, x, tipY);
+  ctx.quadraticCurveTo(x + w * 0.3, baseY - h * 0.5, x + w, baseY);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = 'rgba(120,104,84,0.5)'; ctx.lineWidth = 0.05;
+  ctx.beginPath();
+  ctx.moveTo(x - w, baseY); ctx.quadraticCurveTo(x - w * 0.3, baseY - h * 0.5, x, tipY);
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.lineWidth = 0.03;
+  for (let i = 1; i < 4; i++) {
+    const f = i / 4, yy = baseY - h * f, ww = w * (1 - f);
+    ctx.beginPath(); ctx.moveTo(x - ww, yy); ctx.quadraticCurveTo(x, yy - 0.06, x + ww, yy); ctx.stroke();
+  }
+}
+
+// a full column joining ceiling to floor (a slightly barrelled pillar)
+function drawColumn(ctx, x, ceilY, baseY, key) {
+  const w = 0.34 + srand(key) * 0.22, mid = (ceilY + baseY) / 2;
+  ctx.fillStyle = CAVE.rock;
+  ctx.beginPath();
+  ctx.moveTo(x - w, ceilY);
+  ctx.bezierCurveTo(x - w * 1.5, mid, x - w * 1.5, mid, x - w, baseY);
+  ctx.lineTo(x + w, baseY);
+  ctx.bezierCurveTo(x + w * 1.5, mid, x + w * 1.5, mid, x + w, ceilY);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = 'rgba(120,104,84,0.4)'; ctx.lineWidth = 0.05;
+  ctx.beginPath();
+  ctx.moveTo(x - w, ceilY); ctx.bezierCurveTo(x - w * 1.5, mid, x - w * 1.5, mid, x - w, baseY);
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(0,0,0,0.22)'; ctx.lineWidth = 0.03;
+  for (let i = 1; i < 9; i++) {
+    const yy = ceilY + (baseY - ceilY) * i / 9, ww = w * (1 + 0.5 * Math.sin(Math.PI * i / 9));
+    ctx.beginPath(); ctx.moveTo(x - ww, yy); ctx.lineTo(x + ww, yy); ctx.stroke();
+  }
+}
+
+// a glowing crystal cluster: an emissive halo and a few angular prisms
+function drawCrystalCluster(ctx, x, y, key, t) {
+  const rgb = CAVE.crystal[Math.floor(srand(key * 1.7) * CAVE.crystal.length) % CAVE.crystal.length];
+  const tw = 0.6 + 0.4 * Math.sin(t * 2 + key * 3);
+  const g = ctx.createRadialGradient(x, y - 0.4, 0, x, y - 0.4, 1.5);
+  g.addColorStop(0, 'rgba(' + rgb + ',' + (0.22 * tw).toFixed(3) + ')');
+  g.addColorStop(1, 'rgba(' + rgb + ',0)');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(x, y - 0.4, 1.5, 0, Math.PI * 2); ctx.fill();
+  const n = 3 + Math.floor(srand(key) * 3);
+  for (let i = 0; i < n; i++) {
+    const bx = x + (srand(key + i) - 0.5) * 0.9, by = y;
+    const ln = 0.5 + srand(key + i * 2) * 0.8, lean = (srand(key + i * 3) - 0.5) * 0.4;
+    const tx = bx + lean, ty = by - ln, ww = 0.07 + srand(key + i * 5) * 0.06;
+    ctx.fillStyle = 'rgba(' + rgb + ',0.85)';
+    ctx.beginPath();
+    ctx.moveTo(bx - ww, by); ctx.lineTo(tx - ww * 0.4, ty + 0.05); ctx.lineTo(tx, ty);
+    ctx.lineTo(tx + ww * 0.4, ty + 0.05); ctx.lineTo(bx + ww, by);
+    ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,' + (0.5 * tw).toFixed(2) + ')'; ctx.lineWidth = 0.02;
+    ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(tx, ty); ctx.stroke();
+  }
+}
+
+// a patch of glowworms on the ceiling: tiny twinkling blue-green lights on
+// fine threads
+function drawGlowworms(ctx, x, ceilY, key, t) {
+  const n = 10 + Math.floor(srand(key) * 8);
+  for (let i = 0; i < n; i++) {
+    const px = x + (srand(key + i * 1.3) - 0.5) * 2.2, py = ceilY + srand(key + i * 2.7) * 0.7;
+    const tw = 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(t * (2 + srand(key + i) * 3) + i * 2));
+    ctx.strokeStyle = 'rgba(150,200,180,0.08)'; ctx.lineWidth = 0.012;
+    ctx.beginPath(); ctx.moveTo(px, ceilY); ctx.lineTo(px, py); ctx.stroke();
+    ctx.fillStyle = 'rgba(150,240,205,' + (0.15 * tw).toFixed(3) + ')';
+    ctx.beginPath(); ctx.arc(px, py, 0.12, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(190,255,225,' + tw.toFixed(2) + ')';
+    ctx.beginPath(); ctx.arc(px, py, 0.03, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+// a still underground pool with wobbling ripple sheens and a faint glow
+function drawCavePool(ctx, x, baseY, w, t, key) {
+  ctx.fillStyle = 'rgba(18,38,52,0.9)';
+  ctx.beginPath(); ctx.ellipse(x, baseY, w / 2, 0.22, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = 'rgba(60,90,100,0.5)'; ctx.lineWidth = 0.04;
+  ctx.beginPath(); ctx.ellipse(x, baseY, w / 2, 0.22, 0, 0, Math.PI * 2); ctx.stroke();
+  ctx.strokeStyle = 'rgba(130,190,210,0.3)'; ctx.lineWidth = 0.03;
+  for (let i = 0; i < 2; i++) {
+    const rw = w * 0.3 * (1 - i * 0.4), yy = baseY - 0.02 + 0.04 * Math.sin(t * 1.5 + i + key);
+    ctx.beginPath(); ctx.ellipse(x, yy, rw, 0.06, 0, Math.PI * 1.05, Math.PI * 1.95); ctx.stroke();
+  }
+  ctx.fillStyle = 'rgba(80,170,190,0.12)';
+  ctx.beginPath(); ctx.ellipse(x, baseY + 0.05, w * 0.28, 0.1, 0, 0, Math.PI * 2); ctx.fill();
+}
+
+// a flitting bat silhouette, wings flapping
+function drawBat(ctx, x, y, t, key) {
+  const flap = Math.sin(t * 12 + key * 2);
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.fillStyle = 'rgba(12,8,12,0.9)';
+  ctx.beginPath(); ctx.ellipse(0, 0, 0.06, 0.1, 0, 0, Math.PI * 2); ctx.fill();
+  for (const sg of [1, -1]) {
+    ctx.beginPath();
+    ctx.moveTo(0, -0.02);
+    ctx.lineTo(sg * 0.32, -0.06 - flap * 0.12);
+    ctx.lineTo(sg * 0.28, 0.02 - flap * 0.06);
+    ctx.lineTo(sg * 0.14, 0.04);
+    ctx.closePath(); ctx.fill();
+  }
+  ctx.beginPath(); ctx.moveTo(-0.03, -0.09); ctx.lineTo(-0.05, -0.16); ctx.lineTo(0, -0.1); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(0.03, -0.09); ctx.lineTo(0.05, -0.16); ctx.lineTo(0, -0.1); ctx.fill();
+  ctx.restore();
+}
+
+// a few bats flitting through the open cave, between the ceiling and floor
+// formations (time-driven, screen-relative, with a bob)
+function drawCaveBats(ctx, view, t, top, bot) {
+  const vw = view.x1 - view.x0;
+  for (let i = 0; i < 4; i++) {
+    const speed = 0.05 + srand(i * 5 + 1) * 0.05;
+    const cyc = t * speed + srand(i * 3 + 0.2), pass = Math.floor(cyc), prog = cyc - pass;
+    const dir = (pass + i) % 2 ? -1 : 1, span = vw + 6;
+    const bx = dir > 0 ? view.x0 - 3 + prog * span : view.x1 + 3 - prog * span;
+    const by = top + (0.1 + srand(i * 7 + pass) * 0.8) * (bot - top) + Math.sin(t * 3 + i) * 0.4;
+    drawBat(ctx, bx, by, t, i * 2 + pass);
+  }
+}
+
+// glinting mineral veins meandering across the far wall, with twinkling specks
+function drawMineralVeins(ctx, view, t, ceilY, span) {
+  const p = 0.06, u = (view.x0 + view.x1) / 2 * (1 - p);
+  const sp = 7, first = Math.floor((view.x0 - u - sp) / sp) * sp;
+  for (let s = first; s <= view.x1 - u + sp; s += sp) {
+    const x = s + u, r = srand(s * 0.7 + 1.3);
+    const rgb = CAVE.crystal[Math.floor(r * CAVE.crystal.length) % CAVE.crystal.length];
+    const y0 = ceilY + span * (0.12 + r * 0.35), len = span * (0.22 + r * 0.2);
+    ctx.strokeStyle = 'rgba(' + rgb + ',0.16)'; ctx.lineWidth = 0.06;
+    ctx.beginPath();
+    ctx.moveTo(x, y0);
+    for (let i = 1; i <= 6; i++) ctx.lineTo(x + Math.sin(i * 1.3 + s) * 0.8, y0 + len * i / 6);
+    ctx.stroke();
+    for (let i = 0; i < 4; i++) {
+      const f = srand(s + i * 3.1), gx = x + Math.sin(f * 8 + s) * 0.8, gy = y0 + len * f;
+      const tw = 0.4 + 0.6 * Math.sin(t * 3 + f * 20 + s);
+      ctx.fillStyle = 'rgba(' + rgb + ',' + (0.5 * tw).toFixed(2) + ')';
+      ctx.beginPath(); ctx.arc(gx, gy, 0.05, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+}
+
+// flowstone draperies: a wavy mineral curtain in horizontal bands hanging from
+// topY, its thin lower edge backlit amber
+function drawDraperies(ctx, x, topY, len, key, t) {
+  const w = 0.7 + srand(key) * 0.5, seg = 7, bottomY = topY + len;
+  const bands = ['#5a4630', '#6e5638', '#826647', '#4d3b28'];
+  const top = [], bot = [];
+  for (let i = 0; i <= seg; i++) {
+    const f = i / seg, bx = x - w + 2 * w * f;
+    top.push([bx, topY + 0.1 * Math.sin(f * 5 + key)]);
+    bot.push([bx, bottomY + 0.25 * Math.sin(f * 6 + key * 2) - 0.1]);
+  }
+  const nb = 5;
+  for (let b = 0; b < nb; b++) {
+    ctx.fillStyle = bands[b % bands.length];
+    const f0 = b / nb, f1 = (b + 1) / nb;
+    ctx.beginPath();
+    for (let i = 0; i <= seg; i++) {
+      const y = top[i][1] + (bot[i][1] - top[i][1]) * f0;
+      if (i) ctx.lineTo(top[i][0], y); else ctx.moveTo(top[i][0], y);
+    }
+    for (let i = seg; i >= 0; i--) ctx.lineTo(top[i][0], top[i][1] + (bot[i][1] - top[i][1]) * f1);
+    ctx.closePath(); ctx.fill();
+  }
+  ctx.strokeStyle = 'rgba(230,180,110,0.3)'; ctx.lineWidth = 0.05;
+  ctx.beginPath();
+  for (let i = 0; i <= seg; i++) { if (i) ctx.lineTo(bot[i][0], bot[i][1]); else ctx.moveTo(bot[i][0], bot[i][1]); }
+  ctx.stroke();
+}
+
+// a geode: a lumpy rock shell cracked open to a glowing, crystal-lined hollow
+function drawGeode(ctx, x, y, r, key, t) {
+  const rgb = CAVE.crystal[Math.floor(srand(key * 2.3) * CAVE.crystal.length) % CAVE.crystal.length];
+  const tw = 0.6 + 0.4 * Math.sin(t * 2 + key * 2);
+  ctx.fillStyle = '#362c22';
+  ctx.beginPath();
+  const m = 10;
+  for (let i = 0; i < m; i++) {
+    const a = i / m * Math.PI * 2, rr = r * (0.9 + 0.18 * srand(key + i));
+    const px = x + Math.cos(a) * rr, py = y + Math.sin(a) * rr;
+    if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py);
+  }
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = '#241c14'; ctx.lineWidth = 0.05; ctx.stroke();
+  const g = ctx.createRadialGradient(x, y, 0, x, y, r * 0.8);
+  g.addColorStop(0, 'rgba(' + rgb + ',' + (0.5 * tw).toFixed(2) + ')');
+  g.addColorStop(1, 'rgba(' + rgb + ',0.05)');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(x, y, r * 0.62, 0, Math.PI * 2); ctx.fill();
+  const n = 14;
+  for (let i = 0; i < n; i++) {
+    const a = i / n * Math.PI * 2, pa = a + Math.PI / 2, ww = r * 0.08;
+    const ox = x + Math.cos(a) * r * 0.6, oy = y + Math.sin(a) * r * 0.6;
+    const ix = x + Math.cos(a) * r * 0.32, iy = y + Math.sin(a) * r * 0.32;
+    ctx.fillStyle = 'rgba(' + rgb + ',0.8)';
+    ctx.beginPath();
+    ctx.moveTo(ox + Math.cos(pa) * ww, oy + Math.sin(pa) * ww);
+    ctx.lineTo(ix, iy);
+    ctx.lineTo(ox - Math.cos(pa) * ww, oy - Math.sin(pa) * ww);
+    ctx.closePath(); ctx.fill();
+  }
+  ctx.fillStyle = 'rgba(255,255,255,' + (0.6 * tw).toFixed(2) + ')';
+  ctx.beginPath(); ctx.arc(x, y, r * 0.08, 0, Math.PI * 2); ctx.fill();
+}
+
+// the whole underground scene (full brightness; the darkness overlay is a
+// separate pass applied only in play). Everything is anchored to the VIEW so
+// the cave frames the visible area — ceiling formations along the top, floor
+// formations along the bottom, bats between — wherever the map sits in world
+// space and wherever the camera is (fixed world-Y would leave the ceiling in
+// mid-air and bury the floor, since a level's open span is tall, ~y -8..11).
+function drawCaveBack(ctx, view, t, actor, gdy) {
+  gdy = gdy || 0;
+  const vh = view.y1 - view.y0;
+  const floorY = CAVE_GROUND + gdy;      // floor formations sit on the map's ground
+  // ceiling frames the top of the visible area, but never closer than a small
+  // gap to the floor (keeps the cave from collapsing in a short view)
+  const ceilY = Math.min(view.y0 + vh * 0.03, floorY - 2.5);
+  const span = floorY - ceilY;
+  drawCaveStrata(ctx, view, ceilY, floorY);
+  drawMineralVeins(ctx, view, t, ceilY, span);
+  // geodes embedded in the wall (upper-mid)
+  gymRow(ctx, view, 0.1, 13, (x, key) => {
+    if (srand(key * 0.08 + 0.3) < 0.45)
+      drawGeode(ctx, x, ceilY + span * (0.2 + srand(key) * 0.5), 0.7 + srand(key * 2) * 0.5, key, t);
+  });
+  gymRow(ctx, view, 0.1, 9, (x, key) => drawGlowworms(ctx, x, ceilY + 0.1, key, t));
+  hillLayer(ctx, view, 0.12, floorY + 0.3, 1.0, 0.6, 'rgba(30,24,20,0.6)');
+  gymRow(ctx, view, 0.16, 4.5, (x, key) =>
+    drawStalactite(ctx, x, ceilY, span * (0.18 + srand(key) * 0.22), 0.3 + srand(key * 2) * 0.2, key, t));
+  // flowstone draperies hanging from the upper wall
+  gymRow(ctx, view, 0.22, 9.5, (x, key) => {
+    if (srand(key * 0.07 + 0.6) < 0.5) drawDraperies(ctx, x, ceilY + 0.05, span * (0.22 + srand(key) * 0.18), key, t);
+  });
+  gymRow(ctx, view, 0.28, 6.0, (x, key) =>
+    drawStalactite(ctx, x, ceilY + span * 0.04, span * (0.24 + srand(key + 1) * 0.28), 0.4 + srand(key * 3) * 0.25, key + 7, t));
+  gymRow(ctx, view, 0.32, 8.5, (x, key) => {
+    if (srand(key * 0.07 + 1.1) < 0.6) drawCrystalCluster(ctx, x, floorY - 0.1, key, t);
+  });
+  gymRow(ctx, view, 0.42, 5.5, (x, key) => {
+    const r = srand(key * 0.05 + 2.3);
+    if (r < 0.4) drawStalagmite(ctx, x, floorY + 0.15, span * (0.16 + srand(key) * 0.22), 0.35 + srand(key * 2) * 0.3, key);
+    else if (r < 0.58) drawCavePool(ctx, x, floorY + 0.15, 1.6 + srand(key) * 1.2, t, key);
+    else if (r < 0.72) drawColumn(ctx, x, ceilY, floorY + 0.15, key);
+    else if (r < 0.86) drawGeode(ctx, x, floorY - 0.35, 0.55 + srand(key) * 0.4, key + 9, t);
+    else drawCrystalCluster(ctx, x, floorY + 0.1, key + 3, t);
+  });
+  drawCaveBats(ctx, view, t, ceilY + 0.2, floorY - 0.3);
+}
+
+// the cave floor rim: a dark damp lip with a cool sheen and the odd glinting
+// mineral speck — the cave world's grass/lava
+function drawCaveEdge(ctx, s, theme, t) {
+  const dx = s.bx - s.ax, dy = s.by - s.ay, len = Math.hypot(dx, dy);
+  if (len < 1e-4) return;
+  const ux = dx / len, uy = dy / len;
+  let nx = uy, ny = -ux;            // normal pointing up into the playable area
+  if (ny > 0) { nx = -nx; ny = -ny; }
+  ctx.fillStyle = '#221b14';
+  ctx.beginPath();
+  ctx.moveTo(s.ax - nx * 0.015, s.ay - ny * 0.015);
+  ctx.lineTo(s.bx - nx * 0.015, s.by - ny * 0.015);
+  ctx.lineTo(s.bx + nx * 0.12, s.by + ny * 0.12);
+  ctx.lineTo(s.ax + nx * 0.12, s.ay + ny * 0.12);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = 'rgba(120,150,160,0.22)'; ctx.lineWidth = 0.03;
+  ctx.beginPath();
+  ctx.moveTo(s.ax + nx * 0.04, s.ay + ny * 0.04);
+  ctx.lineTo(s.bx + nx * 0.04, s.by + ny * 0.04);
+  ctx.stroke();
+  const n = Math.max(1, Math.floor(len / 1.1));
+  for (let i = 0; i <= n; i++) {
+    const r1 = srand(s.ax * 4.1 + s.ay * 3.7 + i * 8.3);
+    if (r1 < 0.7) continue;
+    const f = i / n, bx = s.ax + dx * f, by = s.ay + dy * f;
+    ctx.fillStyle = 'rgba(160,210,220,' + (0.3 + 0.3 * Math.sin(t * 3 + r1 * 20)).toFixed(2) + ')';
+    ctx.beginPath(); ctx.arc(bx + nx * 0.06, by + ny * 0.06, 0.03, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+// One elliptical, feathered glow centred ahead of (sx, sy) along screen angle
+// `ang`, length L, perpendicular squash, the gradient offset `fwd` forward.
+// Used both to carve light out of the dark fog (black stops, destination-out)
+// and to wash warm/red light over the scene (colour stops, 'lighter').
+function caveGlow(c, sx, sy, ang, L, squash, fwd, c0, c1, c2) {
+  c.save();
+  c.translate(sx, sy);
+  c.rotate(ang);
+  c.scale(1, squash);
+  const g = c.createRadialGradient(fwd, 0, 0, fwd, 0, L);
+  // bright core out to 0.4, then a long gradual feather to nothing at the edge
+  g.addColorStop(0, c0); g.addColorStop(0.4, c1); g.addColorStop(1, c2);
+  c.fillStyle = g;
+  c.beginPath(); c.arc(fwd, 0, L, 0, Math.PI * 2); c.fill();
+  c.restore();
+}
+
+// the cave darkness pass: a near-black fog over the whole playfield with the
+// rider's headlight (long, forward) and taillight (short, behind) cones carved
+// out and tinted. Drawn in SCREEN space over the world, before the HUD. p =
+// { x, y, dir, ang, Z, t } — rider screen pos, facing(±1), body angle, world
+// scale, time. An offscreen fog canvas lets destination-out punch feathered
+// holes without erasing the real scene.
+let _caveFog = null, _caveFogCtx = null;
+function drawCaveDarkness(ctx, W, H, p) {
+  if (!_caveFog) { _caveFog = document.createElement('canvas'); _caveFogCtx = _caveFog.getContext('2d'); }
+  if (_caveFog.width !== W || _caveFog.height !== H) { _caveFog.width = W; _caveFog.height = H; }
+  const Z = p.Z, dn = 0.12;                 // a touch of downward aim at the road
+  const fwdAng = (p.dir > 0 ? 0 : Math.PI) + dn;
+  const backAng = (p.dir > 0 ? Math.PI : 0) + dn;
+  const f = _caveFogCtx;
+  f.setTransform(1, 0, 0, 1, 0, 0);
+  f.clearRect(0, 0, W, H);
+  f.fillStyle = 'rgba(4,5,12,0.93)';
+  f.fillRect(0, 0, W, H);
+  // carve the lit cones (and an ambient pool on the rider) out of the fog
+  f.globalCompositeOperation = 'destination-out';
+  const blk0 = 'rgba(0,0,0,1)', blk1 = 'rgba(0,0,0,0.82)', blk2 = 'rgba(0,0,0,0)';
+  // longer reach so the cones feather out gradually over a greater distance
+  caveGlow(f, p.x, p.y, fwdAng, Z * 9.0, 0.5, Z * 3.2, blk0, blk1, blk2);   // headlight
+  caveGlow(f, p.x, p.y, backAng, Z * 5.6, 0.55, Z * 1.7, blk0, blk1, blk2); // taillight
+  caveGlow(f, p.x, p.y, 0, Z * 1.9, 1, 0, blk0, 'rgba(0,0,0,0.7)', blk2);   // ambient pool
+  f.globalCompositeOperation = 'source-over';
+  ctx.drawImage(_caveFog, 0, 0);
+  // warm headlight + red taillight colour washes over the revealed scene
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  caveGlow(ctx, p.x, p.y, fwdAng, Z * 8.4, 0.5, Z * 3.0,
+    'rgba(255,240,200,0.18)', 'rgba(255,238,196,0.07)', 'rgba(255,238,196,0)');
+  caveGlow(ctx, p.x, p.y, backAng, Z * 5.0, 0.55, Z * 1.6,
+    'rgba(255,80,66,0.20)', 'rgba(255,70,60,0.08)', 'rgba(255,70,60,0)');
+  ctx.restore();
+}
+
 // Paints a rect of ground: the repeating terrain tile, then a soft-light
 // mottle pass that breaks up its grid (see makeMottle / makePatterns). Shared
 // by the in-level terrain and the menu/victory floor so they match.
@@ -284,10 +2086,21 @@ function fillGround(ctx, pat, x, y, w, h) {
   ctx.restore();
 }
 
-function drawWorld(ctx, level, pat, view, t) {
+// `actor` (optional) is the live bike; the gym world reflects it in its wall
+// mirrors. Other worlds ignore it, and the editor/menus pass nothing.
+function drawWorld(ctx, level, pat, view, t, actor) {
   t = t || 0;
   const vw = view.x1 - view.x0, vh = view.y1 - view.y0;
   fillGround(ctx, pat, view.x0, view.y0, vw, vh);
+
+  // a map may pin its theme's backdrop ground line (hills/dunes/floor) to a
+  // chosen world height via level.groundY; the shift is how far that is from
+  // the theme's natural ground (pat.groundY). The editor's fresh maps set
+  // groundY:0 so the backdrop lands on the y=0 floor and the box corner can be
+  // (0,0). Absent on every shipped level and the menu (which never sets it, and
+  // for space, which has no ground line) -> 0 -> the backdrop draws untouched.
+  const gdy = (level.groundY != null && pat.groundY != null)
+    ? level.groundY - pat.groundY : 0;
 
   // the playable inside: gradient sky, distant silhouettes behind the
   // terrain, then a slowly drifting haze/cloud layer over both
@@ -299,14 +2112,16 @@ function drawWorld(ctx, level, pat, view, t) {
     ctx.closePath();
   }
   ctx.clip('evenodd');
-  ctx.fillStyle = skyGradient(ctx, pat, -8, 12);
+  ctx.fillStyle = skyGradient(ctx, pat, -8 + gdy, 12 + gdy);
   ctx.fillRect(view.x0, view.y0, vw, vh);
-  pat.background(ctx, view, t);
-  const sp = pat.skyPeriod; // haze tile repeats every skyPeriod world units
-  const drift = (t * 0.4) % sp;
-  ctx.translate(-drift, 0);
-  ctx.fillStyle = pat.sky;
-  ctx.fillRect(view.x0, view.y0, vw + sp, vh);
+  pat.background(ctx, view, t, actor, gdy);
+  if (pat.haze !== false) {     // indoor worlds (gym) skip the drifting haze
+    const sp = pat.skyPeriod;   // haze tile repeats every skyPeriod world units
+    const drift = (t * 0.4) % sp;
+    ctx.translate(-drift, 0);
+    ctx.fillStyle = pat.sky;
+    ctx.fillRect(view.x0, view.y0, vw + sp, vh);
+  }
   ctx.restore();
 
   ctx.beginPath();
@@ -1629,12 +3444,17 @@ function drawWheel(ctx, w) {
   ctx.restore();
 }
 
-function drawHead(ctx, x, y, facing, angle) {
+// `back` draws the back of the head (for the gym-mirror reflection, where the
+// rider faces away from the glass) — falls back to the front photo if the
+// back image hasn't loaded.
+function drawHead(ctx, x, y, facing, angle, back) {
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(angle || 0);
   // the rider's head photo; the drawn helmet is the fallback if it failed
-  const headImg = IMAGES.biker;
+  const backImg = IMAGES.bikerBack;
+  const headImg = (back && backImg && backImg.complete && backImg.naturalWidth > 0)
+    ? backImg : IMAGES.biker;
   if (headImg && headImg.complete && headImg.naturalWidth > 0) {
     // facing is continuous during the turn animation, so the face
     // squashes through edge-on as the rider swings around
@@ -1659,7 +3479,8 @@ function drawHead(ctx, x, y, facing, angle) {
   ctx.restore();
 }
 
-function drawBike(ctx, bike, headless) {
+// `back` (used by the mirror reflection) draws the rider's head from behind
+function drawBike(ctx, bike, headless, back, lamps) {
   // turn-around animation: the rider and frame mirror smoothly through a
   // flat squash (with a little hop) over the 0.28 s after a flip
   const p = Math.min(1, (bike.turnT == null ? 1 : bike.turnT) / 0.28);
@@ -1740,11 +3561,37 @@ function drawBike(ctx, bike, headless) {
 
   if (!headless) {
     const head = L(PHYS.headX, PHYS.headY);
-    drawHead(ctx, head.x, head.y, m, bike.angle);
+    drawHead(ctx, head.x, head.y, m, bike.angle, back);
   }
   // forearm is drawn last, OVER the helmet, so the raised volt hand passes
   // in front of the head instead of disappearing behind it
   strokeSeg(ctx, elbow, hand, 0.08, '#15151a');     // forearm
+
+  // headlight (front) and taillight (rear) — the cave world equips the bike
+  // with lamps; the big illuminating beams are the darkness pass, here we draw
+  // the physical lamps and their close glow. Anchored in local frame coords via
+  // L() so they ride the bike's tilt and flip with its facing.
+  if (lamps) {
+    const hl = L(0.56, -0.26), tl = L(-0.5, -0.42);
+    const hg = ctx.createRadialGradient(hl.x, hl.y, 0, hl.x, hl.y, 0.34);
+    hg.addColorStop(0, 'rgba(255,246,206,0.75)');
+    hg.addColorStop(1, 'rgba(255,246,206,0)');
+    ctx.fillStyle = hg;
+    ctx.beginPath(); ctx.arc(hl.x, hl.y, 0.34, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#2a2a30';
+    ctx.beginPath(); ctx.arc(hl.x, hl.y, 0.1, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#fff6cf';
+    ctx.beginPath(); ctx.arc(hl.x, hl.y, 0.06, 0, Math.PI * 2); ctx.fill();
+    const tg = ctx.createRadialGradient(tl.x, tl.y, 0, tl.x, tl.y, 0.22);
+    tg.addColorStop(0, 'rgba(255,72,60,0.6)');
+    tg.addColorStop(1, 'rgba(255,72,60,0)');
+    ctx.fillStyle = tg;
+    ctx.beginPath(); ctx.arc(tl.x, tl.y, 0.22, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#2a2a30';
+    ctx.beginPath(); ctx.arc(tl.x, tl.y, 0.08, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#ff5347';
+    ctx.beginPath(); ctx.arc(tl.x, tl.y, 0.05, 0, Math.PI * 2); ctx.fill();
+  }
 }
 
 function fmt(t) {
