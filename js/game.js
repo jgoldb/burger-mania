@@ -2182,11 +2182,15 @@
     const hw = W / 2 / Z + 1, hh = H / 2 / Z + 1;
     drawWorld(ctx, level, theme,
       { x0: cam.x - hw, y0: cam.y - hh, x1: cam.x + hw, y1: cam.y + hh }, rt);
+    // back-layer doodads sit in the scene behind every actor; front-layer ones
+    // (below) ride over the rider so he passes behind the prop
+    drawDoodadLayer(ctx, level.doodads, 'back', rt);
     if (level.nuts) for (const n of level.nuts) drawNutMound(ctx, n[0], n[1], rt);
     for (const b of burgers) if (!b.got) drawBurger(ctx, b.x, b.y, rt);
     drawPopcorn(ctx, level.goal[0], level.goal[1], rt);
     drawBike(ctx, bike, !!headBody);
     if (headBody) drawHead(ctx, headBody.x, headBody.y, bike.facing, headBody.rot);
+    drawDoodadLayer(ctx, level.doodads, 'front', rt);
     ctx.restore();
 
     // floating "+N" awards ride above the biker in world coordinates but

@@ -1,7 +1,8 @@
 // Map editor check: loads the full script stack under a stubbed DOM,
 // walks menu -> Map Editor, then exercises the editing surface with
-// synthetic mouse and key events — placing burgers, dragging vertices and
-// walls, painting glass and clearing it by selecting the edge + Delete,
+// synthetic mouse and key events — placing burgers, nut mounds, upside-down
+// burgers and doodads (inert sprites: picking sprite + layer), dragging
+// vertices and walls, painting glass and clearing it by selecting the edge + Delete,
 // drawing an island polygon, Shift+dragging a whole polygon, cycling the
 // placement grid, the dense-grid toggle and Shift-snapping a lone vertex,
 // deleting vertices/polygons, renaming, undo/redo, theme cycling — and
@@ -151,10 +152,12 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   if (EDITOR.tool !== 'select') bad('editor should open in the select tool');
   const w2s = EDITOR.worldToScreen;
 
-  // ---- burger placement + undo/redo ----
+  // ---- burger placement (the +Burger tool, normal kind) + undo/redo ----
   const burgers0 = EDITOR.map.burgers.length;
   key('3');
   if (EDITOR.tool !== 'burger') bad('key 3 should pick the burger tool');
+  if (EDITOR.burgerKind !== 'normal') bad('key 3 should arm the normal burger kind');
+  pumpFrames(1, 1 / 60);                      // draw the +Burger palette (must not throw)
   mouseDown(400, 300); mouseUp(400, 300);    // the view centre is mid-box
   if (EDITOR.map.burgers.length !== burgers0 + 1) bad('clicking should drop a burger');
   key('z', { ctrlKey: true });
@@ -175,17 +178,73 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   if (EDITOR.map.nuts.length !== nuts0 + 1) bad('Ctrl+Y should redo the nut mound');
   key('1');
 
-  // ---- upside-down (gravity-flip) burger placement + undo/redo + draw ----
+  // ---- flip-burger placement: the +Burger tool's gravity-flip kind ----
   const flip0 = EDITOR.map.flipBurgers.length;
   key('6');
-  if (EDITOR.tool !== 'flip') bad('key 6 should pick the flip-burger tool');
+  if (EDITOR.tool !== 'burger') bad('key 6 should pick the burger tool');
+  if (EDITOR.burgerKind !== 'flip') bad('key 6 should arm the flip burger kind');
+  // the palette's kind buttons emit these ids
+  EDITOR.action('burgerKind:normal');
+  if (EDITOR.burgerKind !== 'normal') bad('the burger palette should arm the normal kind');
+  EDITOR.action('burgerKind:flip');
+  if (EDITOR.burgerKind !== 'flip') bad('the burger palette should arm the flip kind');
   mouseDown(440, 320); mouseUp(440, 320);
   if (EDITOR.map.flipBurgers.length !== flip0 + 1) bad('clicking should drop an upside-down burger');
-  pumpFrames(2, 1 / 60);                      // draw a frame with the badge (must not throw)
+  pumpFrames(2, 1 / 60);                      // draw the palette + flip ghost (must not throw)
   key('z', { ctrlKey: true });
   if (EDITOR.map.flipBurgers.length !== flip0) bad('Ctrl+Z should undo the upside-down burger');
   key('y', { ctrlKey: true });
   if (EDITOR.map.flipBurgers.length !== flip0 + 1) bad('Ctrl+Y should redo the upside-down burger');
+  key('1');
+
+  // ---- doodad placement: arm a sprite + layer from the palette, drop it ----
+  const dood0 = EDITOR.map.doodads.length;
+  key('7');
+  if (EDITOR.tool !== 'doodad') bad('key 7 should pick the doodad tool');
+  mouseDown(520, 360); mouseUp(520, 360);
+  if (EDITOR.map.doodads.length !== dood0 + 1) bad('clicking should drop a doodad');
+  let dd = EDITOR.map.doodads[dood0];
+  if (dd.type !== 'ac') bad('first doodad should be the default A/C sprite, got ' + dd.type);
+  if (dd.layer !== 'back') bad('a doodad should default to the back layer, got ' + dd.layer);
+  pumpFrames(2, 1 / 60);                      // draw the palette panel + every sprite thumbnail (must not throw)
+  key('z', { ctrlKey: true });
+  if (EDITOR.map.doodads.length !== dood0) bad('Ctrl+Z should undo the doodad');
+  key('y', { ctrlKey: true });
+  if (EDITOR.map.doodads.length !== dood0 + 1) bad('Ctrl+Y should redo the doodad');
+
+  // the palette arms a specific sprite + layer (the ids its buttons emit)
+  EDITOR.action('doodadPick:rack');
+  EDITOR.action('doodadLayer:front');
+  if (EDITOR.doodadType !== 'rack') bad('the palette should arm the squat rack, got ' + EDITOR.doodadType);
+  if (EDITOR.doodadLayer !== 'front') bad('the palette should arm the front layer, got ' + EDITOR.doodadLayer);
+  mouseDown(600, 300); mouseUp(600, 300);
+  const dd2 = EDITOR.map.doodads[EDITOR.map.doodads.length - 1];
+  if (dd2.type !== 'rack') bad('placing should use the armed squat rack, got ' + dd2.type);
+  if (dd2.layer !== 'front') bad('placing should use the armed front layer, got ' + dd2.layer);
+  EDITOR.action('doodadLayer:back');           // restore for the rest of the run
+  key('z', { ctrlKey: true });                 // remove the front rack
+  if (EDITOR.map.doodads.length !== dood0 + 1) bad('undo should remove the second doodad');
+
+  // a click on the palette panel itself (its padding, on no button) must be
+  // swallowed, not dropped as a doodad behind the panel
+  pumpFrames(1, 1 / 60);                        // refresh the palette hitboxes
+  const stray0 = EDITOR.map.doodads.length;
+  mouseDown(15, 300); mouseUp(15, 300);
+  if (EDITOR.map.doodads.length !== stray0) bad('clicking the palette panel must not place a doodad');
+
+  // ---- the doodad selects, drags, and deletes like the other objects ----
+  key('1');
+  const ox = EDITOR.map.doodads[dood0].x, oy = EDITOR.map.doodads[dood0].y;
+  let dsel = w2s(ox, oy);
+  mouseDown(dsel.x, dsel.y); mouseUp(dsel.x, dsel.y);
+  if (!EDITOR.sel || EDITOR.sel.kind !== 'doodad') bad('clicking a doodad should select it');
+  let ddrag = w2s(ox + 2, oy - 1);
+  mouseDown(dsel.x, dsel.y); mouseMove(ddrag.x, ddrag.y); mouseUp(ddrag.x, ddrag.y);
+  if (Math.abs(EDITOR.map.doodads[dood0].x - (ox + 2)) > 0.2) bad('dragging should move the doodad');
+  key('Delete');
+  if (EDITOR.map.doodads.length !== dood0) bad('Delete should remove a selected doodad');
+  key('z', { ctrlKey: true });                 // undo brings it back
+  if (EDITOR.map.doodads.length !== dood0 + 1) bad('undo should restore the deleted doodad');
   key('1');
 
   // ---- glass: paint an edge, then clear it by selecting + Delete ----
@@ -272,6 +331,11 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   if (back.burgers.length !== EDITOR.map.burgers.length) bad('round trip lost burgers');
   if (!back.nuts || back.nuts.length !== EDITOR.map.nuts.length) bad('round trip lost nut mounds');
   if (!back.flipBurgers || back.flipBurgers.length !== EDITOR.map.flipBurgers.length) bad('round trip lost upside-down burgers');
+  if (!back.doodads || back.doodads.length !== EDITOR.map.doodads.length) bad('round trip lost doodads');
+  else if (back.doodads[0].type !== EDITOR.map.doodads[0].type ||
+           back.doodads[0].layer !== EDITOR.map.doodads[0].layer) {
+    bad('round trip mangled a doodad, got ' + JSON.stringify(back.doodads[0]));
+  }
   if (!back.glassEdges || back.glassEdges.length !== 1) bad('round trip lost the glass edge');
   // the ceiling vertex inserted above split edge 0, bumping the floor to edge 3
   else if (back.glassEdges[0][1] !== 3) {
@@ -443,6 +507,40 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   if (!EDITOR2.map) bad('a reloaded editor should recover the autosaved working map');
   EDITOR2.action('new');
   if (!EDITOR2.confirmOpen) bad('a map recovered from the autosave cache must be dirty, so New warns first');
+
+  // ---- toolbar dropdowns: View (toggles) + Theme (picker) ----
+  key('1');                                    // select tool: no tool palette open
+  pumpFrames(1, 1 / 60);                        // populate the toolbar hitboxes
+  const viewBtn = EDITOR.buttonRect('view');
+  const themeBtn = EDITOR.buttonRect('theme');
+  if (!viewBtn) bad('the toolbar should have a View menu button');
+  if (!themeBtn) bad('the toolbar should have a Theme menu button');
+  const clickBtn = b => { mouseDown(b.x + b.w / 2, b.y + b.h / 2); mouseUp(b.x + b.w / 2, b.y + b.h / 2); };
+  // open the View dropdown, draw it, toggle a setting through its row action
+  clickBtn(viewBtn);
+  if (EDITOR.menu !== 'view') bad('clicking View should open its dropdown');
+  pumpFrames(1, 1 / 60);                        // draw the dropdown (must not throw)
+  const rider0 = EDITOR.riderPreview;
+  EDITOR.action('rider');                       // the Rider row emits this
+  if (EDITOR.riderPreview === rider0) bad('the View menu Rider row should toggle the preview');
+  EDITOR.action('rider');                       // toggle it back
+  clickBtn(viewBtn);                            // clicking View again closes it
+  if (EDITOR.menu !== null) bad('clicking View again should close its dropdown');
+  // open the Theme dropdown and pick a theme through a row action (closes it)
+  clickBtn(themeBtn);
+  if (EDITOR.menu !== 'theme') bad('clicking Theme should open its dropdown');
+  pumpFrames(1, 1 / 60);
+  EDITOR.action('theme:volcano');
+  if (EDITOR.themeName !== 'volcano') bad('the Theme menu should set the picked theme, got ' + EDITOR.themeName);
+  if (EDITOR.menu !== null) bad('picking a theme should close the dropdown');
+  EDITOR.action('theme:meadow');                // restore the meadow theme
+  // a click in open space dismisses an open dropdown
+  clickBtn(themeBtn);
+  if (EDITOR.menu !== 'theme') bad('Theme should reopen');
+  pumpFrames(1, 1 / 60);
+  mouseDown(700, 500); mouseUp(700, 500);       // empty world, away from all chrome
+  if (EDITOR.menu !== null) bad('a click in open space should dismiss the dropdown');
+  key('1');
 
   // ---- out to the menu ----
   key('Escape');                             // clears any selection

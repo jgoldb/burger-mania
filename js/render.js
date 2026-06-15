@@ -1017,6 +1017,574 @@ function drawNutMound(ctx, x, y, t) {
   ctx.restore();
 }
 
+// ---------- doodads: inert decorative sprites ----------
+//
+// Doodads are purely cosmetic props an author drops onto a map in the editor.
+// They never touch the simulation — the bike can't collide with them and the
+// physics never reads them — they only dress the scene, so adding them needs
+// no replay/.bmm version bump. Each map carries an optional `doodads` list of
+// { type, x, y, layer } records; `layer` is 'back' (drawn behind the rider, as
+// scenery) or 'front' (drawn over the rider, so he passes behind the prop).
+// Absent on a map with none, so older maps and the headless harnesses are
+// unaffected. Every sprite draws in world units anchored at its base centre
+// (x, y) — drop one on the floor and it stands on it — extending up into
+// negative y. The DOODADS registry lists them in editor-picker order with a
+// label and an approximate footprint (w, h) used for the editor's hit box and
+// ghost preview.
+
+// window/condenser air-conditioning unit: a brushed-metal box with side vent
+// louvers and a slowly turning guarded fan (the spin is visual only)
+function drawAcUnit(ctx, t) {
+  const W = 0.75, top = -1.04;
+  ctx.lineJoin = 'round';
+  // ground-contact shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.22)';
+  ctx.beginPath();
+  ctx.ellipse(0, 0.02, W * 1.05, 0.1, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // mounting feet
+  ctx.fillStyle = '#3a3f44';
+  ctx.fillRect(-W * 0.82, -0.12, 0.16, 0.12);
+  ctx.fillRect(W * 0.82 - 0.16, -0.12, 0.16, 0.12);
+  // body: brushed-metal box, lit from the left
+  let g = ctx.createLinearGradient(-W, 0, W, 0);
+  g.addColorStop(0, '#9aa3aa');
+  g.addColorStop(0.5, '#ced5da');
+  g.addColorStop(1, '#828b92');
+  ctx.fillStyle = g;
+  roundRectPath(ctx, -W, top + 0.08, W * 2, -top - 0.16, 0.1);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(40,46,52,0.55)';
+  ctx.lineWidth = 0.03;
+  ctx.stroke();
+  // top lid lip
+  ctx.fillStyle = '#aeb6bc';
+  roundRectPath(ctx, -W - 0.04, top, W * 2 + 0.08, 0.14, 0.06);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(40,46,52,0.45)';
+  ctx.stroke();
+  // intake louvers across the left half
+  ctx.strokeStyle = 'rgba(60,66,72,0.5)';
+  ctx.lineWidth = 0.025;
+  ctx.beginPath();
+  for (let i = 0; i < 5; i++) {
+    const ly = top + 0.3 + i * 0.15;
+    ctx.moveTo(-W + 0.1, ly);
+    ctx.lineTo(-0.08, ly);
+  }
+  ctx.stroke();
+  // fan housing on the right
+  const fcx = W * 0.42, fcy = top / 2 - 0.02, fr = 0.34;
+  ctx.fillStyle = '#5b636a';
+  ctx.beginPath();
+  ctx.arc(fcx, fcy, fr + 0.06, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#23272b';
+  ctx.beginPath();
+  ctx.arc(fcx, fcy, fr, 0, Math.PI * 2);
+  ctx.fill();
+  // blades (slow spin, purely decorative)
+  ctx.save();
+  ctx.translate(fcx, fcy);
+  ctx.rotate(t * 0.6);
+  ctx.fillStyle = 'rgba(150,160,168,0.85)';
+  for (let b = 0; b < 4; b++) {
+    ctx.rotate(Math.PI / 2);
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.quadraticCurveTo(fr * 0.7, -fr * 0.18, fr * 0.92, fr * 0.14);
+    ctx.quadraticCurveTo(fr * 0.5, fr * 0.22, 0, 0);
+    ctx.fill();
+  }
+  ctx.fillStyle = '#828b92';
+  ctx.beginPath();
+  ctx.arc(0, 0, fr * 0.15, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+  // guard: radial bars and two rings
+  ctx.strokeStyle = 'rgba(186,194,200,0.7)';
+  ctx.lineWidth = 0.028;
+  ctx.beginPath();
+  for (let i = 0; i < 8; i++) {
+    const a = i * Math.PI / 4;
+    ctx.moveTo(fcx, fcy);
+    ctx.lineTo(fcx + Math.cos(a) * fr, fcy + Math.sin(a) * fr);
+  }
+  ctx.moveTo(fcx + fr, fcy);
+  ctx.arc(fcx, fcy, fr, 0, Math.PI * 2);
+  ctx.moveTo(fcx + fr * 0.58, fcy);
+  ctx.arc(fcx, fcy, fr * 0.58, 0, Math.PI * 2);
+  ctx.stroke();
+}
+
+// a power/squat rack: two drilled steel uprights on a top crossmember and
+// base feet, J-hooks cradling a barbell loaded with weight plates each side
+function drawSquatRack(ctx, t) {
+  const px = 0.66, top = -2.18, postW = 0.13;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  // shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.22)';
+  ctx.beginPath();
+  ctx.ellipse(0, 0.02, 1.0, 0.12, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // base stabiliser feet
+  ctx.fillStyle = '#2c3138';
+  for (const sx of [-1, 1]) {
+    roundRectPath(ctx, sx * px - 0.34, -0.13, 0.68, 0.13, 0.05);
+    ctx.fill();
+  }
+  // two uprights, drilled with adjustment holes
+  const post = cx => {
+    const g = ctx.createLinearGradient(cx - postW, 0, cx + postW, 0);
+    g.addColorStop(0, '#454c54');
+    g.addColorStop(0.5, '#2a2f35');
+    g.addColorStop(1, '#171b1f');
+    ctx.fillStyle = g;
+    roundRectPath(ctx, cx - postW, top, postW * 2, -top, 0.04);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(8,10,12,0.85)';
+    for (let i = 0; i < 9; i++) {
+      ctx.beginPath();
+      ctx.arc(cx, top + 0.24 + i * 0.2, 0.032, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  };
+  post(-px); post(px);
+  // top crossmember tying the posts together
+  let g = ctx.createLinearGradient(0, top, 0, top + 0.16);
+  g.addColorStop(0, '#3a4047');
+  g.addColorStop(1, '#20252a');
+  ctx.fillStyle = g;
+  roundRectPath(ctx, -px - postW, top, (px + postW) * 2, 0.16, 0.05);
+  ctx.fill();
+  // J-hooks
+  const barY = -1.44;
+  ctx.fillStyle = '#b3272b';
+  for (const sx of [-1, 1]) {
+    roundRectPath(ctx, sx * px - 0.05, barY - 0.02, 0.1, 0.22, 0.03);
+    ctx.fill();
+  }
+  // barbell shaft
+  const bg = ctx.createLinearGradient(0, barY - 0.05, 0, barY + 0.05);
+  bg.addColorStop(0, '#e3e7ea');
+  bg.addColorStop(0.5, '#b6bcc1');
+  bg.addColorStop(1, '#7d848a');
+  ctx.fillStyle = bg;
+  roundRectPath(ctx, -0.98, barY - 0.045, 1.96, 0.09, 0.04);
+  ctx.fill();
+  // loaded plates + inner collar, each end
+  for (const sx of [-1, 1]) {
+    for (let p = 0; p < 2; p++) {
+      const plx = sx * (0.74 + p * 0.13);
+      const rw = 0.1 - p * 0.018, rh = 0.34 - p * 0.06;
+      const pg = ctx.createLinearGradient(plx - rw, 0, plx + rw, 0);
+      pg.addColorStop(0, '#16191c');
+      pg.addColorStop(0.5, '#3a4045');
+      pg.addColorStop(1, '#0e1012');
+      ctx.fillStyle = pg;
+      ctx.beginPath();
+      ctx.ellipse(plx, barY, rw, rh, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(120,128,134,0.4)';
+      ctx.lineWidth = 0.02;
+      ctx.stroke();
+    }
+    ctx.fillStyle = '#9aa1a7';
+    ctx.beginPath();
+    ctx.ellipse(sx * 0.62, barY, 0.05, 0.12, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+// a pair of heavy dumbbells resting on the floor: a knurled steel handle
+// between two chunky heads, drawn as a smaller one set behind a larger one
+function drawDumbbells(ctx, t) {
+  ctx.lineJoin = 'round';
+  // shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.22)';
+  ctx.beginPath();
+  ctx.ellipse(0, 0.0, 0.9, 0.11, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  const bell = (cx, cy, scale, dark) => {
+    const hw = 0.34 * scale;      // half handle length, to the inner head
+    const hr = 0.26 * scale;      // head half-height
+    const headW = 0.16 * scale;   // head half-thickness
+    // handle
+    const g = ctx.createLinearGradient(0, cy - 0.06 * scale, 0, cy + 0.06 * scale);
+    g.addColorStop(0, '#d7dbde');
+    g.addColorStop(0.5, '#a7adb2');
+    g.addColorStop(1, '#6f767c');
+    ctx.fillStyle = g;
+    roundRectPath(ctx, cx - hw, cy - 0.055 * scale, hw * 2, 0.11 * scale, 0.04 * scale);
+    ctx.fill();
+    // knurling
+    ctx.strokeStyle = 'rgba(60,66,72,0.4)';
+    ctx.lineWidth = 0.012 * scale;
+    ctx.beginPath();
+    for (let i = -2; i <= 2; i++) {
+      ctx.moveTo(cx + i * 0.05 * scale, cy - 0.045 * scale);
+      ctx.lineTo(cx + i * 0.05 * scale, cy + 0.045 * scale);
+    }
+    ctx.stroke();
+    // two heads
+    for (const sx of [-1, 1]) {
+      const ex = cx + sx * (hw + headW);
+      const hg = ctx.createLinearGradient(ex - headW, cy - hr, ex + headW, cy + hr);
+      hg.addColorStop(0, dark ? '#23272b' : '#3b4146');
+      hg.addColorStop(0.5, dark ? '#41474d' : '#5a6168');
+      hg.addColorStop(1, dark ? '#15181b' : '#23272b');
+      ctx.fillStyle = hg;
+      roundRectPath(ctx, ex - headW, cy - hr, headW * 2, hr * 2, 0.08 * scale);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(12,14,16,0.6)';
+      ctx.lineWidth = 0.02 * scale;
+      ctx.stroke();
+      // a soft vertical rim highlight
+      ctx.strokeStyle = 'rgba(172,180,186,0.4)';
+      ctx.lineWidth = 0.018 * scale;
+      ctx.beginPath();
+      ctx.moveTo(ex - headW * 0.4, cy - hr * 0.75);
+      ctx.lineTo(ex - headW * 0.4, cy + hr * 0.75);
+      ctx.stroke();
+    }
+  };
+
+  bell(-0.28, -0.2, 0.82, true);    // the one tucked behind
+  bell(0.12, -0.26, 1.0, false);    // the bigger one in front
+}
+
+// a kettlebell: a cast-iron bell with an arched handle
+function drawKettlebell(ctx, t) {
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.fillStyle = 'rgba(0,0,0,0.22)';
+  ctx.beginPath();
+  ctx.ellipse(0, 0.02, 0.4, 0.08, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // handle (drawn first, behind the bell)
+  ctx.strokeStyle = '#3b4147';
+  ctx.lineWidth = 0.1;
+  ctx.beginPath();
+  ctx.moveTo(-0.17, -0.58);
+  ctx.quadraticCurveTo(-0.2, -0.88, 0, -0.88);
+  ctx.quadraticCurveTo(0.2, -0.88, 0.17, -0.58);
+  ctx.stroke();
+  // bell body
+  const g = ctx.createRadialGradient(-0.12, -0.46, 0.05, 0, -0.36, 0.62);
+  g.addColorStop(0, '#5a626a');
+  g.addColorStop(0.6, '#33393f');
+  g.addColorStop(1, '#171b1f');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(0, -0.34, 0.36, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#171b1f';
+  ctx.beginPath();
+  ctx.ellipse(0, -0.02, 0.28, 0.06, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(185,193,199,0.32)';
+  ctx.beginPath();
+  ctx.ellipse(-0.13, -0.44, 0.08, 0.12, -0.5, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+// a flat weight bench: a red vinyl pad on a steel frame
+function drawBench(ctx, t) {
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.fillStyle = 'rgba(0,0,0,0.22)';
+  ctx.beginPath();
+  ctx.ellipse(0, 0.02, 0.72, 0.09, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // splayed legs at each end
+  ctx.strokeStyle = '#2c3138';
+  ctx.lineWidth = 0.08;
+  for (const sx of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(sx * 0.5, -0.3);
+    ctx.lineTo(sx * 0.62, 0);
+    ctx.moveTo(sx * 0.5, -0.3);
+    ctx.lineTo(sx * 0.36, 0);
+    ctx.stroke();
+  }
+  // frame rail under the pad
+  ctx.fillStyle = '#23272b';
+  roundRectPath(ctx, -0.6, -0.36, 1.2, 0.08, 0.03);
+  ctx.fill();
+  // padded top
+  const g = ctx.createLinearGradient(0, -0.52, 0, -0.32);
+  g.addColorStop(0, '#c43a3a');
+  g.addColorStop(1, '#7e2020');
+  ctx.fillStyle = g;
+  roundRectPath(ctx, -0.66, -0.52, 1.32, 0.2, 0.08);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,180,180,0.4)';
+  ctx.lineWidth = 0.02;
+  ctx.beginPath();
+  ctx.moveTo(-0.58, -0.45);
+  ctx.lineTo(0.58, -0.45);
+  ctx.stroke();
+}
+
+// an inflatable exercise ball
+function drawExerciseBall(ctx, t) {
+  ctx.fillStyle = 'rgba(0,0,0,0.22)';
+  ctx.beginPath();
+  ctx.ellipse(0, 0.02, 0.46, 0.09, 0, 0, Math.PI * 2);
+  ctx.fill();
+  const r = 0.46, cy = -0.46;
+  const g = ctx.createRadialGradient(-0.16, cy - 0.16, 0.06, 0, cy, r * 1.25);
+  g.addColorStop(0, '#7fd0e8');
+  g.addColorStop(0.55, '#3aa0c8');
+  g.addColorStop(1, '#1f6f96');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(0, cy, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(20,70,95,0.4)';
+  ctx.lineWidth = 0.02;
+  ctx.beginPath();
+  ctx.ellipse(0, cy, r * 0.5, r, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.ellipse(0, cy, r, r * 0.5, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,0.35)';
+  ctx.beginPath();
+  ctx.ellipse(-0.16, cy - 0.16, 0.1, 0.07, -0.5, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+// a water cooler: a white cabinet under an inverted blue jug
+function drawWaterCooler(ctx, t) {
+  ctx.lineJoin = 'round';
+  ctx.fillStyle = 'rgba(0,0,0,0.22)';
+  ctx.beginPath();
+  ctx.ellipse(0, 0.02, 0.34, 0.08, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // cabinet
+  let g = ctx.createLinearGradient(-0.3, 0, 0.3, 0);
+  g.addColorStop(0, '#cfd6db');
+  g.addColorStop(0.5, '#eef2f4');
+  g.addColorStop(1, '#b8c0c6');
+  ctx.fillStyle = g;
+  roundRectPath(ctx, -0.3, -0.86, 0.6, 0.86, 0.06);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(60,66,72,0.4)';
+  ctx.lineWidth = 0.02;
+  ctx.stroke();
+  // taps + drip tray
+  ctx.fillStyle = '#3b4147';
+  ctx.fillRect(-0.13, -0.6, 0.07, 0.1);
+  ctx.fillRect(0.06, -0.6, 0.07, 0.1);
+  ctx.fillStyle = '#9aa1a7';
+  ctx.fillRect(-0.2, -0.46, 0.4, 0.04);
+  // jug of water
+  g = ctx.createLinearGradient(0, -1.28, 0, -0.86);
+  g.addColorStop(0, 'rgba(120,190,230,0.9)');
+  g.addColorStop(1, 'rgba(70,150,205,0.95)');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(-0.24, -0.88);
+  ctx.lineTo(0.24, -0.88);
+  ctx.lineTo(0.18, -1.16);
+  ctx.quadraticCurveTo(0.16, -1.3, 0, -1.3);
+  ctx.quadraticCurveTo(-0.16, -1.3, -0.18, -1.16);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.3)';
+  ctx.beginPath();
+  ctx.ellipse(-0.08, -1.06, 0.04, 0.12, 0.2, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+// a tall gym locker with two doors, vents and handles
+function drawLocker(ctx, t) {
+  ctx.fillStyle = 'rgba(0,0,0,0.22)';
+  ctx.beginPath();
+  ctx.ellipse(0, 0.02, 0.46, 0.08, 0, 0, Math.PI * 2);
+  ctx.fill();
+  const g = ctx.createLinearGradient(-0.4, 0, 0.4, 0);
+  g.addColorStop(0, '#356391');
+  g.addColorStop(0.5, '#5a93c8');
+  g.addColorStop(1, '#2c557d');
+  ctx.fillStyle = g;
+  roundRectPath(ctx, -0.4, -1.84, 0.8, 1.84, 0.04);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(18,36,54,0.55)';
+  ctx.lineWidth = 0.025;
+  ctx.stroke();
+  ctx.beginPath();                  // split between the two doors
+  ctx.moveTo(-0.4, -0.92);
+  ctx.lineTo(0.4, -0.92);
+  ctx.stroke();
+  ctx.lineWidth = 0.018;
+  for (const top of [-1.78, -0.86]) {
+    ctx.strokeStyle = 'rgba(225,235,245,0.4)';
+    ctx.beginPath();
+    for (let i = 0; i < 3; i++) {
+      const vy = top + 0.08 + i * 0.07;
+      ctx.moveTo(-0.2, vy);
+      ctx.lineTo(0.2, vy);
+    }
+    ctx.stroke();
+    ctx.fillStyle = '#1c344c';
+    ctx.fillRect(0.24, top + 0.46, 0.05, 0.16);
+  }
+}
+
+// a potted plant, leaves swaying gently
+function drawPlant(ctx, t) {
+  ctx.lineJoin = 'round';
+  ctx.fillStyle = 'rgba(0,0,0,0.22)';
+  ctx.beginPath();
+  ctx.ellipse(0, 0.02, 0.34, 0.08, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // terracotta pot
+  let g = ctx.createLinearGradient(-0.28, 0, 0.28, 0);
+  g.addColorStop(0, '#a85a32');
+  g.addColorStop(0.5, '#d2864f');
+  g.addColorStop(1, '#8a4523');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(-0.28, -0.42);
+  ctx.lineTo(0.28, -0.42);
+  ctx.lineTo(0.2, 0);
+  ctx.lineTo(-0.2, 0);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = '#b9703f';
+  roundRectPath(ctx, -0.31, -0.48, 0.62, 0.09, 0.03);
+  ctx.fill();
+  // fronds
+  const sway = Math.sin(t * 0.8) * 0.04;
+  const leaves = [[-0.18, -0.5, -0.55], [0.18, -0.5, 0.55], [-0.1, -0.72, -0.22],
+    [0.1, -0.74, 0.26], [0, -0.92, 0.0], [-0.22, -0.62, -0.95], [0.22, -0.64, 0.95]];
+  for (const [lx, ly, ang] of leaves) {
+    ctx.save();
+    ctx.translate(lx, ly);
+    ctx.rotate(ang + sway);
+    g = ctx.createLinearGradient(0, -0.34, 0, 0.06);
+    g.addColorStop(0, '#5fb84a');
+    g.addColorStop(1, '#2f7d27');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(0, 0.06);
+    ctx.quadraticCurveTo(0.12, -0.18, 0, -0.36);
+    ctx.quadraticCurveTo(-0.12, -0.18, 0, 0.06);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+// a traffic cone with a reflective band
+function drawCone(ctx, t) {
+  ctx.lineJoin = 'round';
+  ctx.fillStyle = 'rgba(0,0,0,0.22)';
+  ctx.beginPath();
+  ctx.ellipse(0, 0.02, 0.36, 0.07, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#d85a18';
+  roundRectPath(ctx, -0.34, -0.1, 0.68, 0.1, 0.03);
+  ctx.fill();
+  const g = ctx.createLinearGradient(-0.2, 0, 0.2, 0);
+  g.addColorStop(0, '#c44e10');
+  g.addColorStop(0.5, '#ff7a2a');
+  g.addColorStop(1, '#b8460c');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(-0.26, -0.1);
+  ctx.lineTo(-0.06, -0.82);
+  ctx.quadraticCurveTo(0, -0.9, 0.06, -0.82);
+  ctx.lineTo(0.26, -0.1);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = 'rgba(245,245,245,0.9)';
+  ctx.beginPath();
+  ctx.moveTo(-0.2, -0.32);
+  ctx.lineTo(0.2, -0.32);
+  ctx.lineTo(0.16, -0.46);
+  ctx.lineTo(-0.16, -0.46);
+  ctx.closePath();
+  ctx.fill();
+}
+
+// a round wall clock; the hands creep so it reads as running
+function drawClock(ctx, t) {
+  ctx.lineCap = 'round';
+  const r = 0.4, cy = -0.4;
+  ctx.fillStyle = '#2c3138';
+  ctx.beginPath();
+  ctx.arc(0, cy, r + 0.04, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#f3efe4';
+  ctx.beginPath();
+  ctx.arc(0, cy, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#3a3f44';
+  ctx.lineWidth = 0.02;
+  ctx.beginPath();
+  for (let i = 0; i < 12; i++) {
+    const a = i * Math.PI / 6;
+    ctx.moveTo(Math.sin(a) * r * 0.82, cy - Math.cos(a) * r * 0.82);
+    ctx.lineTo(Math.sin(a) * r * 0.94, cy - Math.cos(a) * r * 0.94);
+  }
+  ctx.stroke();
+  const hh = t * 0.0167, mm = t * 0.2;
+  ctx.strokeStyle = '#23272b';
+  ctx.lineWidth = 0.03;
+  ctx.beginPath();
+  ctx.moveTo(0, cy);
+  ctx.lineTo(Math.sin(hh) * r * 0.4, cy - Math.cos(hh) * r * 0.4);
+  ctx.stroke();
+  ctx.lineWidth = 0.022;
+  ctx.beginPath();
+  ctx.moveTo(0, cy);
+  ctx.lineTo(Math.sin(mm) * r * 0.7, cy - Math.cos(mm) * r * 0.7);
+  ctx.stroke();
+  ctx.fillStyle = '#b3272b';
+  ctx.beginPath();
+  ctx.arc(0, cy, 0.03, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+// editor-picker order; w/h is the footprint used for hit-testing + previews
+const DOODADS = [
+  { id: 'ac', label: 'A/C Unit', w: 1.5, h: 1.12, draw: drawAcUnit },
+  { id: 'rack', label: 'Squat Rack', w: 1.86, h: 2.36, draw: drawSquatRack },
+  { id: 'dumbbell', label: 'Dumbbells', w: 1.74, h: 0.66, draw: drawDumbbells },
+  { id: 'kettlebell', label: 'Kettlebell', w: 0.95, h: 1.0, draw: drawKettlebell },
+  { id: 'bench', label: 'Weight Bench', w: 1.5, h: 0.72, draw: drawBench },
+  { id: 'ball', label: 'Exercise Ball', w: 1.02, h: 1.0, draw: drawExerciseBall },
+  { id: 'cooler', label: 'Water Cooler', w: 0.62, h: 1.38, draw: drawWaterCooler },
+  { id: 'locker', label: 'Locker', w: 0.92, h: 1.92, draw: drawLocker },
+  { id: 'plant', label: 'Potted Plant', w: 0.92, h: 1.26, draw: drawPlant },
+  { id: 'cone', label: 'Traffic Cone', w: 0.72, h: 0.96, draw: drawCone },
+  { id: 'clock', label: 'Wall Clock', w: 0.9, h: 0.9, draw: drawClock },
+];
+const DOODAD_BY_ID = {};
+for (const d of DOODADS) DOODAD_BY_ID[d.id] = d;
+
+// draw one doodad sprite centred at its base on (x, y)
+function drawDoodad(ctx, type, x, y, t) {
+  const d = DOODAD_BY_ID[type];
+  if (!d) return;                   // unknown id (e.g. a sprite from a newer build): skip
+  ctx.save();
+  ctx.translate(x, y);
+  d.draw(ctx, t || 0);
+  ctx.restore();
+}
+
+// draw a level/map's doodads on one layer ('back' | 'front'), in author order
+function drawDoodadLayer(ctx, doodads, layer, t) {
+  if (!doodads) return;
+  for (const d of doodads) {
+    if ((d.layer === 'front' ? 'front' : 'back') === layer) drawDoodad(ctx, d.type, d.x, d.y, t);
+  }
+}
+
 function strokeSeg(ctx, a, b, w, color) {
   ctx.strokeStyle = color;
   ctx.lineWidth = w;

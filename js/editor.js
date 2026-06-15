@@ -41,8 +41,19 @@ const EDITOR = (() => {
   let prepared = null;   // prepareLevel(map), rebuilt after every change
   let cam = { x: 0, y: 0 };
   let zoom = 36;         // screen px per world unit
-  let tool = 'select';   // select | poly | burger | nut | flip | glass
-  let sel = null;        // {kind: vertex|edge|burger|start|goal, ...}
+  let tool = 'select';   // select | poly | burger | nut | glass | doodad
+  // the +Burger tool drops either a normal or a gravity-flip burger; its kind
+  // is chosen from the tool's palette (they look identical in play). Flip
+  // burgers still live in their own map array, so the data model is unchanged.
+  let burgerKind = 'normal'; // 'normal' | 'flip'
+  // the +Doodad tool drops the current sprite onto the current layer, both
+  // chosen from the tool's palette panel
+  let doodadType = DOODADS[0].id;
+  let doodadLayer = 'back';   // 'back' (behind the rider) | 'front' (over him)
+  // which toolbar dropdown is open (null = none): 'view' (Rider/Grid toggles)
+  // or 'theme' (the theme picker)
+  let menu = null;
+  let sel = null;        // {kind: vertex|edge|burger|start|goal|doodad, ...}
   let hov = null;        // same shape, under the cursor (select tool only)
   let drag = null;       // active mouse drag: pan | move | paint
   let draft = null;      // poly tool: vertices placed so far
@@ -61,6 +72,10 @@ const EDITOR = (() => {
   let mx = 0, my = 0;    // last pointer position (screen px)
   let scrW = 800, scrH = 600;
   let uiRects = [];      // toolbar hitboxes, rebuilt every draw
+  let toolbarBottom = 0; // y the toolbar ends at, so popups dock below it
+  // open popups (tool palette and/or dropdown), each { bounds, rects }, rebuilt
+  // every draw. mouseDown/cursor read them; a click inside a popup is swallowed.
+  let popups = [];
   let autosaveAt = 0;
 
   // ---------- map data ----------
@@ -78,6 +93,7 @@ const EDITOR = (() => {
       nuts: [],
       flipBurgers: [],
       glassEdges: [],
+      doodads: [],
     };
   }
 
@@ -103,6 +119,10 @@ const EDITOR = (() => {
     if (map.nuts.length) L.nuts = map.nuts.map(n => [round2(n[0]), round2(n[1])]);
     if (map.flipBurgers.length) L.flipBurgers = map.flipBurgers.map(b => [round2(b[0]), round2(b[1])]);
     if (map.glassEdges.length) L.glassEdges = map.glassEdges.map(e => [e[0], e[1]]);
+    if (map.doodads.length) {
+      L.doodads = map.doodads.map(d =>
+        ({ type: d.type, x: round2(d.x), y: round2(d.y), layer: d.layer }));
+    }
     return L;
   }
 
@@ -114,6 +134,19 @@ const EDITOR = (() => {
 
   function isPt(p) {
     return Array.isArray(p) && p.length >= 2 && isFinite(p[0]) && isFinite(p[1]);
+  }
+
+  function isDoodad(o) {
+    return o && typeof o === 'object' && typeof o.type === 'string' &&
+      isFinite(o.x) && isFinite(o.y);
+  }
+
+  // the footprint box of a placed doodad, for hit-testing and overlays: its
+  // sprite footprint from the registry, anchored at the base centre (x, y),
+  // with a small skirt below the base so the contact line is grabbable
+  function doodadBox(d) {
+    const def = DOODAD_BY_ID[d.type] || { w: 1, h: 1 };
+    return { x0: d.x - def.w / 2, y0: d.y - def.h, x1: d.x + def.w / 2, y1: d.y + 0.12 };
   }
 
   // validates enough that the renderer, the sim, and a LEVELS entry can't
@@ -142,6 +175,12 @@ const EDITOR = (() => {
     if (d.flipBurgers != null && (!Array.isArray(d.flipBurgers) || !d.flipBurgers.every(isPt))) {
       throw new Error('map upside-down burgers are damaged');
     }
+    // doodads are optional inert sprites (added after v2); a record needs a
+    // string type and finite x/y. Unknown types are kept and simply skipped
+    // when drawn, so a map authored in a newer build still loads.
+    if (d.doodads != null && (!Array.isArray(d.doodads) || !d.doodads.every(isDoodad))) {
+      throw new Error('map doodads are damaged');
+    }
     const polygons = d.polygons.map(p => p.map(v => [Number(v[0]), Number(v[1])]));
     return {
       name: typeof d.name === 'string' && d.name ? d.name : 'Mystery Map',
@@ -153,6 +192,9 @@ const EDITOR = (() => {
       nuts: Array.isArray(d.nuts) ? d.nuts.map(n => [Number(n[0]), Number(n[1])]) : [],
       flipBurgers: Array.isArray(d.flipBurgers) ? d.flipBurgers.map(b => [Number(b[0]), Number(b[1])]) : [],
       glassEdges: parseGlass(d, polygons),
+      doodads: Array.isArray(d.doodads) ? d.doodads.map(o =>
+        ({ type: String(o.type), x: Number(o.x), y: Number(o.y),
+           layer: o.layer === 'front' ? 'front' : 'back' })) : [],
     };
   }
 
@@ -305,6 +347,9 @@ const EDITOR = (() => {
     tool = t;
     draft = null;
     if (t !== 'select') { sel = null; hov = null; }
+    // a tool change closes any dropdown and retires popup hitboxes at once, so
+    // a later click can't land on a stale popup rect before the next redraw
+    closeMenu();
   }
 
   // ---------- glass edges ----------
@@ -401,6 +446,48 @@ const EDITOR = (() => {
     commit(true);
   }
 
+  function addDoodad(w) {
+    pushUndo();
+    map.doodads.push({ type: doodadType, x: snap(w.x), y: snap(w.y), layer: doodadLayer });
+    commit(true);
+  }
+
+  // the +Doodad tool's two settings (which sprite, which layer), driven by the
+  // palette. They only affect the next placement, so they touch no map data and
+  // take no undo.
+  function setDoodadType(id) {
+    if (!DOODAD_BY_ID[id]) return;
+    doodadType = id;
+    note('Doodad sprite: ' + DOODAD_BY_ID[id].label);
+  }
+
+  function setDoodadLayer(layer) {
+    doodadLayer = layer === 'front' ? 'front' : 'back';
+    note('Doodad layer: ' + (doodadLayer === 'front'
+      ? 'front - drawn over the rider' : 'back - drawn behind the rider'));
+  }
+
+  // the +Burger tool's kind, driven by its palette (placement-only, no undo)
+  function setBurgerKind(k) {
+    burgerKind = k === 'flip' ? 'flip' : 'normal';
+    note('Burger kind: ' + (burgerKind === 'flip'
+      ? 'upside-down - collecting it flips gravity' : 'normal'));
+  }
+
+  // pick a theme by name from the Theme dropdown (an edit, so it takes undo)
+  function setTheme(name) {
+    if (!THEMES[name] || name === map.theme) { note('Theme: ' + map.theme); return; }
+    pushUndo();
+    map.theme = name;
+    commit(true);
+    note('Theme: ' + name);
+  }
+
+  // ---------- toolbar dropdowns ----------
+
+  function toggleMenu(id) { menu = menu === id ? null : id; popups = []; }
+  function closeMenu() { menu = null; popups = []; }
+
   function polyClick(w) {
     if (!draft) draft = [];
     // clicking back on the first vertex closes the loop
@@ -492,6 +579,12 @@ const EDITOR = (() => {
         sel = null;
         commit(true);
         return;
+      case 'doodad':
+        pushUndo();
+        map.doodads.splice(sel.di, 1);
+        sel = null;
+        commit(true);
+        return;
       default:
         note('The start and goal can be moved, not removed');
     }
@@ -543,6 +636,12 @@ const EDITOR = (() => {
         const b = map.flipBurgers[p.fi];
         b[0] = round2(b[0] + dx);
         b[1] = round2(b[1] + dy);
+        break;
+      }
+      case 'doodad': {
+        const d = map.doodads[p.di];
+        d.x = round2(d.x + dx);
+        d.y = round2(d.y + dy);
         break;
       }
       case 'start':
@@ -645,6 +744,12 @@ const EDITOR = (() => {
     }
     if (Math.hypot(wx - map.start.x, wy - map.start.y) < Math.max(r, 0.7)) return { kind: 'start' };
     if (Math.hypot(wx - map.goal[0], wy - map.goal[1]) < Math.max(r, 0.6)) return { kind: 'goal' };
+    // doodads after the point handles (so a burger over an A/C unit still wins),
+    // topmost first (later in the list draws on top)
+    for (let di = map.doodads.length - 1; di >= 0; di--) {
+      const b = doodadBox(map.doodads[di]);
+      if (wx >= b.x0 && wx <= b.x1 && wy >= b.y0 && wy <= b.y1) return { kind: 'doodad', di };
+    }
     // edges last, so handles win where they overlap
     return pickEdge(wx, wy, 10 / zoom);
   }
@@ -688,16 +793,36 @@ const EDITOR = (() => {
     if (helpOpen) { helpOpen = false; return; }
     for (const b of uiRects) {
       if (hitRect(b, x, y)) {
-        if (!b.disabled) { hooks.blip(); action(b.id); }
+        if (!b.disabled) {
+          hooks.blip();
+          // a button with a `menu` toggles its dropdown; the rest act (and
+          // close any open dropdown first)
+          if (b.menu) toggleMenu(b.menu);
+          else { closeMenu(); action(b.id); }
+        }
         return;
       }
     }
+    // open popups (tool palette / dropdown): a button inside acts; anywhere else
+    // inside a panel is swallowed, so a click on it can't reach the world.
+    // Topmost (last-drawn) first, so an overlapping dropdown wins over a palette.
+    for (let i = popups.length - 1; i >= 0; i--) {
+      const p = popups[i];
+      if (hitRect(p.bounds, x, y)) {
+        for (const b of p.rects) {
+          if (hitRect(b, x, y)) { hooks.blip(); action(b.id); break; }
+        }
+        return;
+      }
+    }
+    // a click in open space with a dropdown showing just dismisses it
+    if (menu) { closeMenu(); return; }
     if (naming) finishNaming(true); // a click off the name box commits it
     const w = s2w(x, y);
     if (tool === 'poly') { polyClick(w); return; }
-    if (tool === 'burger') { addBurger(w); return; }
+    if (tool === 'burger') { burgerKind === 'flip' ? addFlip(w) : addBurger(w); return; }
     if (tool === 'nut') { addNut(w); return; }
-    if (tool === 'flip') { addFlip(w); return; }
+    if (tool === 'doodad') { addDoodad(w); return; }
     if (tool === 'glass') {
       drag = { kind: 'paint', moved: false };
       paintGlassAt(w);
@@ -769,6 +894,11 @@ const EDITOR = (() => {
       case 'flip':
         map.flipBurgers[p.fi] = [snap(w.x), snap(w.y)];
         break;
+      case 'doodad': {
+        const d = map.doodads[p.di];
+        d.x = snap(w.x); d.y = snap(w.y);   // keep type + layer, move the anchor
+        break;
+      }
       case 'start':
         map.start = { x: snap(w.x), y: snap(w.y) };
         break;
@@ -862,16 +992,20 @@ const EDITOR = (() => {
     switch (k) {
       case 'Escape':
         if (helpOpen) helpOpen = false;
+        else if (menu) closeMenu();
         else if (draft) { draft = null; note('Cancelled'); }
         else if (sel) sel = null;
         else hooks.exit();
         return;
       case '1': case 'v': case 'V': setTool('select'); return;
       case '2': case 'p': case 'P': setTool('poly'); return;
-      case '3': case 'b': case 'B': setTool('burger'); return;
+      // the burger tool now carries a kind; 3/B arms a normal burger, 6/F a
+      // gravity-flip one (the old +Flip tool folded into the +Burger palette)
+      case '3': case 'b': case 'B': setTool('burger'); setBurgerKind('normal'); return;
       case '4': case 'g': case 'G': setTool('glass'); return;
       case '5': case 'k': case 'K': setTool('nut'); return;
-      case '6': case 'f': case 'F': setTool('flip'); return;
+      case '6': case 'f': case 'F': setTool('burger'); setBurgerKind('flip'); return;
+      case '7': case 'd': case 'D': setTool('doodad'); return;
       case 't': case 'T': cycleTheme(); return;
       case 'n': case 'N': startNaming(); return;
       case 'r': case 'R': toggleRider(); return;
@@ -892,11 +1026,16 @@ const EDITOR = (() => {
   }
 
   function action(id) {
+    // palette/dropdown buttons emit prefixed ids (one per sprite / layer / kind
+    // / theme); the toolbar tool buttons emit a bare tool id
+    if (id.indexOf('doodadPick:') === 0) { setDoodadType(id.slice(11)); return; }
+    if (id === 'doodadLayer:back' || id === 'doodadLayer:front') { setDoodadLayer(id.slice(12)); return; }
+    if (id.indexOf('burgerKind:') === 0) { setBurgerKind(id.slice(11)); return; }
+    if (id.indexOf('theme:') === 0) { setTheme(id.slice(6)); closeMenu(); return; }
     switch (id) {
-      case 'select': case 'poly': case 'burger': case 'glass': case 'nut': case 'flip': setTool(id); break;
+      case 'select': case 'poly': case 'burger': case 'glass': case 'nut': case 'doodad': setTool(id); break;
       case 'rider': toggleRider(); break;
       case 'grid': toggleGrid(); break;
-      case 'theme': cycleTheme(); break;
       case 'name': startNaming(); break;
       case 'undo': undo(); break;
       case 'redo': redo(); break;
@@ -919,6 +1058,10 @@ const EDITOR = (() => {
     }
     if (drag && drag.kind === 'pan') return 'grabbing';
     for (const b of uiRects) if (hitRect(b, mx, my)) return 'pointer';
+    for (let i = popups.length - 1; i >= 0; i--) {
+      const p = popups[i];
+      if (hitRect(p.bounds, mx, my)) return p.rects.some(b => hitRect(b, mx, my)) ? 'pointer' : 'default';
+    }
     if (tool !== 'select') return 'crosshair';
     return hov ? 'pointer' : 'default';
   }
@@ -964,6 +1107,7 @@ const EDITOR = (() => {
     const view = { x0: cam.x - hw, y0: cam.y - hh, x1: cam.x + hw, y1: cam.y + hh };
     drawWorld(ctx, prepared, pat, view, rt);
     drawGrid(ctx, view);
+    drawDoodadLayer(ctx, map.doodads, 'back', rt);   // scenery behind the actors
     for (const n of map.nuts) drawNutMound(ctx, n[0], n[1], rt);
     for (const b of map.burgers) drawBurger(ctx, b[0], b[1], rt);
     // upside-down burgers draw identically to normal ones in play; here in the
@@ -974,8 +1118,10 @@ const EDITOR = (() => {
     }
     drawPopcorn(ctx, map.goal[0], map.goal[1], rt);
     drawStartMarker(ctx);
+    drawDoodadLayer(ctx, map.doodads, 'front', rt);  // props that ride over the rider
     drawGlassEdges(ctx);
     drawPolyOverlay(ctx);
+    drawDoodadOverlay(ctx);
     if (showRider) drawRiderPreview(ctx);
     drawDrafts(ctx, rt);
     drawSelectionRing(ctx);
@@ -983,6 +1129,15 @@ const EDITOR = (() => {
 
     drawWorldLabels(ctx);
     drawToolbar(ctx, W, H, rt);
+    // popups dock under the toolbar; rebuilt every frame so their hitboxes never
+    // go stale when the tool, the open dropdown, or a modal changes
+    popups = [];
+    if (!helpOpen && !confirmPrompt) {
+      if (tool === 'burger') drawBurgerPalette(ctx, W, H, rt);
+      else if (tool === 'doodad') drawDoodadPalette(ctx, W, H, rt);
+      if (menu === 'view') drawDropdown(ctx, uiRects.find(b => b.id === 'view'), viewItems());
+      else if (menu === 'theme') drawDropdown(ctx, uiRects.find(b => b.id === 'theme'), themeItems());
+    }
     drawStatus(ctx, W, H);
     if (helpOpen) drawHelp(ctx, W, H);
     if (confirmPrompt) drawConfirm(ctx, W, H);
@@ -1114,7 +1269,7 @@ const EDITOR = (() => {
   // it parked upright so a corridor or ceiling can be carved knowing whether
   // the wheels or the head would clip.
   function drawRiderPreview(ctx) {
-    if (overToolbar()) return;
+    if (overChrome()) return;
     const w = s2w(mx, my);
     const cx = snap(w.x), cy = snap(w.y);
     const groundY = groundBelow(cx, cy);
@@ -1224,11 +1379,36 @@ const EDITOR = (() => {
     ctx.save();
     ctx.lineCap = 'round';
     for (const [pi, vi] of map.glassEdges) stroke(pi, vi, 'rgba(170,215,235,0.85)', 4);
-    if (tool === 'glass' && !overToolbar()) {
+    if (tool === 'glass' && !overChrome()) {
       const w = s2w(mx, my);
       const e = pickEdge(w.x, w.y, BRUSH_R / zoom);
       if (e) stroke(e.pi, e.vi, '#f9c623', 6);
     }
+    ctx.restore();
+  }
+
+  // a layer-tinted dashed box around every placed doodad so the author can see
+  // its footprint and tell back (blue) from front (orange) at a glance; the
+  // hovered/selected one brightens (gold when selected). Editor-only chrome —
+  // in play the doodad is just its sprite.
+  function doodadTint(layer) { return layer === 'front' ? '255,170,90' : '120,200,255'; }
+
+  function drawDoodadOverlay(ctx) {
+    ctx.save();
+    ctx.lineCap = 'round';
+    map.doodads.forEach((d, di) => {
+      const b = doodadBox(d);
+      const isSel = sel && sel.kind === 'doodad' && sel.di === di;
+      const isHov = hov && hov.kind === 'doodad' && hov.di === di;
+      const tint = doodadTint(d.layer);
+      ctx.strokeStyle = isSel ? '#f9c623'
+        : isHov ? 'rgba(' + tint + ',0.95)' : 'rgba(' + tint + ',0.4)';
+      ctx.lineWidth = (isSel ? 2.5 : isHov ? 2 : 1.2) / zoom;
+      ctx.setLineDash([7 / zoom, 5 / zoom]);
+      roundRectPath(ctx, b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0, 6 / zoom);
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
     ctx.restore();
   }
 
@@ -1258,26 +1438,38 @@ const EDITOR = (() => {
       }
       ctx.setLineDash([]);
     }
-    if (tool === 'burger' && !overToolbar()) {
+    if (tool === 'burger' && !overChrome()) {
+      // ghost the armed burger kind; the flip one wears its editor badge
       ctx.save();
       ctx.globalAlpha = 0.55;
       drawBurger(ctx, cx, cy, rt);
+      if (burgerKind === 'flip') drawFlipBadge(ctx, cx, cy);
       ctx.restore();
     }
-    if (tool === 'nut' && !overToolbar()) {
+    if (tool === 'nut' && !overChrome()) {
       ctx.save();
       ctx.globalAlpha = 0.55;
       drawNutMound(ctx, cx, cy, rt);
       ctx.restore();
     }
-    if (tool === 'flip' && !overToolbar()) {
+    if (tool === 'doodad' && !overChrome()) {
+      // ghost the current sprite at the snapped cursor, with its footprint box
+      // in the chosen layer's colour
       ctx.save();
       ctx.globalAlpha = 0.55;
-      drawBurger(ctx, cx, cy, rt);
-      drawFlipBadge(ctx, cx, cy);
+      drawDoodad(ctx, doodadType, cx, cy, rt);
       ctx.restore();
+      const def = DOODAD_BY_ID[doodadType];
+      if (def) {
+        ctx.strokeStyle = 'rgba(' + doodadTint(doodadLayer) + ',0.8)';
+        ctx.lineWidth = 1.4 / zoom;
+        ctx.setLineDash([7 / zoom, 5 / zoom]);
+        roundRectPath(ctx, cx - def.w / 2, cy - def.h, def.w, def.h + 0.12, 6 / zoom);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
     }
-    if (tool !== 'select' && !overToolbar()) {
+    if (tool !== 'select' && !overChrome()) {
       // snapped crosshair under placement tools
       ctx.strokeStyle = 'rgba(255,255,255,0.65)';
       ctx.lineWidth = 1.5 / zoom;
@@ -1343,6 +1535,219 @@ const EDITOR = (() => {
     return false;
   }
 
+  function overPopups() {
+    return popups.some(p => hitRect(p.bounds, mx, my));
+  }
+
+  // any editor chrome under the cursor (toolbar or an open popup) — placement
+  // tools suppress their world ghost/crosshair while the cursor is over it
+  function overChrome() { return overToolbar() || overPopups(); }
+
+  // draw one preview, scaled to fit a `size`-px square at (x, y), clipped so
+  // nothing bleeds past the cell. Base-anchored sprites rest on the centred
+  // bottom; `centered` items (the burgers, which draw around their middle)
+  // centre in the box instead.
+  function drawThumb(ctx, item, x, y, size, t) {
+    ctx.save();
+    roundRectPath(ctx, x, y, size, size, 5);
+    ctx.clip();
+    const scale = Math.min((size - 12) / item.w, (size - 12) / item.h);
+    if (item.centered) {
+      ctx.translate(x + size / 2, y + size / 2);
+    } else {
+      ctx.translate(x + size / 2, y + (size + item.h * scale) / 2);
+    }
+    ctx.scale(scale, scale);
+    item.draw(ctx, t);
+    ctx.restore();
+  }
+
+  // The generic tool palette: a panel docked under the toolbar with a title, an
+  // optional row of segmented toggles (the doodad Back/Front), and a grid of
+  // live thumbnails. Click a thumbnail or toggle to arm it (each emits an action
+  // id), then click the world to place. Shared by the +Burger and +Doodad
+  // tools; the grid columns adapt so it always fits between the toolbar and the
+  // status bar. Pushes its panel onto `popups` so clicks on it are handled.
+  function drawPalettePanel(ctx, W, H, rt, opts) {
+    const pad = 10, cellW = 86, cellH = 80, gap = 8;
+    const titleH = 22, headerH = titleH + (opts.toggles ? 30 : 0);
+    const panelX = 10 + SAFE.left;
+    const panelY = toolbarBottom + 8;
+    const gridTop = panelY + pad + headerH;
+    const bottomLimit = H - SAFE.bottom - 30;          // keep clear of the status bar
+    const rowsFit = Math.max(1, Math.floor((bottomLimit - gridTop + gap) / (cellH + gap)));
+    const n = opts.cells.length;
+    // at least two columns for a small set (so it reads as a row, not a strip),
+    // more if the rows wouldn't otherwise fit the height; capped at four
+    const cols = Math.min(4, Math.max(Math.min(n, 2), Math.ceil(n / rowsFit)));
+    const rows = Math.ceil(n / cols);
+    const panelW = cols * cellW + (cols - 1) * gap + pad * 2;
+    const panelH = headerH + rows * cellH + (rows - 1) * gap + pad * 2;
+    const rects = [];
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(10,6,3,0.92)';
+    roundRectPath(ctx, panelX, panelY, panelW, panelH, 10);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(249,198,35,0.4)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#f9c623';
+    ctx.font = 'bold 14px ' + FONT;
+    ctx.fillText(opts.title, panelX + pad, panelY + pad + titleH / 2);
+
+    // optional segmented toggles, right-aligned in the title row
+    if (opts.toggles) {
+      const segH = 24, segGap = 6, m = opts.toggles.length;
+      const segW = Math.min(62, (panelW - pad * 2 - segGap * (m - 1)) / m);
+      const segY = panelY + pad + titleH - 2;
+      const segX0 = panelX + panelW - pad - (segW * m + segGap * (m - 1));
+      ctx.font = 'bold 12px ' + FONT;
+      ctx.textAlign = 'center';
+      opts.toggles.forEach((tg, i) => {
+        const rx = segX0 + i * (segW + segGap);
+        const hot = hitRect({ x: rx, y: segY, w: segW, h: segH }, mx, my);
+        ctx.fillStyle = tg.on ? 'rgba(120,62,16,0.95)' : hot ? 'rgba(70,34,10,0.92)' : 'rgba(20,12,6,0.82)';
+        roundRectPath(ctx, rx, segY, segW, segH, 6);
+        ctx.fill();
+        ctx.lineWidth = tg.on || hot ? 2 : 1.2;
+        ctx.strokeStyle = tg.on || hot ? '#f9c623' : 'rgba(249,198,35,0.4)';
+        ctx.stroke();
+        ctx.fillStyle = tg.on || hot ? '#ffe27a' : '#f0e8da';
+        ctx.fillText(tg.label, rx + segW / 2, segY + segH / 2 + 1);
+        rects.push({ id: tg.id, x: rx, y: segY, w: segW, h: segH });
+      });
+    }
+
+    // thumbnail cells
+    ctx.textAlign = 'center';
+    opts.cells.forEach((c, i) => {
+      const cx = panelX + pad + (i % cols) * (cellW + gap);
+      const cy = gridTop + Math.floor(i / cols) * (cellH + gap);
+      const hot = hitRect({ x: cx, y: cy, w: cellW, h: cellH }, mx, my);
+      ctx.fillStyle = c.on ? 'rgba(120,62,16,0.92)' : hot ? 'rgba(60,30,10,0.9)' : 'rgba(22,14,8,0.85)';
+      roundRectPath(ctx, cx, cy, cellW, cellH, 7);
+      ctx.fill();
+      ctx.lineWidth = c.on ? 2.5 : hot ? 2 : 1.2;
+      ctx.strokeStyle = c.on ? '#f9c623' : hot ? 'rgba(249,198,35,0.6)' : 'rgba(249,198,35,0.28)';
+      ctx.stroke();
+      const thumb = cellH - 22;
+      drawThumb(ctx, c, cx + (cellW - thumb) / 2, cy + 4, thumb, rt);
+      ctx.fillStyle = c.on ? '#ffe27a' : '#e8dcc8';
+      ctx.font = '11px ' + FONT;
+      ctx.fillText(ellipsize(ctx, c.label, cellW - 8), cx + cellW / 2, cy + cellH - 9);
+      rects.push({ id: c.id, x: cx, y: cy, w: cellW, h: cellH });
+    });
+    ctx.restore();
+    popups.push({ bounds: { x: panelX, y: panelY, w: panelW, h: panelH }, rects });
+  }
+
+  // the two burger kinds, shown in the +Burger palette. Identical in play (the
+  // flip one just reverses gravity when collected); the editor badge sets them
+  // apart, and the model keeps them in separate map arrays.
+  const BURGER_KINDS = [
+    { id: 'normal', label: 'Burger', draw: (c, t) => drawBurger(c, 0, 0, t) },
+    { id: 'flip', label: 'Flip Burger', draw: (c, t) => { drawBurger(c, 0, 0, t); drawFlipBadge(c, 0, 0); } },
+  ];
+
+  function drawBurgerPalette(ctx, W, H, rt) {
+    drawPalettePanel(ctx, W, H, rt, {
+      title: 'BURGERS',
+      cells: BURGER_KINDS.map(k => ({
+        id: 'burgerKind:' + k.id, label: k.label, on: k.id === burgerKind,
+        w: 1.5, h: 1.5, centered: true, draw: k.draw,
+      })),
+    });
+  }
+
+  function drawDoodadPalette(ctx, W, H, rt) {
+    drawPalettePanel(ctx, W, H, rt, {
+      title: 'DOODADS',
+      toggles: [
+        { id: 'doodadLayer:back', label: 'Back', on: doodadLayer === 'back' },
+        { id: 'doodadLayer:front', label: 'Front', on: doodadLayer === 'front' },
+      ],
+      cells: DOODADS.map(d => ({
+        id: 'doodadPick:' + d.id, label: d.label, on: d.id === doodadType,
+        w: d.w, h: d.h, draw: d.draw,
+      })),
+    });
+  }
+
+  // a toolbar dropdown: a small menu anchored under its owning button. Rows can
+  // toggle a setting (Rider/Grid) or pick a value (a theme, with a colour
+  // swatch). Pushes its panel onto `popups`. `items`: [{ id, label, on, swatch }].
+  function drawDropdown(ctx, owner, items) {
+    if (!owner) return;
+    ctx.save();
+    ctx.font = 'bold 13px ' + FONT;
+    const pad = 8, rowH = 28;
+    const hasSwatch = items.some(it => it.swatch);
+    const swatchW = hasSwatch ? 22 : 0;
+    let textW = 0;
+    for (const it of items) textW = Math.max(textW, ctx.measureText(it.label).width);
+    const panelW = Math.max(owner.w, textW + pad * 2 + (swatchW ? swatchW + 8 : 0));
+    const panelH = pad * 2 + items.length * rowH;
+    let panelX = owner.x;
+    const panelY = owner.y + owner.h + 4;
+    panelX = Math.max(6, Math.min(panelX, scrW - 6 - panelW));   // keep on-screen
+    ctx.fillStyle = 'rgba(10,6,3,0.95)';
+    roundRectPath(ctx, panelX, panelY, panelW, panelH, 8);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(249,198,35,0.45)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.textBaseline = 'middle';
+    const rects = [];
+    items.forEach((it, i) => {
+      const ry = panelY + pad + i * rowH;
+      const hot = hitRect({ x: panelX + 4, y: ry + 2, w: panelW - 8, h: rowH - 4 }, mx, my);
+      if (it.on || hot) {
+        ctx.fillStyle = it.on ? 'rgba(120,62,16,0.9)' : 'rgba(70,34,10,0.9)';
+        roundRectPath(ctx, panelX + 4, ry + 2, panelW - 8, rowH - 4, 6);
+        ctx.fill();
+      }
+      let tx = panelX + pad;
+      if (it.swatch) {
+        const th = THEMES[it.swatch];
+        ctx.fillStyle = th ? th.miniSky : '#888';
+        ctx.fillRect(tx, ry + rowH / 2 - 8, swatchW, 10);
+        ctx.fillStyle = th ? th.miniGround : '#555';
+        ctx.fillRect(tx, ry + rowH / 2 + 2, swatchW, 6);
+        ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(tx, ry + rowH / 2 - 8, swatchW, 16);
+        tx += swatchW + 8;
+      }
+      ctx.fillStyle = it.on || hot ? '#ffe27a' : '#f0e8da';
+      ctx.textAlign = 'left';
+      ctx.fillText(it.label, tx, ry + rowH / 2 + 1);
+      rects.push({ id: it.id, x: panelX, y: ry, w: panelW, h: rowH });
+    });
+    ctx.restore();
+    popups.push({ bounds: { x: panelX, y: panelY, w: panelW, h: panelH }, rects });
+  }
+
+  // the rows for each dropdown, rebuilt every frame so their on-states are live
+  function viewItems() {
+    return [
+      { id: 'rider', label: (showRider ? '[x]' : '[ ]') + ' Rider preview', on: showRider },
+      { id: 'grid', label: (showGrid ? '[x]' : '[ ]') + ' Grid', on: showGrid },
+    ];
+  }
+
+  function themeItems() {
+    return Object.keys(THEMES).map(name => ({
+      id: 'theme:' + name,
+      label: name.charAt(0).toUpperCase() + name.slice(1),
+      on: map.theme === name,
+      swatch: name,
+    }));
+  }
+
   function drawToolbar(ctx, W, H, rt) {
     const caret = naming && (rt * 2) % 1 < 0.5 ? '|' : ' ';
     const defs = [
@@ -1351,10 +1756,14 @@ const EDITOR = (() => {
       { id: 'burger', label: '+Burger', on: tool === 'burger' },
       { id: 'glass', label: '+Glass', on: tool === 'glass' },
       { id: 'nut', label: '+Nut', on: tool === 'nut' },
-      { id: 'flip', label: '+Flip', on: tool === 'flip' },
-      { id: 'rider', label: (showRider ? '[x]' : '[ ]') + ' Rider', on: showRider },
-      { id: 'grid', label: (showGrid ? '[x]' : '[ ]') + ' Grid', on: showGrid },
-      { id: 'theme', label: 'Theme:' + map.theme },
+      { id: 'doodad', label: '+Doodad', on: tool === 'doodad' },
+    ];
+    // The +Burger and +Doodad tools reveal a palette panel (their kinds /
+    // sprites + layer); View and Theme are dropdown menus opened from their
+    // button. `menu` marks a button that toggles a dropdown instead of acting.
+    defs.push(
+      { id: 'view', label: 'View ▾', menu: 'view', on: menu === 'view' },
+      { id: 'theme', label: 'Theme: ' + map.theme + ' ▾', menu: 'theme', on: menu === 'theme' },
       { id: 'name', label: (naming ? nameBuf + caret : map.name) + (dirty ? ' *' : ''), on: naming, min: 150 },
       { id: 'undo', label: 'Undo', disabled: !undoStack.length },
       { id: 'redo', label: 'Redo', disabled: !redoStack.length },
@@ -1367,7 +1776,7 @@ const EDITOR = (() => {
       { id: 'save', label: 'Save' },
       { id: 'test', label: 'Test', disabled: busy },
       { id: 'exit', label: 'Menu' },
-    ];
+    );
     ctx.save();
     ctx.font = 'bold 14px ' + FONT;
     // layout pass: flow the buttons, wrapping on narrow screens. Keep the row
@@ -1383,8 +1792,9 @@ const EDITOR = (() => {
       uiRects.push(Object.assign({ x, y, w, h: bh }, d));
       x += w + gap;
     }
+    toolbarBottom = y + bh + 8;
     ctx.fillStyle = 'rgba(10,6,3,0.72)';
-    ctx.fillRect(0, 0, W, y + bh + 8);
+    ctx.fillRect(0, 0, W, toolbarBottom);
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     for (const r of uiRects) {
@@ -1407,10 +1817,10 @@ const EDITOR = (() => {
   const TOOL_HINTS = {
     select: 'drag vertices, edges, burgers, START, GOAL - Shift+drag moves a whole polygon (or Shift while dragging a lone vertex snaps it to the grid) - double-click an edge to add a vertex (a vertex to remove it) - Del removes (a glassed edge clears its glass; Shift+Del the whole polygon)',
     poly: 'click to lay vertices - click the first one (or Enter) closes the polygon - Esc cancels',
-    burger: 'click to drop a triple cheeseburger',
+    burger: 'pick Burger or Flip Burger from the palette, then click to drop it - a flip burger reverses gravity when collected (identical to a normal one in play; badged only here)',
     glass: 'click or drag along an edge to glass it (obsidian the tires barely grip) - paints the one edge nearest the cursor - clear it by selecting the edge and pressing Del',
     nut: 'click to drop a nut mound - a lethal hazard (peanut-butter-soaked nuts) the rider dies on contact with',
-    flip: 'click to drop an upside-down burger - collecting it reverses gravity (it looks like a normal burger in play; the violet badge shows only here)',
+    doodad: 'pick a sprite + layer from the palette, then click to place an inert prop - "back" sits behind the rider, "front" in front of him (it never collides)',
   };
 
   function drawStatus(ctx, W, H) {
@@ -1438,6 +1848,7 @@ const EDITOR = (() => {
       '  |  ' + map.polygons.length + ' poly  ' + map.burgers.length + ' burgers' +
       (map.flipBurgers.length ? '  ' + map.flipBurgers.length + ' flip' : '') +
       (map.nuts.length ? '  ' + map.nuts.length + ' nuts' : '') +
+      (map.doodads.length ? '  ' + map.doodads.length + ' doodads' : '') +
       '  |  snap ' + SNAP, W - 10 - SAFE.right, ty);
     ctx.restore();
   }
@@ -1446,17 +1857,18 @@ const EDITOR = (() => {
     ['1 / V', 'Select: drag vertices, edges (walls move whole), burgers, START, GOAL'],
     ['Shift+drag', 'move a whole polygon (Shift+grab a vertex/edge); or hold Shift while dragging a lone vertex to snap it to the grid'],
     ['2 / P', 'Polygon: click out a new shape, close on the first point - inside the play area it is a solid island'],
-    ['3 / B', 'Burger: click to drop burgers'],
+    ['3 / B', 'Burger: pick Burger or Flip Burger in the palette, then click to drop it (3/B arms normal, 6/F the flip kind)'],
     ['4 / G', 'Glass: paint obsidian onto edges (near-zero tire grip) - click or drag the nearest edge; clear it by selecting the edge and pressing Del'],
     ['5 / K', 'Nut: click to drop a nut mound - a lethal hazard the rider dies on contact with (Del removes a selected one)'],
-    ['6 / F', 'Flip: click to drop an upside-down burger - collecting it reverses gravity; identical to a normal burger in play, badged only in the editor'],
+    ['6 / F', 'Flip Burger: same as the burger tool but arms the gravity-flip kind - collecting it reverses gravity'],
+    ['7 / D', 'Doodad: drop an inert decorative sprite - pick the sprite and its layer (behind or in front of the rider) from the palette panel; it never collides'],
     ['double-click', 'on an edge adds a vertex; on a vertex removes it'],
     ['Del', 'remove the selection - a glassed edge clears its glass (Shift+Del: its whole polygon)'],
-    ['R', 'toggle the rider preview: wheel (blue) + head (red) colliders parked under the cursor'],
-    ['#', 'show or hide the alignment grid (or the Grid button)'],
+    ['R', 'toggle the rider preview: wheel (blue) + head (red) colliders parked under the cursor (also under the View menu)'],
+    ['#', 'show or hide the alignment grid (also under the View menu)'],
     ['arrows', 'nudge the selection (Shift: whole units) - pan when nothing is selected'],
     ['[  /  ]', 'coarsen / refine the placement grid (the snap step shown bottom-right)'],
-    ['T  /  N', 'cycle the theme / rename the map'],
+    ['T  /  N', 'cycle the theme (or pick one from the Theme menu) / rename the map'],
     ['wheel  + - 0', 'zoom (0 fits the whole map)'],
     ['Ctrl+Z / Ctrl+Y', 'undo / redo'],
     ['Ctrl+S / Ctrl+O', 'save / open a ' + EXT + ' map file'],
@@ -1551,8 +1963,14 @@ const EDITOR = (() => {
     get map() { return map; },
     get tool() { return tool; },
     get sel() { return sel; },
+    get burgerKind() { return burgerKind; },
+    get doodadType() { return doodadType; },
+    get doodadLayer() { return doodadLayer; },
+    get menu() { return menu; },
     get confirmOpen() { return !!confirmPrompt; },
     action,
+    // a toolbar button's last-drawn hitbox by id (exposed for the headless tests)
+    buttonRect(id) { return uiRects.find(b => b.id === id) || null; },
     worldToScreen: w2s,
     EXT,
   };
