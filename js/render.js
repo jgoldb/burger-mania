@@ -54,19 +54,28 @@ const THEMES = {
   },
 };
 
-function makeTile(spec) {
+// Builds one seamless texture tile. `px` is the canvas size; a bigger tile
+// repeats over a longer world distance (its world-per-pixel scale is fixed in
+// makePatterns), so fewer copies show across a screen and the eye stops
+// reading it as "the same tile over and over". Blob radii are in tile pixels
+// (a fixed world size whatever px is); per-layer `n` is a density per 128², so
+// a larger tile gets proportionally more blobs instead of looking sparse.
+function makeTile(spec, px) {
+  px = px || 128;
   // blobs are stamped at wrapped offsets so the tiles repeat seamlessly
-  const wraps = [[0, 0], [128, 0], [-128, 0], [0, 128], [0, -128]];
+  const wraps = [[0, 0], [px, 0], [-px, 0], [0, px], [0, -px]];
+  const dens = (px / 128) * (px / 128);
   const c = document.createElement('canvas');
-  c.width = c.height = 128;
+  c.width = c.height = px;
   const cc = c.getContext('2d');
   if (spec.base) {
     cc.fillStyle = spec.base;
-    cc.fillRect(0, 0, 128, 128);
+    cc.fillRect(0, 0, px, px);
   }
   for (const layer of spec.layers) {
-    for (let i = 0; i < layer.n; i++) {
-      const x = Math.random() * 128, y = Math.random() * 128;
+    const n = Math.round(layer.n * dens);
+    for (let i = 0; i < n; i++) {
+      const x = Math.random() * px, y = Math.random() * px;
       const r = layer.rMin + Math.random() * (layer.rMax - layer.rMin);
       cc.fillStyle = layer.colors[i % layer.colors.length];
       for (const [ox, oy] of wraps) {
@@ -74,6 +83,40 @@ function makeTile(spec) {
         cc.arc(x + ox, y + oy, r, 0, Math.PI * 2);
         cc.fill();
       }
+    }
+  }
+  return c;
+}
+
+// A coarse, low-frequency luminance noise tile: soft light/dark blots on a
+// neutral grey (rgb 128 is the soft-light no-op). Laid over the ground in
+// makePatterns at a large, incommensurate period and blended soft-light, it
+// mottles the terrain in big patches so the fine ground tile no longer lines
+// up into a visible grid. It only lightens/darkens, so every theme shares one.
+function makeMottle(px) {
+  const wraps = [[0, 0], [px, 0], [-px, 0], [0, px], [0, -px],
+    [px, px], [-px, -px], [px, -px], [-px, px]];
+  const c = document.createElement('canvas');
+  c.width = c.height = px;
+  const cc = c.getContext('2d');
+  cc.fillStyle = '#808080';
+  cc.fillRect(0, 0, px, px);
+  // few, large, soft blots so distinct patches emerge instead of averaging
+  // back to flat grey under all the overlap
+  const n = Math.round(px * px / 4500);
+  for (let i = 0; i < n; i++) {
+    const x = Math.random() * px, y = Math.random() * px;
+    const r = px * (0.14 + Math.random() * 0.26);
+    const tone = Math.random() < 0.5 ? '0,0,0' : '255,255,255';
+    const a = 0.14 + Math.random() * 0.16;
+    for (const [ox, oy] of wraps) {
+      const g = cc.createRadialGradient(x + ox, y + oy, 0, x + ox, y + oy, r);
+      g.addColorStop(0, 'rgba(' + tone + ',' + a + ')');
+      g.addColorStop(1, 'rgba(' + tone + ',0)');
+      cc.fillStyle = g;
+      cc.beginPath();
+      cc.arc(x + ox, y + oy, r, 0, Math.PI * 2);
+      cc.fill();
     }
   }
   return c;
@@ -107,13 +150,25 @@ function hudInk(theme) {
 // builds one pattern set per theme; callers pick by level theme name
 function makePatterns(ctx) {
   const out = {};
+  // one shared, theme-agnostic mottle (see makeMottle). Its period (31 world
+  // units) is large and incommensurate with the ground tile (14.4), so the
+  // two never repeat in step — together they read as endless variation rather
+  // than a grid, even though each on its own is a small repeating tile.
+  const mottle = ctx.createPattern(makeMottle(256), 'repeat');
+  mottle.setTransform(new DOMMatrix([31 / 256, 0, 0, 31 / 256, 0, 0]));
   for (const name of Object.keys(THEMES)) {
     const t = THEMES[name];
-    const ground = ctx.createPattern(makeTile(t.ground), 'repeat');
+    // The world-per-pixel scale is unchanged (3.6/128, 7/128); the bigger
+    // canvases just push the repeat out — ground every 3.6·(512/128)=14.4
+    // units, haze every 7·(384/128)=21, vs the ~26-unit-wide screen, so at
+    // most a repeat or two is ever on screen instead of seven.
+    const ground = ctx.createPattern(makeTile(t.ground, 512), 'repeat');
     ground.setTransform(new DOMMatrix([3.6 / 128, 0, 0, 3.6 / 128, 0, 0]));
-    const sky = ctx.createPattern(makeTile(t.skyTile), 'repeat');
+    const sky = ctx.createPattern(makeTile(t.skyTile, 384), 'repeat');
     sky.setTransform(new DOMMatrix([7 / 128, 0, 0, 7 / 128, 0, 0]));
-    out[name] = Object.assign({}, t, { ground, sky, hud: hudInk(t) });
+    out[name] = Object.assign({}, t, {
+      ground, sky, mottle, skyPeriod: 7 * 384 / 128, hud: hudInk(t),
+    });
   }
   return out;
 }
@@ -216,11 +271,23 @@ function drawVolcanoBack(ctx, view, t) {
   }
 }
 
+// Paints a rect of ground: the repeating terrain tile, then a soft-light
+// mottle pass that breaks up its grid (see makeMottle / makePatterns). Shared
+// by the in-level terrain and the menu/victory floor so they match.
+function fillGround(ctx, pat, x, y, w, h) {
+  ctx.fillStyle = pat.ground;
+  ctx.fillRect(x, y, w, h);
+  ctx.save();
+  ctx.globalCompositeOperation = 'soft-light';
+  ctx.fillStyle = pat.mottle;
+  ctx.fillRect(x, y, w, h);
+  ctx.restore();
+}
+
 function drawWorld(ctx, level, pat, view, t) {
   t = t || 0;
   const vw = view.x1 - view.x0, vh = view.y1 - view.y0;
-  ctx.fillStyle = pat.ground;
-  ctx.fillRect(view.x0, view.y0, vw, vh);
+  fillGround(ctx, pat, view.x0, view.y0, vw, vh);
 
   // the playable inside: gradient sky, distant silhouettes behind the
   // terrain, then a slowly drifting haze/cloud layer over both
@@ -235,10 +302,11 @@ function drawWorld(ctx, level, pat, view, t) {
   ctx.fillStyle = skyGradient(ctx, pat, -8, 12);
   ctx.fillRect(view.x0, view.y0, vw, vh);
   pat.background(ctx, view, t);
-  const drift = (t * 0.4) % 7; // haze tile repeats every 7 world units
+  const sp = pat.skyPeriod; // haze tile repeats every skyPeriod world units
+  const drift = (t * 0.4) % sp;
   ctx.translate(-drift, 0);
   ctx.fillStyle = pat.sky;
-  ctx.fillRect(view.x0, view.y0, vw + 7, vh);
+  ctx.fillRect(view.x0, view.y0, vw + sp, vh);
   ctx.restore();
 
   ctx.beginPath();
@@ -1499,15 +1567,15 @@ function drawBackdropStage(ctx, w, h, gy, t, pat, showAstro) {
   ctx.translate(-pan, 0);
   pat.background(ctx, { x0: pan, x1: pan + w, y0: 0, y1: gy }, t);
   ctx.restore();
-  const drift = (t * 0.4) % 7; // sky pattern repeats every 7 world units
+  const sp = pat.skyPeriod; // sky pattern repeats every skyPeriod world units
+  const drift = (t * 0.4) % sp;
   ctx.save();
   ctx.translate(-drift, 0);
   ctx.fillStyle = pat.sky;
-  ctx.fillRect(0, 0, w + 7, h);
+  ctx.fillRect(0, 0, w + sp, h);
   ctx.restore();
 
-  ctx.fillStyle = pat.ground;
-  ctx.fillRect(0, gy, w, h - gy);
+  fillGround(ctx, pat, 0, gy, w, h - gy);
   pat.edge(ctx, { ax: 0, ay: gy, bx: w, by: gy }, pat, t);
 }
 
