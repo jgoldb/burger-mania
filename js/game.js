@@ -1907,12 +1907,22 @@
     // so the backdrop's clouds/burgers/astronaut begin their cycles fresh
     // (and the astro gag's 30s delay is measured from the player tapping in).
     const mt = menuClock0 >= 0 ? rt - menuClock0 : 0;
+    // The title screen and every sub-screen reached from it (difficulty,
+    // records, replays, menu audio) are one continuous scene, so they share
+    // the same furniture: the drifting meadow world, the rising-astronaut gag,
+    // and the physics build stamp all persist. Only the "BURGER MANIA" title
+    // is exclusive to the top menu — stepping into a sub-screen never blanks
+    // the rest of the scene out from under the player mid-animation.
+    function menuScene() {
+      drawMenuBackdrop(ctx, W, H, mt, patterns.meadow, true);
+      drawCornerTag(ctx, W, H, 'physics v' + REPLAY.VERSION);
+    }
     if (state === 'loading') {
       drawLoading(ctx, W, H, loadFrac, rt, loadDone, TOUCH.active);
       return;
     }
     if (state === 'intro' || state === 'menu') {
-      drawMenuBackdrop(ctx, W, H, mt, patterns.meadow, true);
+      menuScene();
       drawTitleLetters(ctx, W, H, introT);
       if (state === 'menu') {
         drawMenu(ctx, W, H, Math.min(1, menuT / 0.6), menuItems, menuSel, hoverIdx);
@@ -1920,19 +1930,19 @@
       return;
     }
     if (state === 'difficulty') {
-      drawMenuBackdrop(ctx, W, H, mt, patterns.meadow);
+      menuScene();
       drawDifficulty(ctx, W, H, Math.min(1, diffT / 0.4), TRACKS, diffSel, hoverIdx,
         TOUCH.active);
       return;
     }
     if (state === 'recordsDiff') {
-      drawMenuBackdrop(ctx, W, H, mt, patterns.meadow);
+      menuScene();
       drawDifficulty(ctx, W, H, Math.min(1, recDiffT / 0.4), TRACKS, recDiffSel,
         hoverIdx, TOUCH.active, 'BEST RECORDS');
       return;
     }
     if (state === 'records') {
-      drawMenuBackdrop(ctx, W, H, mt, patterns.meadow);
+      menuScene();
       drawRecords(ctx, W, H, Math.min(1, recT / 0.4), {
         label: recTrack ? recTrack.label : '',
         names: recNames, results: recResults, sel: 0, hover: hoverIdx,
@@ -1948,13 +1958,13 @@
       return;
     }
     if (state === 'replays') {
-      drawMenuBackdrop(ctx, W, H, mt, patterns.meadow);
+      menuScene();
       drawReplays(ctx, W, H, Math.min(1, repT / 0.4),
         repItems, repSel, repScroll, hoverIdx, repNote, TOUCH.active);
       return;
     }
     if (state === 'audio' && audioFrom !== 'paused') {
-      drawMenuBackdrop(ctx, W, H, mt, patterns.meadow);
+      menuScene();
       drawAudio(ctx, W, H, Math.min(1, audioT / 0.4),
         { volume, sel: audioSel, hover: hoverIdx, dim: false, muted,
           touch: TOUCH.active });

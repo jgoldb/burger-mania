@@ -1451,7 +1451,8 @@ function drawMenuAstro(ctx, w, h, t) {
 // victory feast): sky gradient, panning parallax scenery, drifting haze,
 // and the grassy floor. Painted in world units onto an already-scaled
 // context (w by h, ground top at gy); callers stage their own props over
-// it. showAstro adds the rising-astronaut gag (menu only)
+// it. showAstro adds the rising-astronaut gag (menu scene only, never the
+// in-level / continue backdrops)
 function drawBackdropStage(ctx, w, h, gy, t, pat, showAstro) {
   ctx.fillStyle = skyGradient(ctx, pat, 0, gy);
   ctx.fillRect(0, 0, w, h);
@@ -1494,10 +1495,10 @@ function drawDriftingBurgers(ctx, w, h, t, n) {
   }
 }
 
-// animated scene behind the intro and menu: drifting clouds, tumbling
-// burgers, a grassy floor, and the popcorn bucket waiting on the right.
-// showAstro adds the rising-astronaut gag (menu only, never the continue
-// screen)
+// animated scene behind the title, menu, and its sub-screens: drifting
+// clouds, tumbling burgers, a grassy floor, and the popcorn bucket waiting on
+// the right. showAstro adds the rising-astronaut gag (menu scene only, never
+// the continue / in-level backdrops)
 function drawMenuBackdrop(ctx, W, H, t, pat, showAstro) {
   const Z = Math.min(W / 26, H / 13.5);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -1582,6 +1583,24 @@ function drawMenu(ctx, W, H, alpha, items, sel, hover) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   const rects = menuRects(W, H, items.length, H * 0.58);
   drawButtons(ctx, rects, items, sel, hover, alpha);
+}
+
+// small build stamp tucked into the bottom-left corner of the menu so the
+// running physics version is always visible (records and replays are only
+// comparable within one sim build). Insets by the safe area so a phone
+// cutout never hides it.
+function drawCornerTag(ctx, W, H, text) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.save();
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  ctx.font = '13px "Consolas","Courier New",monospace';
+  const x = SAFE.left + 12, y = H - SAFE.bottom - 12;
+  ctx.fillStyle = 'rgba(20,12,6,0.6)';
+  ctx.fillText(text, x + 1, y + 1);
+  ctx.fillStyle = 'rgba(240,232,218,0.55)';
+  ctx.fillText(text, x, y);
+  ctx.restore();
 }
 
 // the same track picker drives "Play" (title 'CHOOSE DIFFICULTY') and the
