@@ -429,6 +429,21 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   EDITOR.action('new');                        // a fresh template is not dirty
   if (EDITOR.confirmOpen) bad('New on a fresh (unedited) template should not re-prompt');
 
+  // ---- refresh recovery: a map restored from the autosave cache is dirty ----
+  // Spin up a second editor instance (as if the page had reloaded) sharing the
+  // same localStorage. It recovers the autosaved working map — which was never
+  // written to a .bmm — so it must come up dirty, or New/Load would silently
+  // throw the recovered work away instead of warning first.
+  if (!store.has('burger-mania-editor-map')) bad('the editing session should have autosaved a working map');
+  const editorSrc = fs.readFileSync(path.join(root, 'js/editor.js'), 'utf8')
+    .replace('const EDITOR = (() => {', 'globalThis.EDITOR2 = (() => {');
+  if (!/EDITOR2/.test(editorSrc)) bad('editor.js wrapper changed - the reload test can no longer rebind it');
+  eval(editorSrc);                             // direct eval: sees prepareLevel/REPLAY/etc. from this scope
+  EDITOR2.open(800, 600);
+  if (!EDITOR2.map) bad('a reloaded editor should recover the autosaved working map');
+  EDITOR2.action('new');
+  if (!EDITOR2.confirmOpen) bad('a map recovered from the autosave cache must be dirty, so New warns first');
+
   // ---- out to the menu ----
   key('Escape');                             // clears any selection
   key('Escape');

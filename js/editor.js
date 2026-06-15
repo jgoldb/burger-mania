@@ -936,6 +936,9 @@ const EDITOR = (() => {
       } catch (e) { map = null; }
       const fresh = !map;
       if (!map) map = template();
+      // work restored from the autosave cache was never written to a file, so
+      // it counts as unsaved — flag it dirty so New/Load warn before discarding
+      if (!fresh) dirty = true;
       prepared = prepareLevel(map);
       fitView();
       note(fresh ? 'Welcome! H shows the controls' : 'Picked up where you left off - H shows the controls');
