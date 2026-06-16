@@ -139,8 +139,11 @@
         });
       });
       // An installed PWA can stay open for days without re-navigating, so nudge
-      // the browser to look for a new build hourly and each time we're refocused.
-      setInterval(function () { reg.update().catch(function () {}); }, 36e5);
+      // the browser to look for a new build every few minutes and each time we're
+      // refocused. (reg.update() refetches sw.js bypassing the HTTP cache, so it's
+      // a tiny request — a tighter cadence just shortens the worst-case lag between
+      // a deploy landing and the tab picking it up.)
+      setInterval(function () { reg.update().catch(function () {}); }, 3e5);
       document.addEventListener('visibilitychange', function () {
         if (!document.hidden) reg.update().catch(function () {});
       });
