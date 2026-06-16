@@ -926,6 +926,149 @@ const MUSIC = (function () {
         ] },
       ],
     },
+    // ghetto: a slow, smoky night-city boom-bap in C minor (C D Eb F G Ab Bb),
+    // 88bpm — a soulful, sparse lead over a head-nodding sub-bass and a dusty
+    // swung break; it tenses into a rising run and a darker, driving drop, then
+    // settles into a long after-hours coda where the bass octave-pulses, a warm
+    // pad holds and a glassy vinyl shimmer glints over the top
+    ghetto: {
+      bpm: 88,
+      voices: [
+        // soulful, sparse minor lead
+        { wave: 'square', vol: 0.028, pattern: [
+          // theme
+          'C5 ~  Eb5 ~  G5 ~  Eb5 ~', 'D5 ~  ~  ~  F5 ~  ~  .',
+          'Eb5 ~  G5 ~  C6 ~  G5 ~', 'Bb5 ~  ~  ~  G5 ~  ~  .',
+          'Ab5 ~  G5 ~  F5 ~  Eb5 ~', 'D5 ~  ~  C5 Eb5 ~  ~  .',
+          'F5 ~  G5 ~  Ab5 ~  Bb5 ~', 'G5 ~  ~  ~  ~  ~  .  .',
+          // variation: rising tension
+          'G5 ~  C6 ~  Eb6 ~  C6 ~', 'D6 ~  ~  ~  Bb5 ~  ~  .',
+          'C6 ~  Eb6 ~  G6 ~  Eb6 ~', 'Bb5 ~  D6 ~  F6 ~  ~  .',
+          // breakdown + rising run
+          'G6 ~  ~  ~  ~  ~  ~  .', '.  G4 Ab4 Bb4 C5 D5 Eb5 F5',
+          // drop: darker, driving
+          'G5 ~  ~  Eb5 C5 ~  ~  G4', 'C5 ~  G5 ~  Eb5 ~  C5 ~',
+          // after-hours coda
+          'G5 ~ ~ ~ Eb5 ~ ~ ~', 'C5 ~ ~ ~ G5 ~ ~ ~',
+          'Ab5 ~ ~ ~ Eb5 ~ ~ ~', 'G5 ~ ~ ~ C6 ~ ~ ~',
+          'Eb5 ~ ~ G5 C6 ~ ~ ~', 'Bb5 ~ ~ ~ G5 ~ ~ ~',
+          'C6 ~ ~ Ab5 Eb5 ~ ~ ~', 'D5 ~ ~ ~ F5 ~ G5 ~',
+          'Eb5 ~ ~ ~ C5 ~ ~ ~', 'G5 ~ ~ ~ Eb5 ~ ~ ~',
+          'Ab5 ~ ~ G5 F5 ~ ~ ~', 'G5 ~ ~ ~ D5 ~ Bb4 ~',
+          'C5 ~ ~ ~ Eb5 ~ ~ ~', 'G5 ~ ~ ~ F5 ~ ~ ~',
+          'Eb5 ~ ~ ~ D5 ~ ~ ~', 'C5 ~ ~ ~ G4 ~ ~ .',
+        ] },
+        // dusty offbeat Rhodes-ish stabs; silent in the breakdown, on-beat in
+        // the drop, a warm sustained pad in the coda
+        { wave: 'square', vol: 0.012, pattern: [
+          '. C4 . G4 . C4 . Eb4', '. D4 . G4 . D4 . F4',
+          '. Eb4 . Bb4 . G4 . Eb4', '. C4 . G4 . Eb4 . G4',
+          '. C4 . G4 . C4 . Eb4', '. Ab3 . Eb4 . C4 . Ab3',
+          '. F4 . C5 . Ab4 . F4', '. G4 . D5 . Bb4 . G4',
+          '. C4 . G4 . Eb4 . C5', '. G4 . D5 . Bb4 . G4',
+          '. C4 . Eb4 . G4 . C5', '. Bb3 . F4 . D4 . Bb4',
+          '. . . . . . . .', '. . . . . . . .',
+          'C4 ~ C4 ~ G4 ~ C4 ~', 'G3 ~ C4 ~ Eb4 ~ G4 ~',
+          // coda pad
+          'C4 ~ ~ ~ ~ ~ ~ ~', 'Eb4 ~ ~ ~ ~ ~ ~ ~',
+          'Ab3 ~ ~ ~ ~ ~ ~ ~', 'G3 ~ ~ ~ ~ ~ ~ ~',
+          'C4 ~ ~ ~ ~ ~ ~ ~', 'Eb4 ~ ~ ~ ~ ~ ~ ~',
+          'Ab3 ~ ~ ~ ~ ~ ~ ~', 'G3 ~ ~ ~ ~ ~ ~ ~',
+          'C4 ~ ~ ~ ~ ~ ~ ~', 'Eb4 ~ ~ ~ ~ ~ ~ ~',
+          'Ab3 ~ ~ ~ ~ ~ ~ ~', 'G3 ~ ~ ~ ~ ~ ~ ~',
+          'C4 ~ ~ ~ ~ ~ ~ ~', 'Eb4 ~ ~ ~ ~ ~ ~ ~',
+          'Ab3 ~ ~ ~ ~ ~ ~ ~', 'G3 ~ ~ ~ ~ ~ ~ ~',
+        ] },
+        // deep head-nodding bass
+        { wave: 'triangle', vol: 0.06, pattern: [
+          'C2 ~ ~ ~ C2 ~ G2 ~', 'C2 ~ ~ ~ C2 ~ Bb1 ~',
+          'Eb2 ~ ~ ~ Eb2 ~ Bb2 ~', 'G1 ~ ~ ~ G1 ~ D2 ~',
+          'C2 ~ ~ ~ C2 ~ G2 ~', 'Ab1 ~ ~ ~ Ab1 ~ Eb2 ~',
+          'F1 ~ ~ ~ F1 ~ C2 ~', 'G1 ~ ~ ~ G1 ~ D2 ~',
+          'C2 ~ ~ G2 C2 ~ Eb2 ~', 'G1 ~ ~ D2 G1 ~ Bb1 ~',
+          'Ab1 ~ ~ Eb2 Ab1 ~ C2 ~', 'Bb1 ~ ~ F2 Bb1 ~ D2 ~',
+          'C2 ~ ~ ~ ~ ~ ~ ~', 'G1 ~ ~ ~ G1 ~ G1 G1',
+          'C2 C2 C2 C2 G2 G2 G2 G2', 'C2 C2 G1 G1 C2 C2 Eb2 G2',
+          // coda octave pulse (Cm Ab Eb G)
+          'C2 ~ C3 ~ C2 ~ G2 ~', 'Ab1 ~ Ab2 ~ Ab1 ~ Eb2 ~',
+          'Eb2 ~ Eb3 ~ Eb2 ~ Bb2 ~', 'G1 ~ G2 ~ G1 ~ D2 ~',
+          'C2 ~ C3 ~ C2 ~ G2 ~', 'Ab1 ~ Ab2 ~ Ab1 ~ Eb2 ~',
+          'Eb2 ~ Eb3 ~ Eb2 ~ Bb2 ~', 'G1 ~ G2 ~ G1 ~ D2 ~',
+          'C2 ~ C3 ~ C2 ~ G2 ~', 'Ab1 ~ Ab2 ~ Ab1 ~ Eb2 ~',
+          'Eb2 ~ Eb3 ~ Eb2 ~ Bb2 ~', 'G1 ~ G2 ~ G1 ~ D2 ~',
+          'C2 ~ C3 ~ C2 ~ G2 ~', 'Ab1 ~ Ab2 ~ Ab1 ~ Eb2 ~',
+          'Eb2 ~ Eb3 ~ Eb2 ~ Bb2 ~', 'G1 ~ G2 ~ D2 ~ G1 ~',
+        ] },
+        // dusty boom-bap kick + snare backbeat
+        { drums: true, vol: 0.08, pattern: [
+          'k . . k s . . .', 'k . . . s . k .',
+          'k . . k s . . .', 'k . . . s . s .',
+          'k . . k s . . .', 'k . . . s . k .',
+          'k . . k s . . .', 'k . k . s . s s',
+          // variation: busier
+          'k . k . s . . k', 'k . . k s . k .',
+          'k . k . s . . k', 'k k . . s . s s',
+          // breakdown then a snare-roll build
+          '. . . . s . . .', 's . s . s s s s',
+          // drop: driving
+          'k . . k k . . k', 'k . k . k k s s',
+          // coda boom-bap with a fill every 4 bars
+          'k . . k s . . .', 'k . . . s . k .',
+          'k . . k s . . .', 'k . . . s . s s',
+          'k . . k s . . .', 'k . . . s . k .',
+          'k . . k s . . .', 'k . . . s . s s',
+          'k . . k s . . .', 'k . . . s . k .',
+          'k . . k s . . .', 'k . . . s . s s',
+          'k . . k s . . .', 'k . . . s . k .',
+          'k . . k s . . .', 'k . k . s . s s',
+        ] },
+        // swung, ghosted hi-hats
+        { drums: true, vol: 0.04, pattern: [
+          '. h . h . h . h', 'h h . h . h h h',
+          '. h . h . h . h', 'h h . h . h h .',
+          '. h . h . h . h', 'h h . h . h h h',
+          '. h . h . h . h', 'h h . h h . h h',
+          'h h h h . h . h', 'h h . h h h . h',
+          'h h h h . h . h', 'h h . h h . h h',
+          '. . h . . . h .', 'h h h h h h h h',
+          'h . h . h . h .', 'h h h h h h h h',
+          // coda: laid-back swung hats
+          '. h . h . h . h', '. h . h . h h .',
+          '. h . h . h . h', '. h . h h . . h',
+          '. h . h . h . h', '. h . h . h h .',
+          '. h . h . h . h', '. h . h h . . h',
+          '. h . h . h . h', '. h . h . h h .',
+          '. h . h . h . h', '. h . h h . . h',
+          '. h . h . h . h', '. h . h . h h .',
+          '. h . h . h . h', '. h . h h h . h',
+        ] },
+        // sub: silent until the drop, then holds the low after-hours drone
+        { wave: 'sawtooth', vol: 0.04, pattern: [
+          ...Array(14).fill('. . . . . . . .'),
+          'C1 ~ ~ ~ ~ ~ ~ ~', 'C1 ~ ~ ~ G1 ~ ~ ~',
+          'C1 ~ ~ ~ ~ ~ ~ ~', 'Ab1 ~ ~ ~ ~ ~ ~ ~',
+          'Eb1 ~ ~ ~ ~ ~ ~ ~', 'G1 ~ ~ ~ ~ ~ ~ ~',
+          'C1 ~ ~ ~ ~ ~ ~ ~', 'Ab1 ~ ~ ~ ~ ~ ~ ~',
+          'Eb1 ~ ~ ~ ~ ~ ~ ~', 'G1 ~ ~ ~ ~ ~ ~ ~',
+          'C1 ~ ~ ~ ~ ~ ~ ~', 'Ab1 ~ ~ ~ ~ ~ ~ ~',
+          'Eb1 ~ ~ ~ ~ ~ ~ ~', 'G1 ~ ~ ~ ~ ~ ~ ~',
+          'C1 ~ ~ ~ ~ ~ ~ ~', 'Ab1 ~ ~ ~ ~ ~ ~ ~',
+          'Eb1 ~ ~ ~ ~ ~ ~ ~', 'G1 ~ ~ ~ ~ ~ ~ ~',
+        ] },
+        // glassy vinyl shimmer: silent until the coda, then arps each chord
+        { wave: 'sine', vol: 0.022, pattern: [
+          ...Array(16).fill('. . . . . . . .'),
+          'C5 Eb5 G5 C6 G5 Eb5 C5 Eb5', 'Ab4 C5 Eb5 Ab5 Eb5 C5 Ab4 C5',
+          'Eb5 G5 Bb5 Eb6 Bb5 G5 Eb5 G5', 'G4 Bb4 D5 G5 D5 Bb4 G4 Bb4',
+          'C5 Eb5 G5 C6 G5 Eb5 C5 Eb5', 'Ab4 C5 Eb5 Ab5 Eb5 C5 Ab4 C5',
+          'Eb5 G5 Bb5 Eb6 Bb5 G5 Eb5 G5', 'G4 Bb4 D5 G5 D5 Bb4 G4 Bb4',
+          'C5 Eb5 G5 C6 G5 Eb5 C5 Eb5', 'Ab4 C5 Eb5 Ab5 Eb5 C5 Ab4 C5',
+          'Eb5 G5 Bb5 Eb6 Bb5 G5 Eb5 G5', 'G4 Bb4 D5 G5 D5 Bb4 G4 Bb4',
+          'C5 Eb5 G5 C6 G5 Eb5 C5 Eb5', 'Ab4 C5 Eb5 Ab5 Eb5 C5 Ab4 C5',
+          'Eb5 G5 Bb5 Eb6 Bb5 G5 Eb5 G5', 'G4 Bb4 D5 G5 D5 Bb4 G4 Bb4',
+        ] },
+      ],
+    },
     // victory lap: the whole-track-cleared feast, C major at full grin —
     // a rising-triad fanfare, a warmer answering strain, then a scale run
     // that vaults into the final cadence. Loops gently while the champion

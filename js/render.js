@@ -154,6 +154,40 @@ const THEMES = {
     outline: 'rgba(8,6,4,0.6)',
     miniGround: '#241d16', miniSky: '#1a130c',
   },
+  // Ghetto: a run-down section-8 city block at night. drawGhettoBack fills the
+  // overcast sky with a crescent moon, a few stars and a distant skyscraper
+  // skyline, then ranks of boarded-up dilapidated houses (people down on their
+  // luck sitting on porches), a corner-store strip (bodega / liquor / gun
+  // store) lit by buzzing sodium streetlights, light traffic of all kinds
+  // flowing through, and stray cats and rats scurrying along the curb. An
+  // outdoor world, so it keeps a drifting overcast-cloud haze. A Map-Editor
+  // world. The ground tile is beat-up asphalt — dark, patched, pocked with
+  // potholes — and drawGhettoEdge cracks the curb with faded road paint.
+  ghetto: {
+    ground: { base: '#2c2c30', layers: [
+      { n: 230, rMin: 1.6, rMax: 5.5, colors: ['rgba(12,12,14,0.42)',
+        'rgba(58,58,64,0.22)', 'rgba(20,20,24,0.34)', 'rgba(82,82,90,0.14)'] },
+      // tar-patched potholes, gravel and the odd fleck of faded paint
+      { n: 28, rMin: 0.6, rMax: 1.7, colors: ['rgba(8,8,10,0.5)',
+        'rgba(120,40,40,0.10)', 'rgba(220,200,90,0.10)'] },
+    ] },
+    // a deep overcast night with a warm horizon glow from the city's lights
+    skyStops: [[0, '#0a0d18'], [0.55, '#15192b'], [0.82, '#262338'], [1, '#3a2c30']],
+    skyTile: { layers: [
+      // low, drifting overcast cloud cover blotting out most of the stars
+      { n: 12, rMin: 14, rMax: 34, colors: ['rgba(18,20,32,0.34)',
+        'rgba(28,30,44,0.24)', 'rgba(42,38,52,0.16)'] },
+    ] },
+    background: drawGhettoBack,
+    edge: drawGhettoEdge,
+    groundY: 11,                            // the street/sidewalk line (GHETTO_FLOOR)
+    outline: 'rgba(6,6,9,0.6)',
+    miniGround: '#2a2a2e', miniSky: '#15192b',
+    // kept out of the editor's Theme menu (see editor.js editorThemeNames). The
+    // world is still fully built and rendered/scored — a level whose theme is
+    // 'ghetto' looks and sounds right; it just can't be picked in the editor.
+    hidden: true,
+  },
 };
 
 // Builds one seamless texture tile. `px` is the canvas size; a bigger tile
@@ -2073,6 +2107,577 @@ function drawCaveDarkness(ctx, W, H, p) {
   ctx.restore();
 }
 
+// ---------- ghetto world (a run-down city block at night) ----------
+//
+// drawGhettoBack paints a section-8 street under an overcast night sky: a
+// crescent moon and a few stars over a distant skyscraper skyline, then ranks
+// of boarded-up dilapidated houses (porch-sitters down on their luck), a
+// corner-store strip (bodega / liquor / gun store) lit by buzzing sodium
+// streetlights, light traffic of all kinds flowing past, and stray cats and
+// rats scurrying the curb. drawGhettoEdge cracks the curb with potholes and
+// faded road paint — the ghetto's grass/lava. Full-bright (no `dark` flag): the
+// night reads from the dark palette and the many small light sources, not a
+// blackout. Reuses gymRow/gymPick/srand/drawStar like the other worlds.
+const GHETTO = {
+  wall: ['#46474d', '#4a423a', '#3c4642', '#534a44', '#574b3c'],   // peeling siding
+  brick: ['#4a3530', '#553a32', '#3e342e', '#5a4038'],
+  roof: '#211d24', board: '#5e4c36', woodLt: '#7a6446',
+  sodium: '255,178,86',                                            // streetlight rgb
+  skin: ['#caa07a', '#8a6a4a', '#b9895f', '#e0b48f', '#6e533a', '#d8b48f'],
+  coat: ['#3a4250', '#4a3a36', '#2e3a30', '#46424c', '#54402e', '#384a4a'],
+  car: ['#8a2f2f', '#28506e', '#2f6e44', '#6e6e74', '#b89a3a', '#3a3a42', '#7a3a6e', '#b5b8bd'],
+};
+const GHETTO_FLOOR = 11;                  // the street / sidewalk line (= theme groundY)
+
+// a clipped crescent moon: paint the disc bright, then carve a dark night-side
+// disc offset to one side so the lit sliver remains, plus a soft halo
+function drawMoon(ctx, cx, cy, r) {
+  const halo = ctx.createRadialGradient(cx, cy, r * 0.6, cx, cy, r * 3.4);
+  halo.addColorStop(0, 'rgba(220,228,255,0.20)');
+  halo.addColorStop(1, 'rgba(220,228,255,0)');
+  ctx.fillStyle = halo;
+  ctx.beginPath(); ctx.arc(cx, cy, r * 3.4, 0, Math.PI * 2); ctx.fill();
+  ctx.save();
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.clip();
+  ctx.fillStyle = '#eef1fb';
+  ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+  ctx.fillStyle = 'rgba(184,192,214,0.55)';            // maria / craters on the lit face
+  ctx.beginPath(); ctx.arc(cx - r * 0.45, cy + r * 0.12, r * 0.16, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(cx - r * 0.18, cy + r * 0.46, r * 0.12, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(cx - r * 0.56, cy - r * 0.34, r * 0.1, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#10131d';                           // night-side disc carves the crescent
+  ctx.beginPath(); ctx.arc(cx + r * 0.5, cy - r * 0.32, r * 1.02, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+
+// a soft, dark, low overcast cloud (a clump of translucent puffs)
+function drawCloud(ctx, cx, cy, key, scale) {
+  scale = scale || 1;
+  const puffs = 4 + Math.floor(srand(key) * 3);
+  for (let i = 0; i < puffs; i++) {
+    const px = cx + (i - (puffs - 1) / 2) * 0.66 * scale;
+    const py = cy + (srand(key + i) - 0.5) * 0.3 * scale;
+    const rr = (0.55 + srand(key + i * 2) * 0.5) * scale;
+    ctx.fillStyle = 'rgba(24,26,38,0.42)';
+    ctx.beginPath(); ctx.arc(px, py, rr, 0, Math.PI * 2); ctx.fill();
+  }
+  // a faint warm underbelly catching the city's glow
+  ctx.fillStyle = 'rgba(120,80,70,0.12)';
+  ctx.beginPath(); ctx.ellipse(cx, cy + 0.3 * scale, 1.1 * scale, 0.28 * scale, 0, 0, Math.PI * 2); ctx.fill();
+}
+
+// the night sky: a horizon light-pollution glow, a few stars peeking through
+// the overcast, a crescent moon and a couple of drifting clouds
+function drawNightSky(ctx, view, t, gdy) {
+  const vw = view.x1 - view.x0, vh = view.y1 - view.y0;
+  const horizon = GHETTO_FLOOR + gdy;
+  const glow = ctx.createLinearGradient(0, horizon - 7, 0, horizon);
+  glow.addColorStop(0, 'rgba(80,52,60,0)');
+  glow.addColorStop(1, 'rgba(150,84,66,0.3)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(view.x0, horizon - 7, vw, 7);
+  // sparse stars on a slow-parallax lattice (mostly clouded over)
+  const p = 0.03, u = (view.x0 + view.x1) / 2 * (1 - p), cell = 2.4;
+  const gx0 = Math.floor((view.x0 - u) / cell) - 1, gx1 = Math.ceil((view.x1 - u) / cell) + 1;
+  for (let gx = gx0; gx <= gx1; gx++) {
+    const r0 = srand(gx * 11.3 + 2.1);
+    if (r0 < 0.7) continue;
+    const sx = (gx + srand(gx * 3.7)) * cell + u;
+    const sy = view.y0 + (0.06 + srand(gx * 5.1) * 0.4) * vh;
+    const tw = 0.4 + 0.6 * (0.5 + 0.5 * Math.sin(t * 1.6 + r0 * 30));
+    if (r0 > 0.9) drawStar(ctx, sx, sy, 0.07 + 0.02 * tw, t * 0.4 + r0 * 6, 'rgba(235,240,255,' + tw.toFixed(2) + ')');
+    else { ctx.fillStyle = 'rgba(220,228,255,' + (0.7 * tw).toFixed(2) + ')'; ctx.beginPath(); ctx.arc(sx, sy, 0.04, 0, Math.PI * 2); ctx.fill(); }
+  }
+  drawMoon(ctx, view.x0 + vw * 0.22, view.y0 + vh * 0.2, 0.85);
+  // a couple of overcast clouds sliding past (wrapped drift inside the spacing)
+  gymRow(ctx, view, 0.05, 9, (x, key) => {
+    if (srand(key * 0.07 + 0.3) < 0.45)
+      drawCloud(ctx, x + ((t * 0.18) % 9), view.y0 + vh * (0.1 + srand(key) * 0.32), key, 1 + srand(key * 2) * 0.6);
+  });
+}
+
+// a building with a grid of lit/dark windows. far=true -> a tall, dark, sparsely
+// lit skyline tower (with an antenna or water tank); far=false -> a shorter,
+// warmer mid-rank block with denser lit windows.
+function drawSkyscraper(ctx, x, baseY, t, key, far) {
+  const w = far ? (1.5 + srand(key) * 1.6) : (2.4 + srand(key) * 1.8);
+  const h = far ? (4.5 + srand(key * 2) * 5.5) : (2.4 + srand(key * 2) * 2.4);
+  const topY = baseY - h;
+  ctx.fillStyle = far ? '#161b29' : '#241f29';
+  ctx.fillRect(x - w / 2, topY, w, h);
+  ctx.fillStyle = far ? 'rgba(74,90,134,0.14)' : 'rgba(128,82,72,0.16)';   // glow-catching left face
+  ctx.fillRect(x - w / 2, topY, w * 0.16, h);
+  ctx.fillStyle = 'rgba(0,0,0,0.22)';                                      // right face in shadow
+  ctx.fillRect(x + w / 2 - w * 0.12, topY, w * 0.12, h);
+  const cw = 0.36, ch = 0.52, m = 0.22;
+  const cols = Math.max(1, Math.floor((w - m) / cw));
+  const rows = Math.max(1, Math.floor((h - m) / ch));
+  const ox = x - (cols * cw) / 2 + 0.05;
+  const litP = far ? 0.24 : 0.46;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const wk = key * 12.7 + r * 3.1 + c * 7.9;
+      if (srand(wk) < litP) {
+        const fl = srand(wk + 0.5) > 0.88 ? (0.45 + 0.55 * Math.sin(t * 3 + wk * 6)) : 1;
+        ctx.fillStyle = srand(wk + 1.3) > 0.72
+          ? 'rgba(176,202,255,' + (0.42 * fl).toFixed(2) + ')'
+          : 'rgba(255,206,112,' + (0.6 * fl).toFixed(2) + ')';
+      } else {
+        ctx.fillStyle = 'rgba(8,10,16,0.45)';
+      }
+      ctx.fillRect(ox + c * cw, topY + m + r * ch, cw - 0.14, ch - 0.2);
+    }
+  }
+  const rr = srand(key * 1.7 + 0.9);
+  if (far && rr < 0.4) {
+    ctx.strokeStyle = '#0e1118'; ctx.lineWidth = 0.06; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(x, topY); ctx.lineTo(x, topY - 0.9); ctx.stroke();
+    const blink = (t * 0.8 + srand(key)) % 1 < 0.5;            // aircraft warning light
+    ctx.fillStyle = blink ? 'rgba(255,60,50,0.95)' : 'rgba(120,30,28,0.6)';
+    ctx.beginPath(); ctx.arc(x, topY - 0.92, 0.07, 0, Math.PI * 2); ctx.fill();
+  } else if (rr < 0.72) {
+    ctx.fillStyle = '#2a2622';                                 // rooftop water tank
+    ctx.fillRect(x - 0.3, topY - 0.5, 0.6, 0.4);
+    ctx.beginPath(); ctx.moveTo(x - 0.3, topY - 0.5); ctx.lineTo(x, topY - 0.74); ctx.lineTo(x + 0.3, topY - 0.5); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#1a1714';
+    ctx.fillRect(x - 0.26, topY - 0.12, 0.06, 0.12); ctx.fillRect(x + 0.2, topY - 0.12, 0.06, 0.12);
+  }
+}
+
+// a window on a house: boarded over with planks, or a dim warm pane behind a
+// torn curtain (or dark and empty)
+function drawHouseWindow(ctx, cx, cy, w, h, key, t) {
+  ctx.fillStyle = '#1a1712';
+  ctx.fillRect(cx - w / 2 - 0.05, cy - 0.05, w + 0.1, h + 0.1);
+  if (srand(key * 1.7 + 0.2) < 0.55) {
+    ctx.fillStyle = '#070707'; ctx.fillRect(cx - w / 2, cy, w, h);
+    ctx.fillStyle = GHETTO.board;
+    for (let i = 0; i < 3; i++) {
+      ctx.save(); ctx.translate(cx, cy + h / 2); ctx.rotate((srand(key + i) - 0.5) * 0.12);
+      ctx.fillRect(-w / 2 - 0.06, -h * 0.42 + i * h * 0.34, w + 0.12, h * 0.2);
+      ctx.restore();
+    }
+    ctx.strokeStyle = GHETTO.woodLt; ctx.lineWidth = 0.05;     // a nailed X plank
+    ctx.beginPath(); ctx.moveTo(cx - w / 2, cy); ctx.lineTo(cx + w / 2, cy + h); ctx.stroke();
+  } else {
+    const lit = srand(key * 2.3 + 0.7) > 0.4;
+    ctx.fillStyle = lit ? 'rgba(255,196,108,0.5)' : 'rgba(20,22,30,0.85)';
+    ctx.fillRect(cx - w / 2, cy, w, h);
+    if (lit) { ctx.fillStyle = 'rgba(40,30,28,0.55)'; ctx.fillRect(cx - w / 2, cy, w * 0.4, h); }   // torn curtain
+    ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 0.03;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy); ctx.lineTo(cx, cy + h);
+    ctx.moveTo(cx - w / 2, cy + h / 2); ctx.lineTo(cx + w / 2, cy + h / 2);
+    ctx.stroke();
+  }
+}
+
+// the front porch: posts, a sagging roof, a railing, a bare bulb, and sometimes
+// someone sitting or standing on it
+function drawPorch(ctx, x, baseY, w, t, key) {
+  const pw = w * 0.82, pTop = baseY - 1.15, px0 = x - pw / 2, px1 = x + pw / 2;
+  ctx.fillStyle = '#2a2420'; ctx.fillRect(px0, baseY - 0.28, pw, 0.28);
+  ctx.fillStyle = '#221d19'; ctx.fillRect(x - pw * 0.3, baseY - 0.14, pw * 0.6, 0.14);   // steps
+  ctx.fillStyle = '#1d1915';
+  ctx.fillRect(px0, pTop, 0.1, baseY - pTop - 0.28);
+  ctx.fillRect(px1 - 0.1, pTop, 0.1, baseY - pTop - 0.28);
+  ctx.fillStyle = '#211d24'; ctx.fillRect(px0 - 0.12, pTop - 0.12, pw + 0.24, 0.16);     // porch roof
+  ctx.strokeStyle = 'rgba(40,34,30,0.9)'; ctx.lineWidth = 0.04;
+  ctx.beginPath(); ctx.moveTo(px0, baseY - 0.55); ctx.lineTo(px1, baseY - 0.55); ctx.stroke();
+  for (let bx = px0 + 0.12; bx < px1; bx += 0.18) { ctx.beginPath(); ctx.moveTo(bx, baseY - 0.55); ctx.lineTo(bx, baseY - 0.28); ctx.stroke(); }
+  if (srand(key * 6 + 1) > 0.35) {
+    const lx = x, ly = pTop + 0.08;
+    const g = ctx.createRadialGradient(lx, ly, 0, lx, ly, 0.9);
+    g.addColorStop(0, 'rgba(255,200,120,0.4)'); g.addColorStop(1, 'rgba(255,200,120,0)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(lx, ly, 0.9, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(255,224,150,0.95)'; ctx.beginPath(); ctx.arc(lx, ly, 0.05, 0, Math.PI * 2); ctx.fill();
+  }
+  const who = srand(key * 0.9 + 2.3);
+  if (who < 0.28) drawPerson(ctx, x - pw * 0.22, baseY - 0.28, t, key + 11, 'sit');
+  else if (who < 0.5) drawPerson(ctx, x + pw * 0.26, baseY - 0.28, t, key + 7, 'stand');
+}
+
+// a dilapidated boarded-up house with a sagging roof and a porch
+function drawHouse(ctx, x, baseY, t, key) {
+  const w = 2.7 + srand(key) * 1.2;
+  const h = 2.3 + srand(key * 2) * 0.7;
+  const topY = baseY - h;
+  ctx.fillStyle = gymPick(GHETTO.wall, key);
+  ctx.fillRect(x - w / 2, topY, w, h);
+  ctx.fillStyle = 'rgba(0,0,0,0.22)'; ctx.fillRect(x - w / 2, baseY - 0.5, w, 0.5);      // grime pooling low
+  ctx.strokeStyle = 'rgba(0,0,0,0.14)'; ctx.lineWidth = 0.03;                            // clapboard lines
+  for (let yy = topY + 0.3; yy < baseY; yy += 0.34) { ctx.beginPath(); ctx.moveTo(x - w / 2, yy); ctx.lineTo(x + w / 2, yy); ctx.stroke(); }
+  for (let i = 0; i < 3; i++) {                                                          // missing/scorched boards
+    if (srand(key + i * 4) < 0.5) continue;
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.fillRect(x - w / 2 + srand(key + i) * w, topY + 0.4 + srand(key + i * 2) * (h - 0.8), 0.24, 0.08);
+  }
+  const sag = (srand(key * 3) - 0.5) * 0.22;                                             // sagging gable roof
+  ctx.fillStyle = GHETTO.roof;
+  ctx.beginPath();
+  ctx.moveTo(x - w / 2 - 0.2, topY + 0.05);
+  ctx.lineTo(x - w * 0.12, topY - 0.85 + sag);
+  ctx.lineTo(x + w * 0.16, topY - 0.92 - sag);
+  ctx.lineTo(x + w / 2 + 0.2, topY + 0.05);
+  ctx.closePath(); ctx.fill();
+  if (srand(key * 5) > 0.5) { ctx.fillStyle = '#3a2a26'; ctx.fillRect(x + w * 0.22, topY - 0.95, 0.22, 0.5); }   // crooked chimney
+  const winN = 2 + Math.floor(srand(key * 5) * 2);
+  for (let i = 0; i < winN; i++)
+    drawHouseWindow(ctx, x - w / 2 + w * ((i + 0.65) / (winN + 0.3)), topY + 0.55, 0.46, 0.58, key + i * 3, t);
+  drawPorch(ctx, x, baseY, w, t, key);
+}
+
+// a hood drawn up around a head, with a shadow over the face
+function drawHood(ctx, cx, cy, r, coat, face) {
+  ctx.fillStyle = coat;
+  ctx.beginPath(); ctx.arc(cx, cy, r, Math.PI * 0.85, Math.PI * 2.15); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.beginPath(); ctx.arc(cx + face * 0.03, cy + 0.02, r * 0.7, Math.PI * 0.95, Math.PI * 2.05); ctx.fill();
+}
+
+// a stylised, hunched, hooded pedestrian. mode: 'walk' (legs swing), 'stand',
+// or 'sit' (slumped on a porch step). Some nurse a bottle in a paper bag.
+function drawPerson(ctx, x, baseY, t, key, mode) {
+  const skin = gymPick(GHETTO.skin, key), coat = gymPick(GHETTO.coat, key + 1);
+  const sc = 0.92 + srand(key + 3) * 0.18;
+  const face = srand(key + 5) < 0.5 ? -1 : 1;
+  ctx.save(); ctx.translate(x, baseY); ctx.scale(sc, sc);
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  if (mode === 'sit') {
+    ctx.strokeStyle = '#23242c'; ctx.lineWidth = 0.13;
+    ctx.beginPath(); ctx.moveTo(0, -0.5); ctx.lineTo(face * 0.3, -0.5); ctx.lineTo(face * 0.3, 0); ctx.stroke();
+    ctx.fillStyle = coat; roundRectPath(ctx, -0.16, -1.0, 0.32, 0.54, 0.1); ctx.fill();
+    ctx.fillStyle = skin; ctx.beginPath(); ctx.arc(face * 0.04, -1.12, 0.14, 0, Math.PI * 2); ctx.fill();
+    drawHood(ctx, face * 0.04, -1.14, 0.17, coat, face);
+    ctx.restore(); return;
+  }
+  const ph = mode === 'walk' ? Math.sin(t * 4.5 + key * 2) : 0;
+  ctx.strokeStyle = '#23242c'; ctx.lineWidth = 0.12;
+  ctx.beginPath(); ctx.moveTo(0, -0.62); ctx.lineTo(0.13 * ph, 0); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0, -0.62); ctx.lineTo(-0.13 * ph, 0); ctx.stroke();
+  ctx.fillStyle = coat;
+  ctx.save(); ctx.translate(0, -0.62); ctx.rotate(face * 0.06);
+  roundRectPath(ctx, -0.16, -0.6, 0.32, 0.62, 0.1); ctx.fill();
+  ctx.restore();
+  ctx.fillStyle = skin; ctx.beginPath(); ctx.arc(face * 0.05, -1.32, 0.14, 0, Math.PI * 2); ctx.fill();
+  drawHood(ctx, face * 0.05, -1.34, 0.17, coat, face);
+  ctx.strokeStyle = coat; ctx.lineWidth = 0.11;
+  ctx.beginPath(); ctx.moveTo(0, -1.05); ctx.lineTo(face * 0.2, -0.8); ctx.stroke();
+  if (srand(key + 9) > 0.7) {                                  // a 40 in a paper bag
+    ctx.fillStyle = '#6b5436'; ctx.fillRect(face * 0.2 - 0.04, -0.92, 0.08, 0.16);
+    ctx.fillStyle = '#3a2c18'; ctx.fillRect(face * 0.2 - 0.04, -0.98, 0.08, 0.07);
+  }
+  ctx.restore();
+}
+
+// a buzzing sodium streetlight: a pole and arm, a downward light cone, a hot
+// bulb glow and a warm pool on the road. A few are nearly burnt out and flicker.
+function drawStreetlight(ctx, x, baseY, t, key) {
+  const h = 3.4 + srand(key) * 0.7, topY = baseY - h;
+  const dir = srand(key * 1.3) > 0.5 ? 1 : -1;
+  const dead = srand(key + 4) > 0.85;
+  const fl = dead ? (0.3 + 0.5 * (Math.sin(t * 22 + key * 9) > 0.4 ? 1 : 0))
+    : (0.86 + 0.14 * Math.sin(t * 7 + key * 3));
+  ctx.strokeStyle = '#33353c'; ctx.lineWidth = 0.1; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(x, baseY); ctx.lineTo(x, topY); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x, topY); ctx.quadraticCurveTo(x + dir * 0.5, topY - 0.18, x + dir * 0.95, topY - 0.02); ctx.stroke();
+  const lx = x + dir * 0.98, ly = topY + 0.02;
+  const cone = ctx.createLinearGradient(lx, ly, lx, baseY);
+  cone.addColorStop(0, 'rgba(' + GHETTO.sodium + ',' + (0.26 * fl).toFixed(2) + ')');
+  cone.addColorStop(1, 'rgba(' + GHETTO.sodium + ',0)');
+  ctx.fillStyle = cone;
+  ctx.beginPath(); ctx.moveTo(lx - 0.12, ly); ctx.lineTo(lx - 1.6, baseY); ctx.lineTo(lx + 1.6, baseY); ctx.lineTo(lx + 0.12, ly); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#26282e'; ctx.beginPath(); ctx.ellipse(lx, ly - 0.04, 0.2, 0.1, 0, 0, Math.PI * 2); ctx.fill();
+  const bulb = ctx.createRadialGradient(lx, ly + 0.05, 0, lx, ly + 0.05, 0.7);
+  bulb.addColorStop(0, 'rgba(255,232,170,' + (0.85 * fl).toFixed(2) + ')'); bulb.addColorStop(1, 'rgba(255,200,120,0)');
+  ctx.fillStyle = bulb; ctx.beginPath(); ctx.arc(lx, ly + 0.05, 0.7, 0, Math.PI * 2); ctx.fill();
+  const pool = ctx.createRadialGradient(lx, baseY, 0, lx, baseY, 1.5);
+  pool.addColorStop(0, 'rgba(' + GHETTO.sodium + ',' + (0.18 * fl).toFixed(2) + ')'); pool.addColorStop(1, 'rgba(' + GHETTO.sodium + ',0)');
+  ctx.fillStyle = pool;
+  ctx.save(); ctx.translate(lx, baseY); ctx.scale(1, 0.34); ctx.beginPath(); ctx.arc(0, 0, 1.5, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+}
+
+// floating neon-tube lettering with a coloured glow box and a hot near-white core
+function drawNeonSign(ctx, cx, cy, text, rgb, t, key, sz) {
+  sz = sz || 1;
+  const buzz = srand(key + 2) > 0.85
+    ? (Math.sin(t * 30 + key) > -0.6 ? 1 : 0.3)               // a few signs flicker badly
+    : (0.82 + 0.18 * Math.sin(t * 4 + key));
+  const worldH = 0.5 * sz, gw = text.length * worldH * 0.62 + worldH, gh = worldH * 1.7;
+  const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, gw * 0.6);
+  glow.addColorStop(0, 'rgba(' + rgb + ',' + (0.5 * buzz).toFixed(2) + ')');
+  glow.addColorStop(1, 'rgba(' + rgb + ',0)');
+  ctx.fillStyle = glow; ctx.fillRect(cx - gw * 0.6, cy - gh, gw * 1.2, gh * 2);
+  gymText(ctx, text, cx, cy, worldH, 'rgba(' + rgb + ',' + buzz.toFixed(2) + ')', '800');
+  gymText(ctx, text, cx, cy, worldH, 'rgba(255,250,250,' + (0.5 * buzz).toFixed(2) + ')', '800');
+}
+
+// a scalloped, striped storefront awning
+function drawAwning(ctx, cx, topY, w, kind, key) {
+  const stripeA = kind === 'liquor' ? '#7a2030' : kind === 'gun' ? '#3a4a2e' : '#234a6e';
+  const x0 = cx - w / 2, lip = topY + 0.45, n = Math.max(3, Math.round(w / 0.4)), sw = w / n;
+  for (let i = 0; i < n; i++) {
+    ctx.fillStyle = i % 2 ? stripeA : '#d8d2c4';
+    ctx.beginPath();
+    ctx.moveTo(x0 + i * sw, topY); ctx.lineTo(x0 + (i + 1) * sw, topY);
+    ctx.lineTo(x0 + (i + 1) * sw, lip); ctx.lineTo(x0 + (i + 0.5) * sw, lip + 0.12); ctx.lineTo(x0 + i * sw, lip);
+    ctx.closePath(); ctx.fill();
+  }
+  ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(x0, topY - 0.04, w, 0.06);
+}
+
+// the silhouetted goods inside a lit shopfront window, by store kind
+function drawShopWindowProps(ctx, x0, y0, w, h, kind, key) {
+  ctx.save();
+  ctx.beginPath(); ctx.rect(x0, y0, w, h); ctx.clip();
+  if (kind === 'liquor') {
+    for (let s = 0; s < 2; s++) {
+      const sy = y0 + 0.3 + s * 0.55;
+      ctx.fillStyle = 'rgba(0,0,0,0.2)'; ctx.fillRect(x0, sy + 0.34, w, 0.05);
+      for (let bx = x0 + 0.18; bx < x0 + w; bx += 0.26) {
+        ctx.fillStyle = 'rgba(20,20,26,0.7)';
+        ctx.fillRect(bx, sy, 0.1, 0.36);
+        ctx.fillRect(bx + 0.02, sy - 0.07, 0.04, 0.08);
+      }
+    }
+  } else if (kind === 'gun') {
+    for (let i = 0; i < 4; i++) {
+      const gx = x0 + 0.25 + i * (w - 0.4) / 4;
+      ctx.strokeStyle = 'rgba(15,15,18,0.8)'; ctx.lineWidth = 0.05; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(gx, y0 + 0.3); ctx.lineTo(gx, y0 + h - 0.3); ctx.stroke();
+      ctx.fillStyle = 'rgba(15,15,18,0.8)'; ctx.fillRect(gx - 0.06, y0 + h - 0.42, 0.16, 0.14);
+    }
+  } else {
+    ctx.fillStyle = 'rgba(120,200,255,0.18)'; ctx.fillRect(x0 + w - 0.7, y0, 0.7, h);   // a humming cooler
+    const crate = ['rgba(200,60,50,0.5)', 'rgba(230,180,40,0.5)', 'rgba(70,160,60,0.5)'];
+    for (let i = 0; i < 3; i++) {
+      const cx2 = x0 + 0.2 + i * 0.5;
+      ctx.fillStyle = crate[i % 3]; ctx.fillRect(cx2, y0 + h - 0.5, 0.4, 0.4);
+      ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.lineWidth = 0.02; ctx.strokeRect(cx2, y0 + h - 0.5, 0.4, 0.4);
+    }
+  }
+  ctx.restore();
+}
+
+// a corner store: a brick block with upper-floor apartments, a lit shopfront
+// behind a security grille, a striped awning and a buzzing neon sign. kind is
+// 'bodega', 'liquor' or 'gun'.
+function drawStorefront(ctx, x, baseY, t, key, kind) {
+  const w = 3.2 + srand(key) * 0.8, h = 2.5 + srand(key * 2) * 0.5, topY = baseY - h;
+  ctx.fillStyle = gymPick(GHETTO.brick, key);
+  ctx.fillRect(x - w / 2, topY, w, h);
+  ctx.strokeStyle = 'rgba(0,0,0,0.18)'; ctx.lineWidth = 0.02;
+  for (let yy = topY + 0.3; yy < baseY - 1.5; yy += 0.26) { ctx.beginPath(); ctx.moveTo(x - w / 2, yy); ctx.lineTo(x + w / 2, yy); ctx.stroke(); }
+  ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(x - w / 2, topY, w, 0.12);
+  for (let i = 0; i < 3; i++) {                                 // upper-floor apartment windows
+    const wx = x - w / 2 + w * (0.22 + i * 0.28);
+    ctx.fillStyle = srand(key + i * 5 + 1) > 0.5 ? 'rgba(255,200,110,0.5)' : 'rgba(16,18,26,0.8)';
+    ctx.fillRect(wx - 0.22, topY + 0.35, 0.44, 0.6);
+    ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 0.025; ctx.strokeRect(wx - 0.22, topY + 0.35, 0.44, 0.6);
+  }
+  const winW = w - 0.6, winH = 1.3, winX = x - winW / 2, winY = baseY - 1.45;
+  const tint = kind === 'liquor' ? '255,170,90' : kind === 'gun' ? '210,220,235' : '255,206,120';
+  const ig = ctx.createLinearGradient(0, winY, 0, winY + winH);
+  ig.addColorStop(0, 'rgba(' + tint + ',0.55)'); ig.addColorStop(1, 'rgba(' + tint + ',0.32)');
+  ctx.fillStyle = ig; ctx.fillRect(winX, winY, winW, winH);
+  drawShopWindowProps(ctx, winX, winY, winW, winH, kind, key);
+  ctx.strokeStyle = 'rgba(14,14,18,0.55)'; ctx.lineWidth = 0.03;   // security grille
+  for (let bx = winX + 0.12; bx < winX + winW; bx += 0.16) { ctx.beginPath(); ctx.moveTo(bx, winY); ctx.lineTo(bx, winY + winH); ctx.stroke(); }
+  ctx.fillStyle = '#15161c'; ctx.fillRect(x + winW / 2 - 0.5, baseY - 1.45, 0.5, 1.45);   // door
+  ctx.fillStyle = 'rgba(' + tint + ',0.3)'; ctx.fillRect(x + winW / 2 - 0.44, baseY - 1.3, 0.38, 0.7);
+  drawAwning(ctx, x, baseY - 1.5, winW + 0.3, kind, key);
+  const label = kind === 'liquor' ? 'LIQUOR' : kind === 'gun' ? 'GUNS  AMMO' : 'BODEGA';
+  const neon = kind === 'liquor' ? '255,59,107' : kind === 'gun' ? '255,122,47' : '59,198,255';
+  drawNeonSign(ctx, x, baseY - 1.95, label, neon, t, key);
+  if (kind === 'bodega') drawNeonSign(ctx, x + w * 0.2, topY + 0.42, 'OPEN', '70,224,106', t, key + 4, 0.55);
+}
+
+// a car of one of several body types, lit by its own headlight beam (pointing
+// in its travel direction) and a red taillight glow. dir flips the silhouette.
+function drawCar(ctx, cx, cy, sc, dir, t, key) {
+  ctx.save();
+  ctx.translate(cx, cy); ctx.scale(dir * sc, sc);
+  const col = gymPick(GHETTO.car, key), type = Math.floor(srand(key * 1.3) * 4), L = 1.9;
+  const beam = ctx.createLinearGradient(L * 0.5, 0, L * 0.5 + 2.0, 0);
+  beam.addColorStop(0, 'rgba(255,244,200,0.28)'); beam.addColorStop(1, 'rgba(255,244,200,0)');
+  ctx.fillStyle = beam;
+  ctx.beginPath();
+  ctx.moveTo(L * 0.5, -0.18); ctx.lineTo(L * 0.5 + 2.0, -0.55); ctx.lineTo(L * 0.5 + 2.0, 0.25); ctx.lineTo(L * 0.5, 0.05);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = col;
+  roundRectPath(ctx, -L * 0.5, -0.34, L, 0.34, 0.08); ctx.fill();
+  if (type === 2) {                                            // pickup
+    roundRectPath(ctx, 0.0, -0.66, L * 0.42, 0.34, 0.06); ctx.fill();
+    ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(-L * 0.5 + 0.06, -0.32, L * 0.45, 0.04);
+  } else if (type === 3) {                                     // van
+    roundRectPath(ctx, -L * 0.42, -0.78, L * 0.8, 0.5, 0.06); ctx.fill();
+  } else if (type === 1) {                                     // suv
+    roundRectPath(ctx, -L * 0.32, -0.72, L * 0.62, 0.42, 0.07); ctx.fill();
+  } else {                                                     // sedan
+    ctx.beginPath();
+    ctx.moveTo(-L * 0.3, -0.34); ctx.lineTo(-L * 0.18, -0.64); ctx.lineTo(L * 0.16, -0.64); ctx.lineTo(L * 0.3, -0.34);
+    ctx.closePath(); ctx.fill();
+  }
+  ctx.fillStyle = srand(key + 2) > 0.5 ? 'rgba(180,200,230,0.5)' : 'rgba(20,24,34,0.7)';
+  ctx.fillRect(-L * 0.22, -0.6, L * 0.4, 0.22);
+  for (const wx of [-L * 0.3, L * 0.3]) {
+    ctx.fillStyle = '#0d0d10'; ctx.beginPath(); ctx.arc(wx, 0.02, 0.18, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#2a2a30'; ctx.beginPath(); ctx.arc(wx, 0.02, 0.08, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.fillStyle = 'rgba(255,246,210,0.95)'; ctx.beginPath(); ctx.arc(L * 0.48, -0.12, 0.07, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = 'rgba(255,60,40,0.9)'; ctx.fillRect(-L * 0.5 - 0.02, -0.2, 0.05, 0.14);
+  const tg = ctx.createRadialGradient(-L * 0.5, -0.13, 0, -L * 0.5, -0.13, 0.5);
+  tg.addColorStop(0, 'rgba(255,50,40,0.3)'); tg.addColorStop(1, 'rgba(255,50,40,0)');
+  ctx.fillStyle = tg; ctx.beginPath(); ctx.arc(-L * 0.5, -0.13, 0.5, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+
+// light traffic flowing through: a far lane heading up the street and a nearer,
+// bigger lane coming down it, each car recycling across the view
+function drawTraffic(ctx, view, t, groundY) {
+  const span = view.x1 - view.x0 + 12;
+  const lanes = [
+    { y: groundY - 0.5, dir: 1, speed: 2.4, n: 2, sc: 0.62 },
+    { y: groundY - 0.06, dir: -1, speed: 3.0, n: 2, sc: 0.92 },
+  ];
+  for (let li = 0; li < lanes.length; li++) {
+    const L = lanes[li];
+    for (let i = 0; i < L.n; i++) {
+      const cyc = t * L.speed * 0.06 + srand(li * 9 + i * 4 + 1);
+      const prog = cyc - Math.floor(cyc), pass = Math.floor(cyc);
+      const cx = L.dir > 0 ? view.x0 - 6 + prog * span : view.x1 + 6 - prog * span;
+      drawCar(ctx, cx, L.y, L.sc, L.dir, t, li * 31 + i * 7 + pass * 5);
+    }
+  }
+}
+
+// a scurrying rat: a small dark body, a pointed head and a long thin tail
+function drawRat(ctx, x, y, dir, key) {
+  ctx.save(); ctx.translate(x, y); ctx.scale(dir, 1);
+  ctx.fillStyle = '#1c1b20';
+  ctx.beginPath(); ctx.ellipse(0, -0.07, 0.16, 0.09, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(0.15, -0.09, 0.06, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#1c1b20'; ctx.lineWidth = 0.025; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(-0.15, -0.06); ctx.quadraticCurveTo(-0.34, -0.04, -0.32, -0.14); ctx.stroke();
+  ctx.fillStyle = 'rgba(255,80,80,0.8)'; ctx.beginPath(); ctx.arc(0.19, -0.1, 0.012, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+
+// a stray cat: an arched body, pricked ears, a raised tail and an eye-glint
+function drawCat(ctx, x, y, dir, key) {
+  ctx.save(); ctx.translate(x, y); ctx.scale(dir, 1);
+  const col = srand(key) > 0.5 ? '#2a2622' : '#3a3a40';
+  ctx.fillStyle = col;
+  ctx.beginPath(); ctx.ellipse(0, -0.16, 0.2, 0.11, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(0.2, -0.2, 0.08, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(0.15, -0.27); ctx.lineTo(0.17, -0.36); ctx.lineTo(0.21, -0.28); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(0.22, -0.27); ctx.lineTo(0.26, -0.35); ctx.lineTo(0.27, -0.26); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = col; ctx.lineWidth = 0.05; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(-0.18, -0.18); ctx.quadraticCurveTo(-0.36, -0.2, -0.32, -0.42); ctx.stroke();
+  ctx.lineWidth = 0.04;
+  ctx.beginPath(); ctx.moveTo(-0.08, -0.06); ctx.lineTo(-0.08, 0); ctx.moveTo(0.1, -0.06); ctx.lineTo(0.1, 0); ctx.stroke();
+  ctx.fillStyle = 'rgba(180,230,120,0.85)'; ctx.beginPath(); ctx.arc(0.24, -0.21, 0.014, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+
+// stray cats and rats darting along the curb (screen-relative, recycling)
+function drawCritters(ctx, view, t, groundY) {
+  const span = view.x1 - view.x0 + 8;
+  for (let i = 0; i < 3; i++) {
+    const isRat = srand(i * 5 + 2) < 0.6, dir = (i % 2) ? -1 : 1, speed = isRat ? 4.5 : 3.2;
+    const cyc = t * speed * 0.06 + srand(i * 7 + 1);
+    const prog = cyc - Math.floor(cyc), pass = Math.floor(cyc);
+    const cx = dir > 0 ? view.x0 - 4 + prog * span : view.x1 + 4 - prog * span;
+    const bob = Math.abs(Math.sin(t * (isRat ? 22 : 16) + i * 3)) * (isRat ? 0.02 : 0.03);
+    if (isRat) drawRat(ctx, cx, groundY - 0.02 - bob, dir, i * 13 + pass * 3);
+    else drawCat(ctx, cx, groundY - 0.02 - bob, dir, i * 13 + pass * 3);
+  }
+}
+
+// the whole ghetto scene, back to front
+function drawGhettoBack(ctx, view, t, actor, gdy) {
+  gdy = gdy || 0;
+  const groundY = GHETTO_FLOOR + gdy;
+  drawNightSky(ctx, view, t, gdy);
+  // distant skyscraper skyline
+  gymRow(ctx, view, 0.06, 5.2, (x, key) => drawSkyscraper(ctx, x, groundY - 0.3, t, key, true));
+  // a mid rank of lower lit buildings bridging the skyline and the street
+  gymRow(ctx, view, 0.16, 6.5, (x, key) => {
+    if (srand(key * 0.05 + 0.2) < 0.8) drawSkyscraper(ctx, x, groundY, t, key + 53, false);
+  });
+  // dilapidated boarded-up houses with porches (and people on them)
+  gymRow(ctx, view, 0.28, 6.2, (x, key) => drawHouse(ctx, x, groundY, t, key));
+  // the corner-store strip — bodega / liquor / gun — kept sparse so the houses
+  // behind still show between them
+  gymRow(ctx, view, 0.4, 12, (x, key) => {
+    if (srand(key * 0.06 + 0.5) < 0.72) {
+      const kinds = ['bodega', 'liquor', 'gun'];
+      drawStorefront(ctx, x, groundY, t, key, kinds[Math.floor(srand(key * 1.9 + 0.3) * 3) % 3]);
+    }
+  });
+  // buzzing sodium streetlights
+  gymRow(ctx, view, 0.46, 8.0, (x, key) => drawStreetlight(ctx, x + 2.0, groundY, t, key));
+  // pedestrians down on their luck, working the block
+  gymRow(ctx, view, 0.5, 4.8, (x, key) => {
+    const r = srand(key * 0.08 + 0.9);
+    if (r < 0.4) drawPerson(ctx, x, groundY, t, key, r < 0.24 ? 'walk' : 'stand');
+  });
+  // light traffic of all kinds flowing through
+  drawTraffic(ctx, view, t, groundY);
+  // stray cats and rats scurrying the curb
+  drawCritters(ctx, view, t, groundY);
+}
+
+// the beat-up curb where the road meets open air: a concrete lip, faded dashed
+// road paint, cracks creeping down and the odd tar-patched pothole — the
+// ghetto's grass/lava
+function drawGhettoEdge(ctx, s, theme, t) {
+  const dx = s.bx - s.ax, dy = s.by - s.ay, len = Math.hypot(dx, dy);
+  if (len < 1e-4) return;
+  const ux = dx / len, uy = dy / len;
+  let nx = uy, ny = -ux;            // normal pointing up into the playable area
+  if (ny > 0) { nx = -nx; ny = -ny; }
+  ctx.fillStyle = '#3c3c42';
+  ctx.beginPath();
+  ctx.moveTo(s.ax - nx * 0.02, s.ay - ny * 0.02);
+  ctx.lineTo(s.bx - nx * 0.02, s.by - ny * 0.02);
+  ctx.lineTo(s.bx + nx * 0.1, s.by + ny * 0.1);
+  ctx.lineTo(s.ax + nx * 0.1, s.ay + ny * 0.1);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = 'rgba(150,150,160,0.3)'; ctx.lineWidth = 0.025;
+  ctx.beginPath(); ctx.moveTo(s.ax - nx * 0.01, s.ay - ny * 0.01); ctx.lineTo(s.bx - nx * 0.01, s.by - ny * 0.01); ctx.stroke();
+  // faded dashed centre-line a little down the road surface
+  ctx.strokeStyle = 'rgba(200,176,70,0.32)'; ctx.lineWidth = 0.05; ctx.lineCap = 'butt';
+  for (let d = 0; d < len; d += 1.0) {
+    const f0 = d / len, f1 = Math.min(1, (d + 0.5) / len);
+    ctx.beginPath();
+    ctx.moveTo(s.ax + dx * f0 + nx * 0.26, s.ay + dy * f0 + ny * 0.26);
+    ctx.lineTo(s.ax + dx * f1 + nx * 0.26, s.ay + dy * f1 + ny * 0.26);
+    ctx.stroke();
+  }
+  // cracks and potholes
+  const n = Math.max(1, Math.floor(len / 0.7));
+  for (let i = 0; i <= n; i++) {
+    const r1 = srand(s.ax * 4.7 + s.ay * 2.9 + i * 6.7);
+    const f = i / n, bx = s.ax + dx * f, by = s.ay + dy * f;
+    if (r1 > 0.55) {
+      const lean = (srand(i * 3.1 + s.ax) - 0.5) * 0.5;
+      ctx.strokeStyle = 'rgba(0,0,0,0.45)'; ctx.lineWidth = 0.02; ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(bx + nx * 0.08, by + ny * 0.08);
+      ctx.lineTo(bx + nx * 0.22 + ux * lean * 0.4, by + ny * 0.22 + uy * lean * 0.4);
+      ctx.lineTo(bx + nx * 0.4 + ux * lean, by + ny * 0.4 + uy * lean);
+      ctx.stroke();
+    }
+    if (r1 > 0.82) {
+      ctx.fillStyle = 'rgba(10,10,12,0.55)';
+      ctx.save(); ctx.translate(bx + nx * 0.3, by + ny * 0.3); ctx.scale(1, 0.45);
+      ctx.beginPath(); ctx.arc(0, 0, 0.12 + srand(i * 2.2) * 0.1, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
+  }
+}
+
 // Paints a rect of ground: the repeating terrain tile, then a soft-light
 // mottle pass that breaks up its grid (see makeMottle / makePatterns). Shared
 // by the in-level terrain and the menu/victory floor so they match.
@@ -2796,14 +3401,20 @@ function drawNut(ctx, cx, cy, s, ang, type) {
 // a nut mound: this world's "killer" hazard (the spinning-spike equivalent) —
 // a heap of assorted nuts smothered in a glossy coat of oozing peanut butter.
 // Touching it with any part of the bike is fatal (see PHYS.nutR / Bike.step).
-// Drawn centred on (x, y), the lethal point, sized to roughly the kill radius.
+// Drawn centred on (x, y), the lethal point, at the Elma object footprint so a
+// converted spike keeps its size: the pile is modelled at ~0.6 radius, then
+// NUT_SCALE brings it to ~0.45 drawn — a hair past the 0.4 kill radius, so the
+// art reads a touch bigger than the hitbox (death only fires once a part is
+// clearly buried) yet matches an apple/burger on screen, as Elma's do.
 // Planted on the terrain, so unlike the hovering burger/popcorn it doesn't bob;
 // only the peanut-butter drips and surface glints move, so it reads as oozing.
+const NUT_SCALE = 0.75;
 function drawNutMound(ctx, x, y, t) {
   t = t || 0;
   const phase = x * 1.3;          // each mound oozes on its own clock
   ctx.save();
   ctx.translate(x, y);
+  ctx.scale(NUT_SCALE, NUT_SCALE);
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
 
@@ -4924,6 +5535,261 @@ function drawVictoryBiker(ctx, x, y, scale, t) {
   ctx.restore();
 }
 
+// ---------- perfect-run cameo: the ominous pacer ----------
+// A flawless track clear (no life lost, no continue) drops the feast into the
+// ghetto at night, where a hulking figure paces the block behind the champion.
+// No head is drawn for him — brad.png is pasted on — over broad shoulders and
+// beefy arms, with a Glock in his fist, finger on the trigger. Every so often
+// he halts mid-stride and throws the gun up, sighting down it at some random
+// point off in the dark, then drops back into pacing. The whole performance is
+// a pure function of t, so the fade buffer and the live screen stay in lockstep.
+
+// his bearing at time t: where he is along the block, which way he faces,
+// whether he's walking, and — when posturing — how far the gun is raised, the
+// angle he's sighting along, and the live shot (id + seconds since it went off,
+// or -1). He marches xL<->xR; at each turn a stable coin flip decides whether he
+// halts to posture, and at the apex of the raise he fires a single round. The
+// shot timing is position-independent (no xL/xR), so game.js calls this with
+// dummy bounds purely to drive the gunshot sound in lockstep with the visuals.
+const PACER_FIRE_AT = 0.22;   // fraction into the posture where the gun is up & fires
+const PACER_SHOT_GAP = 0.15;  // spacing between rounds within one stop (posture fraction)
+
+// how many rounds he lets off at a given stop: 1-3, weighted heavily toward 1
+// then 2 then 3. A stable per-turn draw so render and the gunshot sound agree.
+function pacerShotCount(leg) {
+  const r = srand(leg * 9.4 + 2.6);
+  return r < 0.55 ? 1 : r < 0.85 ? 2 : 3;
+}
+function pacerBearing(t, xL, xR) {
+  const cross = 3.6;   // s to march from one end of the block to the other
+  const pause = 1.9;   // s spent sighting down the gun at a turn
+  let clock = 0;
+  for (let leg = 0; leg < 100000; leg++) {
+    const even = leg % 2 === 0;
+    const fromX = even ? xL : xR, toX = even ? xR : xL;
+    const facing = toX > fromX ? 1 : -1;
+    if (t < clock + cross) {
+      const u = (t - clock) / cross;
+      return { x: fromX + (toX - fromX) * u, facing, walking: true,
+               aimAng: 0, raise: 0, shots: [], shotId: -1, shotAge: -1 };
+    }
+    clock += cross;
+    if (srand(leg * 2.7 + 0.5) < 0.7) {            // posture at this turn?
+      if (t < clock + pause) {
+        const p = (t - clock) / pause;
+        // snap the gun up, hold the sight, lower it: a trapezoid in p
+        const raise = Math.max(0, Math.min(1,
+          p < PACER_FIRE_AT ? p / PACER_FIRE_AT : p > 0.8 ? (1 - p) / 0.2 : 1));
+        const aimAng = srand(leg * 5.1 + 1.3) * Math.PI * 2;  // a random bearing
+        // 1-3 rounds this stop, spaced from the apex; each round already gone
+        // off is one casing in the air and one crack. shotId/shotAge track the
+        // most recent round (the muzzle flash + the gunshot sound).
+        const rounds = pacerShotCount(leg);
+        const shots = [];
+        for (let i = 0; i < rounds; i++) {
+          const at = PACER_FIRE_AT + i * PACER_SHOT_GAP;
+          if (p >= at) shots.push({ age: (p - at) * pause, seed: leg * 8 + i });
+        }
+        const last = shots.length ? shots[shots.length - 1] : null;
+        return { x: toX, facing, walking: false, aimAng, raise, shots,
+                 shotId: last ? last.seed : -1, shotAge: last ? last.age : -1 };
+      }
+      clock += pause;
+    }
+  }
+  return { x: xL, facing: 1, walking: false, aimAng: 0, raise: 0, shots: [], shotId: -1, shotAge: -1 };
+}
+
+// brad.png pasted where his head goes (the pacer is drawn headless). Falls back
+// to a dark blank head if the photo hasn't loaded — the guard drawHead uses.
+function drawBradHead(ctx, x, y, h, tilt) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(tilt || 0);
+  const img = IMAGES.brad;
+  if (img && img.complete && img.naturalWidth > 0) {
+    const w = h * img.naturalWidth / img.naturalHeight;
+    ctx.drawImage(img, -w / 2, -h / 2, w, h);
+  } else {
+    ctx.fillStyle = '#2a211c';
+    ctx.beginPath(); ctx.arc(0, 0, h * 0.42, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.restore();
+}
+
+// the Glock in his fist: a small dark pistol with the muzzle along `ang` and
+// the grip-hold at the origin (the caller translates/rotates into place).
+// Slide, raked grip, trigger guard, and the index finger curled onto the trigger.
+function drawGlock(ctx, ang, s) {
+  ctx.save();
+  ctx.rotate(ang);
+  ctx.scale(s, s);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = '#16161d'; ctx.lineWidth = 0.15;   // grip, raked down-back
+  ctx.beginPath(); ctx.moveTo(0.02, -0.02); ctx.lineTo(-0.11, 0.24); ctx.stroke();
+  ctx.strokeStyle = '#202028'; ctx.lineWidth = 0.13;   // slide / barrel to the muzzle
+  ctx.beginPath(); ctx.moveTo(-0.02, -0.05); ctx.lineTo(0.52, -0.06); ctx.stroke();
+  ctx.strokeStyle = '#3a3a44'; ctx.lineWidth = 0.035;  // a glint along the slide top
+  ctx.beginPath(); ctx.moveTo(0.06, -0.10); ctx.lineTo(0.48, -0.105); ctx.stroke();
+  ctx.strokeStyle = '#14141a'; ctx.lineWidth = 0.04;   // trigger guard loop
+  ctx.beginPath(); ctx.arc(0.13, 0.055, 0.08, -0.35, Math.PI + 0.35); ctx.stroke();
+  ctx.strokeStyle = '#6f4e36'; ctx.lineWidth = 0.055;  // the index finger, on the trigger
+  ctx.beginPath(); ctx.moveTo(-0.04, 0.04); ctx.lineTo(0.12, 0.07); ctx.stroke();
+  ctx.fillStyle = '#0c0c11';
+  ctx.beginPath(); ctx.arc(0.135, 0.075, 0.028, 0, Math.PI * 2); ctx.fill();  // the trigger
+  ctx.restore();
+}
+
+// the muzzle flash at the gun's tip the instant it fires: a hot radial bloom
+// with a forward flame and two side spikes. `f` (1->0) fades it over a few frames.
+function drawMuzzleFlash(ctx, x, y, ang, f) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(ang);
+  const r = 0.06 + 0.22 * f;
+  const g = ctx.createRadialGradient(0, 0, 0, 0, 0, r);
+  g.addColorStop(0, `rgba(255,251,214,${0.95 * f})`);
+  g.addColorStop(0.4, `rgba(255,201,84,${0.7 * f})`);
+  g.addColorStop(1, 'rgba(255,140,30,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = `rgba(255,244,190,${0.9 * f})`;
+  const spike = (len, wd) => {
+    ctx.beginPath();
+    ctx.moveTo(0, 0); ctx.lineTo(len, -wd); ctx.lineTo(len * 1.15, 0);
+    ctx.lineTo(len, wd); ctx.closePath(); ctx.fill();
+  };
+  spike(0.12 + 0.34 * f, 0.06);                 // the forward jet
+  ctx.rotate(0.55); spike(0.05 + 0.14 * f, 0.05);
+  ctx.rotate(-1.1); spike(0.05 + 0.14 * f, 0.05);
+  ctx.restore();
+}
+
+// the spent casing flicking out of the breech: pops up and out toward `facing`,
+// tumbling, then arcs back down to the street under gravity. age = seconds since
+// the shot; seed (the shot id) varies the spin and spread shot to shot.
+function drawCasing(ctx, ox, oy, facing, age, seed) {
+  const dir = -Math.PI / 2 + facing * 0.35 + (srand(seed * 1.7 + 0.4) - 0.5) * 0.7;
+  const speed = 2.2 + srand(seed * 3.1) * 0.8;
+  const x = ox + Math.cos(dir) * speed * age;
+  const y = oy + Math.sin(dir) * speed * age + 0.5 * 11 * age * age;  // +y is down
+  if (y > 0.05) return;                          // landed on the asphalt
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(age * (9 + (seed % 3) * 4) * (seed % 2 ? 1 : -1));
+  ctx.fillStyle = '#caa24a';                     // brass body
+  ctx.fillRect(-0.05, -0.018, 0.1, 0.036);
+  ctx.fillStyle = '#9a7a2e';                     // the rimmed primer end
+  ctx.fillRect(0.032, -0.018, 0.018, 0.036);
+  ctx.restore();
+}
+
+// the hulking pacer himself, headless (brad.png is his head). (x,y) is the
+// midpoint between his boots on the street; scale sizes him; the rest comes
+// from pacerBearing. t drives the stride/bob. Drawn BEFORE the feast props so
+// the champion, his popcorn and the bike all sit in front of him on the z axis.
+function drawGhettoPacer(ctx, x, y, scale, b, t) {
+  const { facing, walking, aimAng, raise } = b;
+  ctx.save();
+  ctx.translate(x, y);
+  // a long shadow pooled under him on the asphalt
+  ctx.fillStyle = 'rgba(0,0,0,0.32)';
+  ctx.beginPath();
+  ctx.ellipse(0, -0.02, 0.72 * scale, 0.1 * scale, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.scale(scale, scale);
+  ctx.rotate(walking ? facing * 0.04 : 0);   // a touch of lean into the march
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  // ominous palette: dark-brown muscle, black wifebeater, dark jeans
+  const skin = '#6b4733', shirt = '#16161c', pants = '#222530', boot = '#0d0d11';
+
+  // a step cycle drives the stride swing and a small body bob
+  const step = walking ? Math.sin(t * 5.0) : 0;
+  const bob = walking ? Math.abs(Math.sin(t * 5.0)) * 0.05 : 0;
+  ctx.translate(0, -bob);
+
+  // ----- legs (behind the torso) -----
+  // each leg keeps to its own side (no crossing); the stepping one nudges
+  // forward and lifts, so the pair reads as a walk cycle without a side view
+  for (const sgn of [-1, 1]) {                 // far leg first, then near
+    const phase = sgn * step;                  // legs swing in opposition
+    const hip = { x: sgn * 0.2, y: -0.95 };
+    const foot = { x: sgn * 0.2 + facing * phase * 0.12,
+                   y: -0.02 - Math.max(0, phase) * 0.09 };
+    const knee = { x: (hip.x + foot.x) / 2 + facing * 0.05, y: (hip.y + foot.y) / 2 };
+    riderLimb(ctx, hip, knee, 0.22, pants);    // thick thigh
+    riderLimb(ctx, knee, foot, 0.16, pants);   // shin
+    riderLimb(ctx, foot, { x: foot.x + facing * 0.18, y: foot.y }, 0.11, boot); // sneaker
+  }
+
+  // ----- torso: broad shoulders, big chest, tank top -----
+  const shL = { x: -0.5, y: -1.62 }, shR = { x: 0.5, y: -1.62 };
+  riderLimb(ctx, { x: 0, y: -0.98 }, { x: 0, y: -1.5 }, 0.36, shirt);  // trunk
+  riderLimb(ctx, shL, shR, 0.27, shirt);                              // shoulder yoke (delts/traps)
+  riderDisc(ctx, { x: -0.18, y: -1.42 }, 0.2, shirt);                 // pecs
+  riderDisc(ctx, { x: 0.18, y: -1.42 }, 0.2, shirt);
+  riderLimb(ctx, { x: 0, y: -1.58 }, { x: 0, y: -1.78 }, 0.13, skin); // neck
+
+  // ----- head: brad.png, tipped toward the sight line while posturing -----
+  // drawn big — the photo is mostly afro, so the face only reads at this size;
+  // the centre rides high so the chin still meets the neck instead of the chest
+  const headTilt = raise > 0.05
+    ? Math.max(-0.22, Math.min(0.22, Math.cos(aimAng) * facing * 0.18 * raise)) : 0;
+  drawBradHead(ctx, 0, -2.18, 1.28, headTilt);
+
+  // ----- off arm (his left / screen right): swings, beefy bicep -----
+  {
+    const swing = walking ? -step * 0.3 : 0;   // opposite the near leg
+    const elbow = { x: 0.66, y: -1.3 };
+    const hand = { x: 0.62 + swing, y: -1.0 };
+    riderLimb(ctx, shR, elbow, 0.21, skin);                          // upper arm
+    riderDisc(ctx, { x: 0.61, y: -1.46 }, 0.16, skin);               // bicep bulge
+    riderLimb(ctx, elbow, hand, 0.16, skin);                         // forearm
+    riderDisc(ctx, hand, 0.1, skin);                                 // fist
+  }
+
+  // ----- gun arm (his right / screen left): holds the Glock, raises to sight -----
+  const shotAge = b.shotAge;
+  {
+    const reach = 0.95;
+    const holdAng = Math.PI / 2 - facing * 0.35;   // muzzle down at his side, slight cant
+    const hold = { x: -0.44, y: -1.0 };            // hand at his hip when resting
+    const aim = { x: shL.x + Math.cos(aimAng) * reach, y: shL.y + Math.sin(aimAng) * reach };
+    const hand = { x: hold.x + (aim.x - hold.x) * raise,
+                   y: hold.y + (aim.y - hold.y) * raise };
+    // muzzle direction blends hold->aim so the gun swings up smoothly
+    const dx = Math.cos(holdAng) * (1 - raise) + Math.cos(aimAng) * raise;
+    const dy = Math.sin(holdAng) * (1 - raise) + Math.sin(aimAng) * raise;
+    const elbow = { x: (shL.x + hand.x) / 2 - 0.12 * (1 - raise),
+                    y: (shL.y + hand.y) / 2 + 0.1 * (1 - raise) };
+    riderLimb(ctx, shL, elbow, 0.21, skin);                          // upper arm
+    riderDisc(ctx, { x: (shL.x + elbow.x) / 2 - 0.03, y: (shL.y + elbow.y) / 2 },
+      0.16, skin);                                                   // bicep bulge (tracks the arm)
+    riderLimb(ctx, elbow, hand, 0.16, skin);                         // forearm
+    riderDisc(ctx, hand, 0.1, skin);                                 // fist wraps the grip
+    const gAng = Math.atan2(dy, dx);
+    ctx.save();
+    ctx.translate(hand.x, hand.y);
+    drawGlock(ctx, gAng, 0.85);
+    ctx.restore();
+    // the latest round flashes at the muzzle; every round already fired this
+    // stop keeps its own casing tumbling until it hits the street
+    if (shotAge >= 0 && shotAge < 0.07) {
+      const barrel = 0.44;   // muzzle distance from the hand (gun slide × 0.85)
+      drawMuzzleFlash(ctx, hand.x + Math.cos(gAng) * barrel,
+        hand.y + Math.sin(gAng) * barrel, gAng, 1 - shotAge / 0.07);
+    }
+    for (const sh of (b.shots || [])) {
+      drawCasing(ctx, hand.x, hand.y - 0.06, facing, sh.age, sh.seed);
+    }
+  }
+
+  ctx.restore();
+}
+
 // A short landscape screen can't hold the centred scorecard: it would
 // blanket the feast, bury the lower-left champion and run under the button.
 // (Every phone in play is landscape — portrait shows the rotate prompt — so
@@ -5060,6 +5926,14 @@ function drawVictory(ctx, W, H, o) {
     const kx = srand(i * 3.17 + 0.7) * w;
     const ky = gy + 0.12 + srand(i * 7.31 + 2.1) * (h - gy - 0.3);
     drawKernel(ctx, kx, ky, 0.04 + srand(i * 5.7 + 1.3) * 0.05, i * 1.3);
+  }
+
+  // a flawless clear summons the cameo: a hulking figure paces the block
+  // behind the whole feast, Glock in hand, now and then throwing up a sight.
+  // Drawn here so the bike, the buckets and the champion all sit in front of him.
+  if (o.perfect) {
+    const b = pacerBearing(t, w * 0.16, w * 0.8);
+    drawGhettoPacer(ctx, b.x, gy, 1.35, b, t);
   }
 
   // the bike parked off to the side, done for the season — wearing its skin

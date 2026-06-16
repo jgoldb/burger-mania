@@ -8,6 +8,7 @@ const ASSET_MANIFEST = {
     biker: 'assets/biker.webp',
     bikerBack: 'assets/biker-back.png',   // back of the head, for mirror reflections
     astro: 'assets/astro.webp',
+    brad: 'assets/brad.png',              // the perfect-run pacer's head (ghetto cameo)
   },
 };
 

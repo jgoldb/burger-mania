@@ -29,6 +29,7 @@ const SHELL = [
   './assets/biker.webp',
   './assets/biker-back.png',
   './assets/astro.webp',
+  './assets/brad.png',
 ];
 
 self.addEventListener('install', (e) => {

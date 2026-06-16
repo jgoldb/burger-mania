@@ -98,6 +98,10 @@
   // this campaign's outcome per map ({ time, style, record flags } by map
   // index) — the victory scorecard; sparse where the skip cheat jumped past
   let runResults = [];
+  // true while this campaign is still flawless: no life lost and no continue
+  // burned. A perfect track clear earns the ghetto victory feast (and its
+  // ominous pacing cameo); any death or continue clears it.
+  let runPerfect = true;
   // The real maps are fetched from levels/*.bmm at boot (loadTracks below);
   // until they land the engine boots on a throwaway placeholder so the bike and
   // camera have something valid to sit on behind the loading screen.
@@ -541,6 +545,42 @@
     whoosh(0.06, 300, 0.14 + 0.30 * power);
   }
 
+  // the perfect-run pacer's posture shot: a sharp broadband crack over a short
+  // low boom. Triggered from the victory loop (checkPacerShot) at the apex of
+  // his gun-raise, in lockstep with the muzzle flash render.js draws.
+  function gunshot() {
+    if (!AC || muted) return;
+    const t0 = AC.currentTime;
+    // the crack: white noise through a fast-closing lowpass
+    const dur = 0.22;
+    const n = Math.floor(AC.sampleRate * dur);
+    const buf = AC.createBuffer(1, n, AC.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 2.2);
+    const src = AC.createBufferSource();
+    src.buffer = buf;
+    const f = AC.createBiquadFilter();
+    f.type = 'lowpass';
+    f.frequency.setValueAtTime(5200, t0);
+    f.frequency.exponentialRampToValueAtTime(380, t0 + 0.18);
+    f.Q.value = 0.7;
+    const g = AC.createGain();
+    g.gain.setValueAtTime(0.55, t0);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+    src.connect(f); f.connect(g); g.connect(sfxGain);
+    src.start(t0);
+    // the boom body: a low sine punched in and dropped
+    const o = AC.createOscillator(), bg = AC.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(160, t0);
+    o.frequency.exponentialRampToValueAtTime(42, t0 + 0.12);
+    bg.gain.setValueAtTime(0.0001, t0); // exponential ramps can't leave 0
+    bg.gain.exponentialRampToValueAtTime(0.35, t0 + 0.006);
+    bg.gain.exponentialRampToValueAtTime(0.001, t0 + 0.2);
+    o.connect(bg); bg.connect(sfxGain);
+    o.start(t0); o.stop(t0 + 0.22);
+  }
+
   // quick rising arpeggio when style points land, each note sliding up a
   // little as it rings; a big award (full rotation) gets an extra top note
   // so it reads flashier than a turn-around
@@ -651,6 +691,7 @@
     continues = MAX_CONTINUES;
     checkpointIndex = 0;
     runResults = [];
+    runPerfect = true;
     enterLevel(0); // sets state ('levelLoading' then 'ready')
   }
 
@@ -676,6 +717,7 @@
   function useContinue() {
     continues--;
     lives = 3;
+    runPerfect = false; // a continue burned — the flawless run is over
     enterLevel(checkpointIndex); // sets state (checkpoint map is already cached)
   }
 
@@ -1086,6 +1128,7 @@
       lives = 3;
       continues = MAX_CONTINUES;
       runResults = []; // a fresh campaign, even if entered sideways
+      runPerfect = true;
     }
     // skipping counts as having beaten everything before the target, so a
     // continue restarts from the checkpoint the player would hold having
@@ -1170,9 +1213,25 @@
   const VICTORY_HOLD = 1.4; // s the finish pose lingers before fading
   const VICTORY_FADE = 4.2; // s the dissolve takes
   let victoryT = 0;
+  let lastPacerShotId = -1; // the last ghetto-pacer shot we've sounded (once each)
 
   function victoryAlpha() {
     return Math.max(0, Math.min(1, (victoryT - VICTORY_HOLD) / VICTORY_FADE));
+  }
+
+  // sound the pacer's gunshot the instant his gun reaches the top, matched to
+  // the muzzle flash render.js draws. The cameo only shows on a flawless ghetto
+  // clear, and only once the feast has mostly faced in; the shot schedule is a
+  // pure function of wall-clock time (pacerBearing, position-independent here),
+  // so we re-derive the live shot and fire each id exactly once.
+  function checkPacerShot() {
+    if (!runPerfect) return;
+    if (!(state === 'victory' || (state === 'victoryFade' && victoryAlpha() > 0.5))) return;
+    const s = pacerBearing(performance.now() / 1000, 0, 1);
+    if (s.shotId !== -1 && s.shotId !== lastPacerShotId && s.shotAge >= 0 && s.shotAge < 0.12) {
+      gunshot();
+      lastPacerShotId = s.shotId;
+    }
   }
 
   function skipVictoryFade() {
@@ -1185,7 +1244,12 @@
   function victoryView(rt) {
     return {
       t: rt,
-      pat: patterns.meadow, // the celebration basks in meadow sunshine
+      // a flawless clear (no life lost, no continue) moves the feast to the
+      // ghetto at night with its ominous pacing cameo; otherwise the usual
+      // meadow sunshine. Only the BACKDROP changes — the victory tune still
+      // plays (updateMusic keeps 'victory' regardless of the scene's theme).
+      pat: runPerfect ? patterns.ghetto : patterns.meadow,
+      perfect: runPerfect,
       label: currentTrack ? currentTrack.label : '',
       names: currentTrack ? currentTrack.files.map((_, i) => levelName(currentTrack, i)) : [],
       results: runResults,
@@ -1975,6 +2039,15 @@
     if (exhaust.length) exhaust = exhaust.filter(s => s.age < s.life);
   }
 
+  // One object radius for every pickup, matching Elasto Mania, where the apple,
+  // killer and flower are all the same size. 0.4 = the Elma object radius (= the
+  // wheel radius); a part touches an object when their circles overlap, i.e.
+  // dist(partCentre, objCentre) < partR + OBJ_R. The nut mound (the killer) uses
+  // the same value as PHYS.nutR — keep the three in sync. So a converted .lev
+  // collects burgers, reaches the goal and dies on nuts at the same reach a
+  // real apple/flower/spike had.
+  const OBJ_R = 0.4;
+
   function checkPickups() {
     const h = bike.headPos();
     const pts = [
@@ -1986,7 +2059,7 @@
     for (const b of burgers) {
       if (b.got) continue;
       for (const o of pts) {
-        if (Math.hypot(o.p.x - b.x, o.p.y - b.y) < o.r + 0.45) {
+        if (Math.hypot(o.p.x - b.x, o.p.y - b.y) < o.r + OBJ_R) {
           b.got = true;
           blip(740, 0.09);
           setTimeout(() => blip(1180, 0.12), 70);
@@ -2000,7 +2073,7 @@
     }
     if (burgers.every(b => b.got)) {
       for (const o of pts) {
-        if (Math.hypot(o.p.x - level.goal[0], o.p.y - level.goal[1]) < o.r + 0.5) {
+        if (Math.hypot(o.p.x - level.goal[0], o.p.y - level.goal[1]) < o.r + OBJ_R) {
           finish();
           break;
         }
@@ -2080,6 +2153,7 @@
     } else {
       state = 'dead';
       lives = Math.max(0, lives - 1);
+      runPerfect = false; // a life lost — no perfect-clear feast this run
       saveNote = 'S: save replay';
       tapGuardUntil = performance.now() + 600;
     }
@@ -2303,6 +2377,7 @@
       }
     }
     updateHover();
+    checkPacerShot();
     draw();
     TOUCH.draw(ctx, W, H, { state, saveBusy });
     updateEngineSound();

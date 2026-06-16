@@ -200,6 +200,21 @@ const PHYS = {
                        // cancels the rebound. Only damps separation (never adds
                        // a push), so wheels can still overlap almost completely
 
+  wheelSquish: 0.08,   // how far (m) the tire may DEFORM when it is PINCHED. A
+                       // wheel stuck in a narrow slot touches two near-opposing
+                       // walls at once; only then does its effective contact
+                       // radius shrink by up to this much (scaled by how head-on
+                       // the pinch is) for the POSITIONAL push-out, so the two
+                       // walls stop shoving it back and forth and its own
+                       // momentum can carry it through a gap a little under the
+                       // full 2*wheelR. A single-sided contact — all normal
+                       // riding and EVERY landing — has no opposing pair, so
+                       // squish is 0 there and the tire is rigid: grip, climbing,
+                       // bounce and the drop-death line are untouched. At 0.08
+                       // the effective width drops 0.80 -> ~0.64, so the marginal
+                       // gaps where one wheel squeaked through and the other
+                       // wedged now pass both. 0 = rigid tire (old behaviour)
+
   // (Crash-trip removed: Elasto doesn't throw the rider over the bars on a hard
   // wheel impact — a hard landing either plants or, if the drop is high enough,
   // sinks the colliderless body through until the head hits terrain and dies.
@@ -211,11 +226,14 @@ const PHYS = {
                    // at angle pi/2 - 0.1 rad = (0.102 toward the rear, 1.015 up).
   headY: -1.015,   // Was -0.18 / -0.90 (a more compact, smaller-feeling bike)
 
-  nutR: 0.45,      // lethal radius of a nut mound — this world's "killer", the
+  nutR: 0.4,       // lethal radius of a nut mound — this world's "killer", the
                    // Elasto Mania spinning-spike equivalent. Touching one with
                    // ANY bike part (head, either wheel, or the frame body) is
-                   // instantly fatal. A touch tighter than the drawn pile so
-                   // death only fires once a part is clearly buried in it
+                   // instantly fatal. 0.4 = the Elma object radius (apple/killer/
+                   // flower all share it, = the wheel radius), so a converted .lev
+                   // kills at the same distance a spike did. Burger pickup and the
+                   // goal use the same 0.4 (see OBJ_R in js/game.js) — one object
+                   // size for all three, exactly as Elma has one
 
   anchorX: 0.85,   // wheel anchor offsets in frame space — Elma/Across bike geometry
   anchorY: 0.60,   // (ADATOK.CPP): the wheels (Kor2/Kor4) sit ±0.85 from the body
@@ -673,6 +691,36 @@ class Bike {
   wheelContacts(w, segs, dt, braking, throttle) {
     const P = PHYS;
     w.onGround = false;
+
+    // Squishy tire (pinch only). A wheel caught in a narrow gap touches two
+    // near-opposing walls in the same step. Find the most head-on such pair and
+    // let the tire compress along that pinch: the effective contact radius used
+    // for the positional push-out below shrinks by up to wheelSquish, scaled by
+    // how opposed the two normals are (1 = dead head-on, 0 = 90deg or convex).
+    // This stops the two walls from shoving the wheel back and forth so its own
+    // momentum carries it through a slot a touch under 2*wheelR. A single-sided
+    // contact (all normal riding, every landing) has no opposing pair, so squish
+    // stays 0 and the tire resolves exactly as before — grip, climbing, bounce
+    // and the drop-death line are all untouched. Convex corners (hill apex,
+    // ledge edge) have DIVERGING normals (opp < 0), so they don't trigger it.
+    let squish = 0;
+    if (P.wheelSquish > 0) {
+      const ns = [];
+      for (const seg of segs) {
+        const cp = closestOnSeg(w.pos.x, w.pos.y, seg);
+        const nx = w.pos.x - cp.x, ny = w.pos.y - cp.y;
+        const d = Math.hypot(nx, ny);
+        if (d >= P.wheelR || d === 0) continue;
+        ns.push([nx / d, ny / d]);
+      }
+      for (let i = 0; i < ns.length; i++) {
+        for (let j = i + 1; j < ns.length; j++) {
+          const opp = -(ns[i][0] * ns[j][0] + ns[i][1] * ns[j][1]);
+          if (opp > 0) squish = Math.max(squish, P.wheelSquish * opp);
+        }
+      }
+    }
+
     for (const seg of segs) {
       const cp = closestOnSeg(w.pos.x, w.pos.y, seg);
       let nx = w.pos.x - cp.x, ny = w.pos.y - cp.y;
@@ -681,10 +729,15 @@ class Bike {
       w.onGround = true;
       nx /= d; ny /= d;
 
-      // positional correction
-      const pen = P.wheelR - d;
-      w.pos.x += nx * pen;
-      w.pos.y += ny * pen;
+      // positional correction — push out to the contact radius, reduced by any
+      // squish so a pinched tire sits compressed in the slot instead of being
+      // shoved into the far wall. With squish 0 (single contact, or the feature
+      // off) pen == wheelR - d and this is bit-identical to a rigid tire.
+      const pen = (P.wheelR - squish) - d;
+      if (pen > 0) {
+        w.pos.x += nx * pen;
+        w.pos.y += ny * pen;
+      }
 
       // normal impulse: tire rebound ramps in with impact speed instead
       // of switching on — a real slam keeps the whole elastic-bar kick,

@@ -5,6 +5,8 @@
 //
 //   node tools/lev2bmm.js path/to/level.lev                 # -> path/to/level.bmm
 //   node tools/lev2bmm.js level.lev out.bmm                 # explicit output path
+//   node tools/lev2bmm.js levels/lev --outdir levels/bmm    # batch a whole folder
+//   node tools/lev2bmm.js a.lev b.lev c.lev --outdir out    # batch named files
 //   node tools/lev2bmm.js level.lev --theme volcano --name "My Map"
 //   node tools/lev2bmm.js level.lev --scale 1 --doodads --no-objects
 //
@@ -107,7 +109,7 @@ const round2 = v => Math.round(v * 100) / 100;
 // ---------- argument parsing ----------
 
 function parseArgs(argv) {
-  const opts = { theme: 'meadow', scale: 1, name: null, objects: true, doodads: false, flipY: false };
+  const opts = { theme: 'meadow', scale: 1, name: null, objects: true, doodads: false, flipY: false, outdir: null };
   const pos = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -119,13 +121,13 @@ function parseArgs(argv) {
       case '--theme': opts.theme = argv[++i]; break;
       case '--name': opts.name = argv[++i]; break;
       case '--scale': opts.scale = Number(argv[++i]); break;
+      case '--outdir': opts.outdir = argv[++i]; break;
       default:
         if (a.startsWith('--')) throw new Error('unknown option ' + a);
         pos.push(a);
     }
   }
-  opts.input = pos[0];
-  opts.output = pos[1];
+  opts.inputs = pos;
   if (!Number.isFinite(opts.scale) || opts.scale === 0) {
     throw new Error('--scale must be a non-zero number');
   }
@@ -135,8 +137,13 @@ function parseArgs(argv) {
 const USAGE = `Convert an Elasto Mania .lev into a Burger Mania .bmm map.
 
   node tools/lev2bmm.js <input.lev> [output.bmm] [options]
+  node tools/lev2bmm.js <dir-or-input.lev ...> --outdir <dir> [options]
 
 Options:
+  --outdir <dir>   Batch mode: convert every input — a directory of .lev files,
+                   or one or more named .lev files — into <dir>, naming each one
+                   <input-basename>.bmm. The directory is created if missing, a
+                   bad file is reported and skipped, and the run keeps going.
   --theme <name>   Burger Mania theme to tag the map with (default: meadow)
   --name <text>    Map name (default: the level's own name, else the filename)
   --scale <n>      Multiply all coordinates by n (default: 1)
@@ -257,7 +264,20 @@ function convert(lev, opts) {
   if (dropped) warnings.push(`skipped ${dropped} degenerate polygon(s) (< 3 vertices)`);
   if (!polygons.length) throw new Error('no usable polygons after conversion — nothing to write');
 
-  // objects -> Burger Mania equivalents
+  // objects -> Burger Mania equivalents.
+  //
+  // ORIGIN: an Elma object's (x, y) is its CENTRE, and Burger Mania both draws
+  // AND collides the burger, nut mound and popcorn bucket centred on their
+  // (x, y) too (js/render.js drawBurger/drawNutMound/drawPopcorn, js/game.js
+  // checkPickups, js/physics.js Bike.step). So apple/killer/flower positions
+  // copy straight through here — same origin, no offset. The START is the ONLY
+  // object whose origin differs (Elma start = LEFT WHEEL, BMM start = frame
+  // centre), and it alone is shifted by BIKE_ANCHOR_* below.
+  //
+  // SIZE: the matching pieces are sized to one shared object radius (0.4, the
+  // Elma object size = the wheel radius; see PHYS.nutR and OBJ_R in js/game.js),
+  // so a converted apple/spike/flower grabs, kills and finishes at the same
+  // reach it had in Elma. Nothing to emit per-object — the radius is global.
   const starts = [], exits = [], burgers = [], nuts = [], flipBurgers = [];
   if (opts.objects) {
     for (const obj of lev.objects) {
@@ -340,6 +360,71 @@ function convert(lev, opts) {
 
 // ---------- main ----------
 
+const isDir = p => { try { return fs.statSync(p).isDirectory(); } catch (e) { return false; } };
+
+// Default output path for an input when no explicit one is given: <base>.bmm,
+// in --outdir if set, otherwise alongside the input.
+function outPathFor(inputPath, opts) {
+  const base = path.basename(inputPath).replace(/\.lev$/i, '') + '.bmm';
+  return path.join(opts.outdir || path.dirname(inputPath), base);
+}
+
+// Expand the positional inputs into a flat, ordered list of .lev files: a
+// directory contributes every .lev directly inside it (case-insensitive,
+// sorted); a plain path is taken verbatim so a bad one still gets reported.
+function expandInputs(inputs) {
+  const files = [];
+  for (const inp of inputs) {
+    if (isDir(inp)) {
+      const levs = fs.readdirSync(inp)
+        .filter(n => /\.lev$/i.test(n))
+        .sort((a, b) => a.localeCompare(b));
+      if (!levs.length) console.warn(`  note: no .lev files in ${inp}`);
+      for (const n of levs) files.push(path.join(inp, n));
+    } else {
+      files.push(inp);
+    }
+  }
+  return files;
+}
+
+// Convert one .lev -> .bmm. Returns true on success; on failure it prints the
+// error and returns false so a batch run can carry on to the next file.
+function convertOne(inputPath, outputPath, opts) {
+  let buf;
+  try {
+    buf = fs.readFileSync(inputPath);
+  } catch (e) {
+    console.error(`error: cannot read ${inputPath}: ${e.message}`);
+    return false;
+  }
+
+  let result;
+  try {
+    result = convert(parseLev(buf), opts);
+  } catch (e) {
+    console.error(`error: ${inputPath}: ${e.message}`);
+    return false;
+  }
+
+  try {
+    fs.writeFileSync(outputPath, JSON.stringify(result.bmm));
+  } catch (e) {
+    console.error(`error: cannot write ${outputPath}: ${e.message}`);
+    return false;
+  }
+
+  for (const w of result.warnings) console.warn(`  note: ${inputPath}: ${w}`);
+  const s = result.stats;
+  console.log(`wrote ${outputPath}`);
+  console.log(`  ${s.polygons} polygon(s), ${s.burgers} burger(s)` +
+    (s.flip ? `, ${s.flip} flip burger(s)` : '') +
+    (s.nuts ? `, ${s.nuts} nut mound(s)` : '') +
+    (s.doodads ? `, ${s.doodads} doodad(s)` : '') +
+    `, theme "${result.bmm.theme}", named "${result.bmm.name}"`);
+  return true;
+}
+
 function main() {
   let opts;
   try {
@@ -349,39 +434,37 @@ function main() {
     console.error(USAGE);
     process.exit(2);
   }
-  if (opts.help || !opts.input) {
+  if (opts.help || !opts.inputs.length) {
     console.log(USAGE);
-    process.exit(opts.input ? 0 : 1);
+    process.exit(opts.inputs.length ? 0 : 1);
   }
 
-  let buf;
-  try {
-    buf = fs.readFileSync(opts.input);
-  } catch (e) {
-    console.error(`error: cannot read ${opts.input}: ${e.message}`);
+  // Resolve the list of {input, output} jobs.
+  //   * classic single-file form — `input.lev output.bmm` — stays intact: two
+  //     positionals, no --outdir, and the first isn't a directory.
+  //   * everything else is batch: directories are expanded and every input
+  //     gets a default <base>.bmm output (in --outdir if given).
+  let jobs;
+  if (!opts.outdir && opts.inputs.length === 2 && !isDir(opts.inputs[0])) {
+    jobs = [{ input: opts.inputs[0], output: opts.inputs[1] }];
+  } else {
+    if (opts.outdir) fs.mkdirSync(opts.outdir, { recursive: true });
+    jobs = expandInputs(opts.inputs).map(f => ({ input: f, output: outPathFor(f, opts) }));
+  }
+
+  if (!jobs.length) {
+    console.error('error: no .lev files to convert');
     process.exit(1);
   }
 
-  let result;
-  try {
-    result = convert(parseLev(buf), opts);
-  } catch (e) {
-    console.error(`error: ${e.message}`);
-    process.exit(1);
+  let ok = 0, failed = 0;
+  for (const job of jobs) {
+    if (convertOne(job.input, job.output, opts)) ok++; else failed++;
   }
-
-  const outPath = opts.output ||
-    path.join(path.dirname(opts.input), path.basename(opts.input).replace(/\.lev$/i, '') + '.bmm');
-  fs.writeFileSync(outPath, JSON.stringify(result.bmm));
-
-  for (const w of result.warnings) console.warn('  note: ' + w);
-  const s = result.stats;
-  console.log(`wrote ${outPath}`);
-  console.log(`  ${s.polygons} polygon(s), ${s.burgers} burger(s)` +
-    (s.flip ? `, ${s.flip} flip burger(s)` : '') +
-    (s.nuts ? `, ${s.nuts} nut mound(s)` : '') +
-    (s.doodads ? `, ${s.doodads} doodad(s)` : '') +
-    `, theme "${result.bmm.theme}", named "${result.bmm.name}"`);
+  if (jobs.length > 1) {
+    console.log(`\nconverted ${ok}/${jobs.length} file(s)` + (failed ? `, ${failed} failed` : ''));
+  }
+  process.exit(failed ? 1 : 0);
 }
 
 main();

@@ -15,12 +15,17 @@
 // an older version" failure instead of a silent, wrong-looking playback.
 const REPLAY = (() => {
   const FORMAT = 'burger-mania-replay';
-  const VERSION = 5; // bumped 2026-06-15 (Elasto-fidelity pass, phase 1): volting
+  const VERSION = 6; // bumped 2026-06-16: pickup radii unified to the Elma object
+                     // size (0.4) — the nut mound's kill radius (PHYS.nutR) shrank
+                     // 0.45->0.4 and the goal's reach 0.5->0.4, so a tape that
+                     // grazed a nut or clipped the goal now ends at a different
+                     // instant. Desyncs every pre-v6 tape.
+                     // v5 (2026-06-15, Elasto-fidelity pass phase 1): volting
                      // reworked from a discrete ~1/sec throttle to a CONTINUOUS
                      // hold-to-rotate drive + alovolt (both keys), with ground and
                      // air rotation unified (avelDamp and the wheel-spring reaction
-                     // torque now apply in the air too). Desyncs every pre-v5 tape.
-                     // (Subsumes the unbumped v4 crash-model work.)
+                     // torque now apply in the air too). (Subsumed the unbumped v4
+                     // crash-model work.)
   const EXT = '.bmr';
   const PICKER_TYPES = [{
     description: 'Burger Mania replay',

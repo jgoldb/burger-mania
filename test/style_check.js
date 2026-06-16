@@ -72,7 +72,7 @@ const clock = { t: 0 };
 // for ~3.7 s. The tape coasts 10 frames, turns around at frame 30, and
 // holds left the rest of the way so stacked volts wind up full rotations.
 const dropLab = JSON.stringify({
-  format: 'burger-mania-replay', version: 5,
+  format: 'burger-mania-replay', version: 6,
   savedAt: '2026-06-12T00:00:00.000Z',
   label: 'Drop Lab', outcome: 'crashed', time: 4,
   style: 350,

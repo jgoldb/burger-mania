@@ -510,8 +510,14 @@ const EDITOR = (() => {
       .map(p => (p > pi ? p - 1 : p));
   }
 
+  // the themes offered in the editor's Theme menu / T-cycle: every theme except
+  // those flagged `hidden` in THEMES (still fully renders, just not pickable here)
+  function editorThemeNames() {
+    return Object.keys(THEMES).filter(n => !THEMES[n].hidden);
+  }
+
   function cycleTheme() {
-    const names = Object.keys(THEMES);
+    const names = editorThemeNames();
     pushUndo();
     map.theme = names[(names.indexOf(map.theme) + 1) % names.length] || names[0];
     commit(true);
@@ -2387,7 +2393,7 @@ const EDITOR = (() => {
   }
 
   function themeItems() {
-    return Object.keys(THEMES).map(name => ({
+    return editorThemeNames().map(name => ({
       id: 'theme:' + name,
       label: name.charAt(0).toUpperCase() + name.slice(1),
       on: map.theme === name,

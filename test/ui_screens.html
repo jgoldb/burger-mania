@@ -193,8 +193,11 @@
       time: 20 + i * 13.37, style: 250 * i,
       timeRecord: i % 3 === 0, styleRecord: i % 4 === 2,
     }));
+    // ?perfect=1 (or ?theme=ghetto) shows the flawless-clear feast: the
+    // ghetto-at-night backdrop with the ominous Glock-toting pacer behind
+    const perfect = params.get('perfect') != null || params.get('theme') === 'ghetto';
     drawVictory(ctx, W, H, {
-      t, pat: menuPat, label: track.label,
+      t, pat: perfect ? patterns.ghetto : menuPat, perfect, label: track.label,
       names: track.levels.map(l => l.name),
       results, sel: 0, hover: -1, touch: false, saveNote: 'S: save replay',
     });
