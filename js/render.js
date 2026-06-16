@@ -3538,17 +3538,13 @@ function drawBike(ctx, bike, headless, back, lamps) {
   strokeSeg(ctx, hip, shoulder, 0.14, '#15151a');
 
   // The arm is two bones hinged at the elbow: an upper arm (shoulder→elbow) and
-  // a forearm (elbow→hand). At rest the hand grips the bar; on a volt it flicks
-  // and returns within one volt interval (the whole arc inside the window), the
-  // direction set by which way the rider is volting — see the two branches below.
-  // voltCd is re-armed to voltEvery the instant a volt fires and only ticks down
-  // after, so voltEvery - voltCd is the time since that volt.
-  const VOLT_PUMP = 0.5;  // arm-flick duration (cosmetic flourish, longer than
-                          // the snappy PHYS.voltDur boost — they're decoupled)
-  const cd = bike.voltCd == null ? PHYS.voltEvery + 9 : bike.voltCd;
-  const sinceVolt = PHYS.voltEvery - cd;
-  const reach = sinceVolt >= 0 && sinceVolt < VOLT_PUMP
-    ? Math.sin(Math.PI * sinceVolt / VOLT_PUMP) : 0;
+  // a forearm (elbow→hand). At rest the hand grips the bar; while the rider volts
+  // it flicks toward the lean and HOLDS there until the key is released, then
+  // returns — the direction set by which way the rider is volting (see the two
+  // branches below). bike.voltReach (0..1) is the held engagement the sim eases
+  // up while volting and back down when idle; bike.voltDir gives the direction
+  // (>=0 clockwise / alovolt, <0 counter-clockwise).
+  const reach = bike.voltReach == null ? 0 : bike.voltReach;
   const restElbow = L(0.16, -0.56);
   const restHand = handle;  // at rest the hand grips the bar
   const foreLen = Math.hypot(restHand.x - restElbow.x, restHand.y - restElbow.y);

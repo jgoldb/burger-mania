@@ -454,9 +454,9 @@
   }
 
   // the rider's volt: a meaty low "thwuup" — the weight-throw that whips the
-  // bike around — with a puff of air over it. A ~0.5s drawn-out flourish (longer
-  // than the snappy 0.15s physics boost — they're decoupled), matched to the
-  // arm-flick; the ~1/voltEvery cadence still leaves a gap so volts don't mush
+  // bike around — with a puff of air over it. A ~0.5s drawn-out flourish, fired
+  // once on the rising edge of a lean (when the rider engages a volt), so holding
+  // the key to rotate doesn't machine-gun the sound
   function voltThump() {
     if (!AC || muted) return;
     const t0 = AC.currentTime;
@@ -1914,7 +1914,7 @@
     }
     simInput = input;
     const angle0 = bike.angle;
-    const voltCd0 = bike.voltCd;
+    const voltDir0 = bike.voltDir;
     // wheel touchdowns are caught per substep, not per frame: a hard landing
     // rebounds within a single 60 Hz frame (airborne → planted → airborne), so
     // a frame-boundary check would miss exactly the biggest hits. Track each
@@ -1943,11 +1943,11 @@
       onDeath();
     } else {
       time += FDT;
-      // a volt fired this frame iff the cooldown was just re-armed: it only
-      // jumps back up (to voltEvery) at the instant of a volt and otherwise
-      // only ticks down. Sound the rider's weight-throw (the arm-pump it
-      // animates is driven straight off voltCd over in render.js)
-      if (bike.voltCd > voltCd0 + 1e-6) voltThump();
+      // a volt "fires" one thump on the rising edge of the lean — when voltDir
+      // goes from 0 (idle) to a held direction. Holding the key sustains rotation
+      // but only thumps once at engage; the arm-pump it animates is driven off
+      // bike.voltReach over in render.js
+      if (voltDir0 === 0 && bike.voltDir !== 0) voltThump();
       // net rotation, airborne or not (a ground loop-the-loop is style
       // too): every full lap pays out, wobble cancels itself
       spinAcc += bike.angle - angle0;

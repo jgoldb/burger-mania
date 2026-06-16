@@ -15,11 +15,12 @@
 // an older version" failure instead of a silent, wrong-looking playback.
 const REPLAY = (() => {
   const FORMAT = 'burger-mania-replay';
-  const VERSION = 4; // bumped 2026-06-14 (physics feel pass: stronger brakes,
-                     // heavier bike, reworked air volt, softer suspension,
-                     // soft wheel-meet). 2026-06-15 crash model (body has no
-                     // terrain collider — sinks through on a hard slam) rides
-                     // under this same not-yet-deployed VERSION 4, no re-bump
+  const VERSION = 5; // bumped 2026-06-15 (Elasto-fidelity pass, phase 1): volting
+                     // reworked from a discrete ~1/sec throttle to a CONTINUOUS
+                     // hold-to-rotate drive + alovolt (both keys), with ground and
+                     // air rotation unified (avelDamp and the wheel-spring reaction
+                     // torque now apply in the air too). Desyncs every pre-v5 tape.
+                     // (Subsumes the unbumped v4 crash-model work.)
   const EXT = '.bmr';
   const PICKER_TYPES = [{
     description: 'Burger Mania replay',

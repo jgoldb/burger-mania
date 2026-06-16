@@ -65,9 +65,13 @@ const TOUCH = (() => {
     for (let i = 0; i < list.length; i++) {
       const x = list[i].clientX, y = list[i].clientY;
       if (hit(L.gas, x, y)) input.up = true;
-      else if (hit(L.brake, x, y)) input.down = true;
-      else if (hit(L.left, x, y)) input.left = true;
-      else if (hit(L.right, x, y)) input.right = true;
+      if (hit(L.brake, x, y)) input.down = true;
+      // left & right are independent (not else-if): the generous hit margins make
+      // the two adjacent buttons overlap in a central strip, so a single touch
+      // there sets BOTH → alovolt; two fingers on the separate buttons do the
+      // same. Mirrors the keyboard's left+right alovolt
+      if (hit(L.left, x, y)) input.left = true;
+      if (hit(L.right, x, y)) input.right = true;
     }
   }
 

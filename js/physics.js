@@ -106,39 +106,37 @@ const PHYS = {
                    // sets the break-away grade (~45deg): on steeper slopes
                    // the braked slow-roll never gets slow enough to clamp
 
-  // Volt = the rider's lean: a DISCRETE thrust throttled to one per voltEvery,
-  // so holding a key can't spam rotation (Elasto Mania volting). GROUND and AIR
-  // use different models (see Bike.step): GROUNDED it's a smooth voltT torque
-  // burst (a weight shift for balance / wheelie / tip), faded toward voltGroundCap.
-  // MID-AIR it's a fixed instantaneous voltKick boost to the spin, clamped at
-  // voltMaxSpin — and airborne the frame spins freely (no spring/avelDamp bleed),
-  // so volts wind the spin cleanly up to voltMaxSpin and hold it there.
-  voltT: 26.75,       // GROUND volt torque (applied for voltDur). Tuned so 3 held
-                   // volts just barely tip the parked bike over (either way) and
-                   // a forward volt cancels the gas wheelie-pitch + a touch. Only
-                   // affects the GROUND volt — the air volt uses voltKick
-  voltDur: 0.1,    // how long one GROUND volt's torque burst lasts — the actual
-                   // physics "boost". Kept SHORT/snappy; the arm-flick (render.js
-                   // VOLT_PUMP) and volt sound run longer (0.5s) as a cosmetic
-                   // flourish, deliberately NOT matched to this. (Air volts are
-                   // instant; this only sets the grounded thrust length)
-  voltEvery: 1.0,  // throttle: minimum seconds between volts even while a key is
-                   // held (~1 volt/sec). Also paces the arm-flick + volt sound
-  voltMaxSpin: 15, // rad/s — THE max air-volt spin (genuinely reached now that
-                   // airborne spin doesn't bleed; see `grounded` in step()). This
-                   // is your top rotation rate: set it to the spin you want. Air
-                   // volts wind up to exactly this and hold there
-  voltKick: 1.5,    // rad/s a single AIR volt adds to the spin, INSTANTLY (fixed).
-                   // Purely the WIND-UP SPEED now: how fast you climb to
-                   // voltMaxSpin (reached in ~voltMaxSpin/voltKick volts), NOT the
-                   // ceiling. Bigger = punchier per volt + fewer volts to top out.
-                   // Ground volts ignore this — they use the voltT torque burst
-  voltGroundCap: 12, // GROUND volt's own spin-fade reference (rad/s): the ground
-                   // torque burst eases off as the bike spins toward this. Pinned
-                   // separate from voltMaxSpin so the air cap can't change ground
-                   // feel — voltT alone sets grounded lean strength
-  avelDamp: 0.12,  // angular "drag" bled off avel per second. Keeps rotation
-                   // from feeling floaty — a higher value settles spins faster
+  // Volt = the rider's lean: a CONTINUOUS rotational drive while a key is held
+  // (Elasto Mania volting), identical on the ground and in the air. Holding
+  // left/right applies voltAcc torque toward that lean, and the torque fades to
+  // zero as |avel| nears voltMaxSpin, so the rotation winds UP to a capped rate
+  // and HOLDS there; releasing lets the light avelDamp settle the angle. Pressing
+  // BOTH keys is an alovolt — a stronger clockwise burst (alovoltAcc) with its
+  // own higher cap. One model, ground and air (no discrete throttle any more).
+  voltAcc: 10,      // angular drive of a held volt — the wind-up / TAP strength.
+                    // LOW on purpose: a quick tap is a small nudge, not a flip;
+                    // the bike eases up to its held rate over ~0.5s instead of
+                    // slamming there. The held rate is this BALANCED against
+                    // avelDamp (terminal ≈ voltAcc/(frameI*avelDamp)), then capped
+                    // by voltMaxSpin. Raise for a punchier lean. Ground == air
+  voltMaxSpin: 10,  // rad/s — a SAFETY ceiling on volt rotation (the drive fades
+                    // to zero as |avel| nears it). The everyday held rate is set
+                    // lower by the voltAcc-vs-avelDamp balance; this just stops a
+                    // long hold from winding past a sane top rate
+  alovoltAcc: 18,   // angular drive of an alovolt (both keys) — a punchier
+                    // clockwise burst than a normal volt (the signature trick)
+  alovoltMaxSpin: 14, // rad/s — the alovolt's own (higher) ceiling, so the
+                    // both-keys trick can spin faster than a normal volt
+  voltReachRate: 14, // 1/s the rider's arm-flick pose eases toward fully-leaned
+                    // while volting and back to rest when idle (render.js reads
+                    // bike.voltReach). Purely cosmetic; sim-inert
+  avelDamp: 2.0,   // angular drag bled off avel per second, ground AND air — the
+                   // KEY controllability lever. It sets the held rate (with
+                   // voltAcc) AND, on release, settles the rotation in ~1/avelDamp
+                   // s so a volt STOPS instead of free-spinning the bike forever.
+                   // Was 0.12 (≈ no damping): one tap then imparted a spin that
+                   // never decayed, flipping the bike over and over. Higher =
+                   // tighter / quicker to settle; lower = floatier coast
 
   mu: 1.1,         // tire friction coefficient
   muGlass: 0.06,   // tire friction on obsidian glass: the engine can barely
@@ -292,10 +290,10 @@ class Bike {
     this.avel = 0;
     this.facing = 1; // 1 = right, -1 = left
     this.turnT = 9;  // seconds since last turn-around (drives the flip animation)
-    this.voltCd = 0;  // throttle timer: time until the next volt may fire (also
-                      // drives the rider's arm-flick in render.js + volt sound)
-    this.voltAge = 9; // time since the current volt thrust began (>=voltDur=idle)
-    this.voltDir = 0; // direction (-1/+1) of the current volt thrust
+    this.voltDir = 0;   // current lean: -1 left, +1 right, +2 alovolt (drives the
+                        // arm-flick in render.js + the volt-sound onset in game.js)
+    this.voltReach = 0; // 0..1 arm-flick engagement: eases toward 1 while volting,
+                        // back to 0 when idle (cosmetic; read by render.js)
     this.grav = 1;          // gravity direction: +1 pulls down (normal), -1 up.
                             // An upside-down burger flips it, Elasto-Mania
                             // gravity-apple style, so the bike rides ceilings
@@ -335,11 +333,11 @@ class Bike {
     if (this.dead) return;
     this.turnT += dt;
     const P = PHYS;
-    // grounded = at least one wheel touched last step (contacts run later, so
-    // this is the previous step's state — a 1-frame lag that doesn't matter).
-    // Airborne, the frame rotates FREELY (volt-driven): the wheel-spring torque
-    // and avelDamp are both skipped, so an air spin holds and air volts wind it
-    // up cleanly to voltMaxSpin instead of the suspension bleeding it back down.
+    // grounded = at least one wheel touched last step (contacts run later, so this
+    // is the previous step's state — a 1-frame lag that doesn't matter). Used only
+    // for the gravity multiplier now; rotation (the volt drive, the wheel-spring
+    // reaction torque, and avelDamp) is unified across air and ground for an
+    // Elasto-faithful feel — the bike is one consistent springy body either way.
     const grounded = this.wheels.some(w => w.onGround);
     const c = Math.cos(this.angle), s = Math.sin(this.angle);
     // gravity acceleration, signed by this.grav so an upside-down burger can
@@ -349,56 +347,34 @@ class Bike {
     const gy = P.g * this.grav * (grounded ? 1 : P.airGrav);
 
     let fx = 0, fy = P.frameM * gy, torque = 0;
-    // lean ("volt"): a DISCRETE rider thrust throttled to one per voltEvery, so
-    // holding a key can't spam rotation (Elasto Mania volting).
-    //  - GROUNDED (either wheel touching): a smooth torque burst over voltDur —
-    //    a weight shift for balance / wheelie / tip-over.
-    //  - MID-AIR (both wheels off): an INSTANTANEOUS boost instead — each volt
-    //    adds a FIXED voltKick to the spin (same size at any voltMaxSpin), so it
-    //    reads as a discrete thrust rather than a smooth ramp. voltMaxSpin is a
-    //    plain ceiling that clamps the total; it does NOT scale the per-volt
-    //    boost. Only adds toward the lean, never pulls down spin already past the
-    //    cap (e.g. from a crash). Co-rotating the wheels makes the boost stick.
-    this.voltCd -= dt;
-    const lean = (input.right ? 1 : 0) - (input.left ? 1 : 0);
-    if (lean !== 0 && this.voltCd <= 0) {
-      this.voltCd = P.voltEvery;  // throttle: no next volt until this elapses
-      this.voltDir = lean;        // remember the lean (drives the arm-flick dir,
-                                   // both grounded and air; sim-inert in the air)
-      if (grounded) {
-        this.voltAge = 0;         // grounded: start a smooth torque burst
-      } else {
-        // mid-air: a FIXED instantaneous boost (voltKick) per volt — the SAME
-        // size at ANY voltMaxSpin, so the cap is purely a ceiling, not a volt-
-        // strength knob (raising it just takes more volts to reach the top, it
-        // doesn't make each volt punchier). Hard-clamped at voltMaxSpin in the
-        // lean direction; never pulls down spin already past the cap (e.g. from
-        // a crash). Reads as a discrete thrust per volt.
-        const before = this.avel;
-        this.avel += lean * P.voltKick;
-        if (lean > 0) this.avel = Math.min(this.avel, Math.max(P.voltMaxSpin, before));
-        else          this.avel = Math.max(this.avel, Math.min(-P.voltMaxSpin, before));
-        // co-rotate the wheels by the boost actually applied (v += dav × r) so
-        // the suspension doesn't drag the jump straight back down — it sticks
-        // instead of sagging. (The spin still tops out where voltKick can no
-        // longer overcome the wheels' rising centripetal-sling cost; that ceiling
-        // scales with voltKick, and voltMaxSpin caps below it.)
-        const dav = this.avel - before;
-        for (const w of this.wheels) {
-          w.vel.x -= dav * (w.pos.y - this.pos.y);
-          w.vel.y += dav * (w.pos.x - this.pos.x);
-        }
-        this.voltAge = P.voltDur; // no ground-style burst for an air volt
+    // lean ("volt"): a CONTINUOUS rotational drive while a key is held — identical
+    // on the ground and in the air (Elasto Mania). Holding left/right applies
+    // voltAcc torque toward that lean, and the torque fades to zero as |avel| nears
+    // voltMaxSpin, so the rotation winds up to a capped rate and HOLDS there;
+    // releasing lets avelDamp (below) settle the angle. Pressing BOTH keys is an
+    // alovolt: a stronger clockwise burst (alovoltAcc) with its own higher cap.
+    const alovolt = input.left && input.right;
+    let lean;
+    if (alovolt) {
+      lean = 1; // alovolt rotates clockwise (positive avel, like a right volt)
+      const room = Math.min(1, Math.max(0, 1 - this.avel / P.alovoltMaxSpin));
+      torque += P.alovoltAcc * room;
+      this.voltDir = 2; // arm-flick + sound flag (clockwise, extra strong)
+    } else {
+      lean = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+      if (lean !== 0) {
+        // room reopens to full when countering an opposite spin, so a reversal
+        // gets the whole torque; it only fades as you approach the cap your way
+        const room = Math.min(1, Math.max(0, 1 - lean * this.avel / P.voltMaxSpin));
+        torque += lean * P.voltAcc * room;
       }
+      this.voltDir = lean;
     }
-    if (this.voltAge < P.voltDur) {
-      const spinDir = this.voltDir * this.avel; // current spin toward the lean
-      // ground burst eases off toward voltGroundCap (its OWN reference, not the
-      // air voltMaxSpin) so the air cap can't secretly change ground strength
-      const room = Math.min(1, Math.max(0, 1 - spinDir / P.voltGroundCap));
-      torque += this.voltDir * P.voltT * room;
-      this.voltAge += dt;
-    }
+    // arm-flick engagement (cosmetic): ease toward fully-leaned while volting and
+    // back to rest when idle, so render.js can hold the lean pose while the key is
+    // down instead of pulsing once per discrete volt
+    const voltOn = alovolt || lean !== 0 ? 1 : 0;
+    this.voltReach += (voltOn - this.voltReach) * Math.min(1, P.voltReachRate * dt);
 
     // fast spins sling the wheels outward: the spring's rest anchor extends
     // radially with the square of the spin rate, like elastic bars. The
@@ -434,12 +410,12 @@ class Bike {
       w.vel.y += (Fy / P.wheelM + gy) * dt;
       fx -= Fx;
       fy -= Fy;
-      // wheel-spring reaction torque on the frame — only while grounded. In the
-      // air this is the transient that bled an air volt's boost straight back
-      // down (boost to 20 → sag to ~15), which is what made voltMaxSpin unable
-      // to bind; skipping it lets the spin hold and reach the cap. The spring
-      // FORCE on the wheel (Fx/Fy) still applies, so the wheels still sling out.
-      if (grounded) torque += rx * (-Fy) - ry * (-Fx);
+      // wheel-spring reaction torque on the frame — applied in the air too now, so
+      // the bike is one consistent springy body in flight and on the ground
+      // (Elasto-faithful). A steady co-rotating spin leaves the spring at rest, so
+      // it produces ~no reaction and the continuous volt drive holds the spin; only
+      // spin-up / wobble creates a transient, which the sustained drive overcomes.
+      torque += rx * (-Fy) - ry * (-Fx);
 
       // progressive extension spring: as a wheel is flung far from the frame
       // CENTRE (fast spin), a steeply rising force resists it — the further out,
@@ -515,9 +491,9 @@ class Bike {
     this.vel.x += (fx / P.frameM) * dt;
     this.vel.y += (fy / P.frameM) * dt;
     this.avel += (torque / P.frameI) * dt;
-    // angular drag only while grounded (settles ground rotation, tames floaty
-    // leans). Airborne there's no drag, so a spin holds (Elasto free air spin).
-    if (grounded) this.avel *= 1 - P.avelDamp * dt;
+    // angular drag, ground AND air: a held volt sustains the spin against it, and
+    // releasing lets it settle the angle (Elasto-style controllable rotation)
+    this.avel *= 1 - P.avelDamp * dt;
 
     // quadratic linear drag on the speed above dragV0: a mass-independent
     // deceleration applied to the frame and both wheels so the whole bike
