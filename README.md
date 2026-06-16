@@ -10,6 +10,25 @@ hit anything — but if your head touches the ground, you crash.
 
 Open `index.html` in any modern browser (no build step, no server needed).
 
+## Install (PWA)
+
+The deployed site is a Progressive Web App, so it installs to a phone or
+desktop and then runs full-screen and offline like a native game. On the
+live site:
+
+- **Android / Chrome / Edge:** tap the address-bar **Install** prompt (or
+  ⋮ → *Install app* / *Add to Home screen*).
+- **iOS / Safari:** Share → **Add to Home Screen**.
+
+A web manifest (`manifest.webmanifest`) supplies the name, icons, landscape
+lock, and full-screen display; a service worker (`sw.js`) precaches the app
+shell and caches the versioned `js/*.js` at runtime, so after the first visit
+the game launches with no network. Installability needs HTTPS, so the service
+worker registers only over http(s) — opening `index.html` off disk (`file://`)
+just plays normally with no worker. The home-screen icons live in `assets/`
+and are generated from the favicon by `node tools/gen-icons.js` (dependency-free
+PNG encoder — re-run it if the favicon's look changes).
+
 ## Deploying
 
 The game is a static site published to GitHub Pages by a GitHub Actions
@@ -28,7 +47,10 @@ stamped build).
 `index.html` itself can't be URL-versioned — its address is fixed — but GitHub
 Pages serves it with a short cache TTL plus an ETag, so returning visitors
 revalidate the HTML within minutes and then pull the freshly stamped `?v=…`
-JS URLs.
+JS URLs. The same step also stamps the commit SHA into the service worker's
+`BUILD` constant (`sw.js`), so each deploy ships a byte-different worker — the
+browser updates it and its `activate` step purges the previous offline cache,
+keeping installed PWAs from pinning to a stale build.
 
 **One-time setup:** in the repo's **Settings → Pages → Build and deployment**,
 set **Source** to **GitHub Actions** (instead of "Deploy from a branch") so the
@@ -125,6 +147,7 @@ node test/replay_check.js   # tape encoding + record/save/playback determinism
 node test/style_check.js    # style points: airborne flip/rotation awards
 node test/editor_check.js   # map editor: tools, undo, .bmm round trip, test ride
 node test/mobile_ui_check.js # every screen fits a phone: no text/buttons clip off
+node test/pwa_check.js      # PWA wiring: manifest, icons, service worker, deploy
 ```
 
 ## Map editor

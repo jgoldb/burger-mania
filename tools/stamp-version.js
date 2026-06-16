@@ -19,6 +19,7 @@ const { execSync } = require('child_process');
 
 const root = path.resolve(__dirname, '..');
 const htmlPath = path.join(root, 'index.html');
+const swPath = path.join(root, 'sw.js');
 
 function token() {
   if (process.argv[2]) return process.argv[2];
@@ -51,3 +52,18 @@ if (!count) {
 
 fs.writeFileSync(htmlPath, out);
 console.log(`stamp-version: set ?v=${v} on ${count} script tag(s) in index.html`);
+
+// Stamp the same token into the service worker's BUILD constant. This makes the
+// SW file byte-different on every deploy, so the browser updates the worker and
+// its activate step purges the old cache (see sw.js). Without this the SW would
+// never change and could pin returning visitors to a stale cached build.
+if (fs.existsSync(swPath)) {
+  const sw = fs.readFileSync(swPath, 'utf8');
+  const swOut = sw.replace(/const BUILD = '[^']*';/, `const BUILD = '${v}';`);
+  if (swOut === sw) {
+    console.error("stamp-version: no `const BUILD = '...'` line found in sw.js");
+    process.exit(1);
+  }
+  fs.writeFileSync(swPath, swOut);
+  console.log(`stamp-version: set BUILD='${v}' in sw.js`);
+}
