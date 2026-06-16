@@ -39,9 +39,10 @@ jobs:
 
       - name: Assemble the published site (only what the game needs)
         run: |
-          mkdir -p _site
+          mkdir -p _site/levels
           cp index.html CNAME favicon.svg manifest.webmanifest sw.js _site/
           cp -r js assets _site/
+          cp -r levels/tracks _site/levels/
 
       - uses: actions/configure-pages@v5
 
