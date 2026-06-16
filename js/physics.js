@@ -2,8 +2,12 @@
 
 // Tuning constants for the bike. Units: meters, seconds, radians.
 const PHYS = {
-  g: 2.8,          // ONE uniform gravity, air and ground alike (Elasto Mania — no
-                   // air/ground split). The ground feeling too light at this value
+  g: 2.5,          // ONE uniform gravity, air and ground alike (Elasto Mania — no
+                   // air/ground split). Lowered 2.8->2.5 for a floatier, more
+                   // Elasto-like arc (gentler falls, hangier air). NOTE: a lighter
+                   // bike recoils off the suspension more readily — to stop the
+                   // extra hop, springC was raised in step (see below).
+                   // The ground feeling too light at this value
                    // was NOT a gravity problem: it was the volt being too strong for
                    // the ledge and the engine wheelie too strong for the volt to
                    // hold down. Those are fixed at their own sources now — voltAcc
@@ -33,13 +37,18 @@ const PHYS = {
                    // land flat to survive, Elasto-style), where the fall-toughness
                    // was tuned. The springy FEEL comes from the light damping
                    // (springC) below, NOT from changing this
-  springC: 2.8,    // suspension damping — THE bounce lever. Down from the old dead
-                   // 5.0 (damping ratio ~0.82, just absorbs) to 2.8 (~0.46):
-                   // underdamped so the suspension RECOILS and springs back, but not
-                   // so light it pogos. (2.0 / ~0.33 read as "too bouncy / bike too
-                   // light"; 2.8 settles in fewer, smaller bounces.) Barely touches
-                   // the spring SPEED — that's springK — so the snappy expand/
-                   // collapse is preserved. Lower = bouncier, higher = more planted
+  springC: 4.0,    // suspension damping — THE bounce lever. The old dead value was
+                   // 5.0 (damping ratio ~0.82, just absorbs). 2.8 (~0.46) still
+                   // recoiled too much, so it's now 4.0 (~0.66) — heavily damped but
+                   // still under 1.0, so the suspension RECOILS a little instead of
+                   // soaking dead, just with much less bounce-back. Stepped up
+                   // alongside the gravity cut too: less gravity to hold the wheels
+                   // down means the same recoil hops the lighter bike off the ground
+                   // more, so the damper has to soak more to keep it planted.
+                   // (2.0 / ~0.33 read as "too bouncy / bike too light".) Barely
+                   // touches the spring SPEED — that's springK — so the snappy
+                   // expand/collapse is preserved. Lower = bouncier, higher = more
+                   // planted; the hard-LANDING bounce specifically is springCFade
   springCFade: 12, // relative speed (m/s) where the suspension damper fades to
                    // half, so a fast compression rides mostly on the spring (and
                    // bounces) instead of being soaked dead. The body has no terrain
@@ -121,18 +130,22 @@ const PHYS = {
   // air rotations and recoveries. NEITHER has a hard spin cap: the top rate is
   // EMERGENT, set by the drive torque balancing avelDamp (angular drag) below — the
   // physics decides the ceiling, not a clamp. A fresh normal press pumps at once.
-  voltAcc: 17,      // torque of ONE normal volt pump (the punch). Sets normal-volt
+  voltAcc: 21,      // torque of ONE normal volt pump (the punch). Sets normal-volt
                     // rotation (fine control / balance) AND how easily you can pump
                     // off a ledge — keep it modest so a DANGLING body (gravity
                     // resisting) can't be pumped up, while a body whose CoM is still
-                    // OVER the ledge (gravity not resisting) rotates back easily
-  voltBurstDur: 0.133, // seconds each pump applies torque — the length of one punch.
-                    // Raised 0.1->0.133 in step with voltCadence 0.45->0.6 (×1.333) so
-                    // the AVERAGE torque (voltAcc*voltBurstDur/voltCadence ≈ 4) holds:
-                    // same overall power, just delivered in fewer, longer/meatier pumps
-  voltCadence: 0.6, // seconds between pump starts while held (~1.7 pumps/s) — fewer,
-                    // more distinct pumps (raised 0.45->0.6, the volts were too quick).
-                    // The GAP is where gravity/damping act on a hang
+                    // OVER the ledge (gravity not resisting) rotates back easily.
+                    // Raised 17->21 for a harder, snappier punch; burst/cadence were
+                    // trimmed in step (below) so the AVERAGE only edged up slightly
+  voltBurstDur: 0.125, // seconds each pump applies torque — the length of one punch.
+                    // Trimmed 0.133->0.125 (shorter punch). With voltAcc up to 21 and
+                    // voltCadence out to 0.66, the AVERAGE torque
+                    // (voltAcc*voltBurstDur/voltCadence) goes ~3.77 -> ~3.98: only a
+                    // touch stronger overall, delivered in fewer, harder, shorter pumps
+  voltCadence: 0.66, // seconds between pump starts while held (~1.5 pumps/s) — fewer,
+                    // more distinct pumps (0.45->0.6->0.66). The GAP is where
+                    // gravity/damping act on a hang, so a longer gap also makes a
+                    // ledge recovery more of a pump-and-time skill
   alovoltAcc: 8.5,    // CONTINUOUS torque of the alovolt (both keys) — sustained, not
                     // pulsed, so it clearly out-spins the bursty normal volt (emergent
                     // air terminal ≈ alovoltAcc/(frameI*avelDamp) ≈ 6 rad/s). ONE rule,

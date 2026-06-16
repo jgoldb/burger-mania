@@ -15,7 +15,12 @@
 // an older version" failure instead of a silent, wrong-looking playback.
 const REPLAY = (() => {
   const FORMAT = 'burger-mania-replay';
-  const VERSION = 6; // bumped 2026-06-16: pickup radii unified to the Elma object
+  const VERSION = 7; // bumped 2026-06-16: physics feel pass — gravity 2.8->2.5,
+                     // suspension damping springC 2.8->4.0 (less recoil), and the
+                     // normal volt re-tuned (voltAcc 17->21, voltBurstDur 0.133->
+                     // 0.125, voltCadence 0.6->0.66). Different gravity/spring/volt
+                     // forces desync the integration, so every pre-v7 tape drifts.
+                     // v6 (2026-06-16): pickup radii unified to the Elma object
                      // size (0.4) — the nut mound's kill radius (PHYS.nutR) shrank
                      // 0.45->0.4 and the goal's reach 0.5->0.4, so a tape that
                      // grazed a nut or clipped the goal now ends at a different
