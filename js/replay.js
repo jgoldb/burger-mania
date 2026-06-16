@@ -15,7 +15,11 @@
 // an older version" failure instead of a silent, wrong-looking playback.
 const REPLAY = (() => {
   const FORMAT = 'burger-mania-replay';
-  const VERSION = 7; // bumped 2026-06-16: physics feel pass — gravity 2.8->2.5,
+  const VERSION = 8; // bumped 2026-06-16: alovolt torque eased (alovoltAcc 8.5->8.0)
+                     // so the both-keys spin tops out a touch lower. A different
+                     // air-righting torque desyncs the integration, so every pre-v8
+                     // tape drifts.
+                     // v7 (2026-06-16): physics feel pass — gravity 2.8->2.5,
                      // suspension damping springC 2.8->4.0 (less recoil), and the
                      // normal volt re-tuned (voltAcc 17->21, voltBurstDur 0.133->
                      // 0.125, voltCadence 0.6->0.66). Different gravity/spring/volt

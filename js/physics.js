@@ -146,7 +146,7 @@ const PHYS = {
                     // more distinct pumps (0.45->0.6->0.66). The GAP is where
                     // gravity/damping act on a hang, so a longer gap also makes a
                     // ledge recovery more of a pump-and-time skill
-  alovoltAcc: 8.5,    // CONTINUOUS torque of the alovolt (both keys) — sustained, not
+  alovoltAcc: 8,    // CONTINUOUS torque of the alovolt (both keys) — sustained, not
                     // pulsed, so it clearly out-spins the bursty normal volt (emergent
                     // air terminal ≈ alovoltAcc/(frameI*avelDamp) ≈ 6 rad/s). ONE rule,
                     // ground and air — no gate. Kept modest ON PURPOSE: a stronger
