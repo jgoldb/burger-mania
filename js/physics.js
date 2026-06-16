@@ -361,6 +361,9 @@ class Bike {
     this.voltLead = 1;  // the lean direction the rider last committed to with a SINGLE
                         // key (-1 left / +1 right). A both-key alovolt drives THIS way,
                         // so you can supervolt either direction by leading with that key
+    this.alovolting = false; // whether the both-key alovolt was engaged last step, so the
+                        // thump fires ONCE on the rising edge — the alovolt is a sustained
+                        // drive, not a series of pumps, so its sound shouldn't loop
     // gravity direction as a unit vector: down {0,1} (normal), up {0,-1}, or
     // sideways {±1,0}. A gravity burger SETS it (Elasto-Mania gravity-apple
     // style — up/down ride ceilings, left/right ride walls); the whole bike
@@ -435,10 +438,15 @@ class Bike {
     if (alovolt) {
       const dir = this.voltLead;       // ±1: which way the lead key pointed
       torque += dir * P.alovoltAcc;    // CONTINUOUS supervolt, either direction
-      if (ready) { this.voltPhase = 0; this.voltPumps++; } // (just paces the sound)
+      if (ready) this.voltPhase = 0;   // keep cadence ticking for the single-key handoff
+      // thump ONCE when the alovolt engages — it's a sustained drive, not a string of
+      // pumps, so the sound shouldn't loop while both keys are held (rising edge only)
+      if (!this.alovolting) this.voltPumps++;
+      this.alovolting = true;
       this.voltDir = dir * 2;          // ±2 -> arm flicks the right way (render.js)
       this.voltReach += (1 - this.voltReach) * Math.min(1, P.voltReachRate * dt); // arm held
     } else {
+      this.alovolting = false;
       const lean = (R ? 1 : 0) - (L ? 1 : 0);
       // fire a pump only when the cadence is ready AND a lean is pressed, and LATCH its
       // direction. The arm-flick then plays out over voltBurstDur on its own — driven by
