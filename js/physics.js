@@ -146,14 +146,15 @@ const PHYS = {
                     // more distinct pumps (0.45->0.6->0.66). The GAP is where
                     // gravity/damping act on a hang, so a longer gap also makes a
                     // ledge recovery more of a pump-and-time skill
-  alovoltAcc: 8,    // CONTINUOUS torque of the alovolt (both keys) — sustained, not
+  alovoltAcc: 7,    // CONTINUOUS torque of the alovolt (both keys) — sustained, not
                     // pulsed, so it clearly out-spins the bursty normal volt (emergent
-                    // air terminal ≈ alovoltAcc/(frameI*avelDamp) ≈ 6 rad/s). ONE rule,
-                    // ground and air — no gate. Kept modest ON PURPOSE: a stronger
-                    // sustained torque VAULTS the bike off flat ground (you'd pogo into
-                    // flips); at 8 a ground spin reaches only ~0.5 of a turn before the
-                    // head hits and crashes — past ~10-11 it starts completing flips. So
-                    // the no-flat-ground-flip behaviour falls out of the physics, no gate
+                    // air terminal ≈ alovoltAcc/(frameI*avelDamp)). The cadence gates
+                    // when it can ENGAGE, but the drive itself is the same on ground
+                    // and air. Kept modest ON PURPOSE: a stronger sustained torque
+                    // VAULTS the bike off flat ground (you'd pogo into flips); at 7 a
+                    // ground spin reaches under a turn before the head hits and crashes
+                    // — past ~10-11 it starts completing flips. So the no-flat-ground-
+                    // flip behaviour falls out of the physics, no gate (8->7)
   voltReachRate: 14, // 1/s the rider's arm pumps toward fully-leaned DURING each
                     // torque punch and falls back in the gap, so the arm visibly
                     // punches per pump (render.js reads bike.voltReach). Cosmetic
@@ -355,8 +356,13 @@ class Bike {
                         // arm-flick direction in render.js)
     this.voltReach = 0; // 0..1 arm-flick engagement: pumps toward 1 during each volt
                         // punch, falls back between (cosmetic; read by render.js)
-    this.voltPhase = PHYS.voltCadence; // timer within the bursty volt cycle; parked
-                        // at voltCadence when idle so the next press pumps at once
+    this.voltPhase = PHYS.voltCadence; // cadence timer: time since the last volt EVENT
+                        // (a normal pump, or an alovolt engage/release), capped at
+                        // voltCadence; gates both the next pump and the next alovolt
+                        // engage. Parked at voltCadence when idle so the next press pumps at once
+    this.voltBurst = 0; // countdown (s) of the current normal-pump torque punch; >0 means
+                        // the pump is still applying torque. Decoupled from voltPhase so an
+                        // alovolt-release cooldown reset can't fire a phantom pump
     this.voltPumps = 0; // count of volt pumps fired (game.js thumps on each new one)
     this.voltLead = 1;  // the lean direction the rider last committed to with a SINGLE
                         // key (-1 left / +1 right). A both-key alovolt drives THIS way,
@@ -417,43 +423,62 @@ class Bike {
     // lean ("volt") — ONE rule, ground and air, no gates. NORMAL volt (one key) is
     // BURSTY: a discrete torque pump for voltBurstDur every voltCadence, the gaps
     // letting gravity act (Elasto tap-volting; can't winch a hanging body up). The
-    // ALOVOLT (both keys) is the CONTINUOUS supervolt — a sustained clockwise drive.
-    // No hard spin cap (the air top-rate is emergent, where the drive balances
-    // avelDamp), and no air/ground branch: that a hard spin crashes you on flat
-    // ground but rotates you in the air EMERGES from the contact + the modest torque
-    // (alovoltAcc is small enough it can't vault the bike off the ground — see there).
+    // ALOVOLT (both keys) is the CONTINUOUS supervolt — a sustained clockwise drive,
+    // but it can only ENGAGE when the cadence is ready (a cooldown blocks it, same as
+    // a pump) and RELEASING it spends a cooldown of its own. No hard spin cap (the air
+    // top-rate is emergent, where the drive balances avelDamp), and no air/ground branch:
+    // that a hard spin crashes you on flat ground but rotates you in the air EMERGES
+    // from the contact + the modest torque (alovoltAcc can't vault the bike off the ground).
     const L = !!input.left, R = !!input.right;
     // remember the direction the rider commits to with a SINGLE key, so a follow-up
     // both-key alovolt supercharges THAT way (lead with left = CCW, right = CW) —
     // bidirectional, unlike Elasto's clockwise-only quirk. Both/neither keep the last.
     if (L !== R) this.voltLead = L ? -1 : 1;
     const alovolt = L && R;
-    // voltPhase = time since the last pump fired, advanced EVERY step (held, idle, OR
-    // between taps) and capped at voltCadence. A pump can only fire once it reaches
-    // voltCadence (`ready`), so the throttle holds however you input it — hammering
-    // left/right can't sneak extra volts in inside the cadence window. Capped (not
-    // re-armed on release), so a fresh press after a real gap still pumps at once.
+    // voltPhase = time since the last volt EVENT (a normal pump, OR an alovolt
+    // engaging/releasing), advanced EVERY step (held, idle, or between taps) and
+    // capped at voltCadence. The cadence (`ready`) gates BOTH the normal pump AND
+    // the alovolt engage, so neither can sneak in during the cooldown window —
+    // hammering keys can't fire a new pump, and tapping into an alovolt mid-cooldown
+    // does nothing. Capped (not re-armed on release), so a fresh press after a real
+    // gap still pumps at once. voltBurst is a SEPARATE countdown for the torque punch
+    // (decoupled from voltPhase so a release-cooldown reset can't trigger a phantom pump).
     this.voltPhase = Math.min(this.voltPhase + dt, P.voltCadence);
+    this.voltBurst = Math.max(0, this.voltBurst - dt);
     const ready = this.voltPhase >= P.voltCadence;
     if (alovolt) {
       const dir = this.voltLead;       // ±1: which way the lead key pointed
-      torque += dir * P.alovoltAcc;    // CONTINUOUS supervolt, either direction
-      if (ready) this.voltPhase = 0;   // keep cadence ticking for the single-key handoff
-      // thump ONCE when the alovolt engages — it's a sustained drive, not a string of
-      // pumps, so the sound shouldn't loop while both keys are held (rising edge only)
-      if (!this.alovolting) this.voltPumps++;
-      this.alovolting = true;
-      this.voltDir = dir * 2;          // ±2 -> arm flicks the right way (render.js)
-      this.voltReach += (1 - this.voltReach) * Math.min(1, P.voltReachRate * dt); // arm held
+      // ENGAGE only when the cadence is ready: a cooldown (from a prior pump OR a
+      // just-ended alovolt) blocks the supervolt from STARTING, exactly as it blocks
+      // a normal pump. Once engaged (`alovolting`) it runs CONTINUOUSLY until release
+      // — the cooldown gates the engage, not the sustained drive.
+      if (this.alovolting || ready) {
+        torque += dir * P.alovoltAcc;  // CONTINUOUS supervolt, either direction
+        // thump ONCE when the alovolt engages — it's a sustained drive, not a string
+        // of pumps, so the sound shouldn't loop while both keys are held (rising edge)
+        if (!this.alovolting) this.voltPumps++;
+        this.alovolting = true;
+        this.voltDir = dir * 2;        // ±2 -> arm flicks the right way (render.js)
+        this.voltReach += (1 - this.voltReach) * Math.min(1, P.voltReachRate * dt); // arm held
+        this.voltPhase = P.voltCadence; // park at the cap so `ready` stays true while held;
+                                        // RELEASING is what spends the cooldown (below)
+      }
     } else {
-      this.alovolting = false;
       const lean = (R ? 1 : 0) - (L ? 1 : 0);
-      // fire a pump only when the cadence is ready AND a lean is pressed, and LATCH its
-      // direction. The arm-flick then plays out over voltBurstDur on its own — driven by
-      // the burst window, NOT live input — so hammering the key during the cooldown is
-      // ignored: it can't fire a new pump (throttle) and it can't twitch the arm either.
-      if (ready && lean !== 0) { this.voltPhase = 0; this.voltPumps++; this.voltDir = lean; }
-      const inBurst = this.voltPhase < P.voltBurstDur;
+      if (this.alovolting) {
+        // RELEASING the alovolt spends a cooldown: reset the cadence so neither a
+        // normal pump nor a fresh alovolt can fire until a full voltCadence elapses.
+        // No burst is started, so the release itself can't sneak a pump out.
+        this.alovolting = false;
+        this.voltPhase = 0;
+      } else if (ready && lean !== 0) {
+        // fire a normal pump: spend the cooldown and start a torque punch. The
+        // arm-flick then plays out over voltBurst on its own — driven by the burst
+        // timer, NOT live input — so hammering the key during the cooldown is
+        // ignored: it can't fire a new pump and it can't twitch the arm either.
+        this.voltPhase = 0; this.voltBurst = P.voltBurstDur; this.voltPumps++; this.voltDir = lean;
+      }
+      const inBurst = this.voltBurst > 0;
       if (inBurst && lean !== 0) torque += lean * P.voltAcc; // pump torque (while held)
       this.voltReach += ((inBurst ? 1 : 0) - this.voltReach) * Math.min(1, P.voltReachRate * dt);
     }

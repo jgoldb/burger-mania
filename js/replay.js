@@ -15,7 +15,9 @@
 // an older version" failure instead of a silent, wrong-looking playback.
 const REPLAY = (() => {
   const FORMAT = 'burger-mania-replay';
-  const VERSION = 8; // bumped 2026-06-16: alovolt torque eased (alovoltAcc 8.5->8.0)
+  const VERSION = 9; // bumped 2026-06-16: alovolt now obeys the volt cadence — it can
+                     // only ENGAGE when ready and RELEASING it spends a cooldown (no
+                     // more sneaking a supervolt in mid-cooldown); alovoltAcc 8.0->7.0.
                      // so the both-keys spin tops out a touch lower. A different
                      // air-righting torque desyncs the integration, so every pre-v8
                      // tape drifts.
