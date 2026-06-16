@@ -4667,16 +4667,27 @@ function drawExhaust(ctx, puffs, view) {
     if (s.mirage) {
       const fade = Math.min(1, k * 5) * (1 - k);
       if (view) {
-        const wob = Math.sin(s.age * 22 + s.seed) * 0.055 + 0.025;
+        // churning ripple: two shimmer frequencies on x plus a slower roll on y,
+        // so the wake BOILS instead of sliding flat. Amplitudes are several times
+        // the old single-sine slide for a much harder afterburner refraction.
+        const wob = (Math.sin(s.age * 26 + s.seed)
+                   + 0.5 * Math.sin(s.age * 61 + s.seed * 1.7)) * 0.14 + 0.03;
+        const wy  = Math.cos(s.age * 33 + s.seed * 0.6) * 0.09 - 0.05;
+        // heat lens: magnify the already-drawn frame ABOUT the puff centre so the
+        // background bulges and swims, strongest while the puff is young/hot
+        const m = 1 + (0.18 + 0.07 * Math.sin(s.age * 40 + s.seed)) * (1 - k);
         ctx.save();
         ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, Math.PI * 2); ctx.clip();
         ctx.globalAlpha = 0.6 + 0.4 * fade;  // mostly the shifted background
-        ctx.drawImage(ctx.canvas, view.x + wob, view.y - 0.05 - wob * 0.5, view.w, view.h);
+        ctx.drawImage(ctx.canvas,
+          s.x * (1 - m) + m * view.x + wob,
+          s.y * (1 - m) + m * view.y + wy,
+          view.w * m, view.h * m);
         ctx.restore();
       }
-      // a whisper of blue plasma colour riding over the ripple
+      // a brighter lick of blue plasma colour riding over the boiling ripple
       const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, r);
-      g.addColorStop(0, `rgba(${s.tint},${0.12 * fade})`);
+      g.addColorStop(0, `rgba(${s.tint},${0.2 * fade})`);
       g.addColorStop(1, `rgba(${s.tint},0)`);
       ctx.fillStyle = g;
       ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, Math.PI * 2); ctx.fill();

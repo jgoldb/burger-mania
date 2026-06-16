@@ -1976,8 +1976,8 @@
     const mode = bikePalette(BIKE_SKIN).exhaust;
     // mirage ripples are big and costly (canvas self-sampling), so spawn fewer
     const rate = mode === 'flame' ? SMOKE_RATE * 1.4
-               : mode === 'mirage' ? SMOKE_RATE * 0.6 : SMOKE_RATE;
-    const cap = mode === 'mirage' ? 18 : SMOKE_MAX;
+               : mode === 'mirage' ? SMOKE_RATE * 0.8 : SMOKE_RATE;
+    const cap = mode === 'mirage' ? 22 : SMOKE_MAX;
     exhaustAcc += load * rate * dt;
     while (exhaustAcc >= 1 && exhaust.length < cap) {
       exhaustAcc -= 1;
@@ -2009,8 +2009,8 @@
         const out = rnd(0.8, 1.8) * (0.5 + load);
         exhaust.push({
           x: tip.x + rnd(-0.05, 0.05), y: tip.y + rnd(-0.05, 0.05),
-          vx: cvx + dx * out + rnd(-0.3, 0.3), vy: cvy + dy * out - rnd(0.2, 0.6),
-          age: 0, life: rnd(0.5, 0.85), r0: rnd(0.14, 0.22), r1: rnd(0.5, 0.9),
+          vx: cvx + dx * out + rnd(-0.4, 0.4), vy: cvy + dy * out - rnd(0.3, 0.8),
+          age: 0, life: rnd(0.6, 1.0), r0: rnd(0.18, 0.30), r1: rnd(0.8, 1.35),
           alpha: 1, mirage: true, seed: Math.random() * 6.28, tint: '150,200,255',
         });
       } else { // smoke (tiers 0/1)
