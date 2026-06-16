@@ -8,7 +8,18 @@ hit anything — but if your head touches the ground, you crash.
 
 ## Play
 
-Open `index.html` in any modern browser (no build step, no server needed).
+Run a local web server from the repo root and open the printed URL:
+
+```
+npm start          # serves the repo at http://localhost:8080
+```
+
+(`npm start` runs `tools/serve.js`, a tiny zero-dependency static server — any
+other static server works too, e.g. `npx serve` or `python -m http.server`.)
+There's still no build step. A server is needed because the game loads its
+levels from `levels/*.bmm` with `fetch()`, and browsers block `fetch()` of
+`file://` URLs — so opening `index.html` straight off disk loads the menus but
+not the maps. The live site is served over https, so it just works there.
 
 ## Install (PWA)
 
@@ -23,9 +34,12 @@ live site:
 A web manifest (`manifest.webmanifest`) supplies the name, icons, landscape
 lock, and full-screen display; a service worker (`sw.js`) precaches the app
 shell and caches the versioned `js/*.js` at runtime, so after the first visit
-the game launches with no network. Installability needs HTTPS, so the service
+the game launches with no network. The level maps (`levels/*.bmm`) are fetched
+network-first, so an edited or newly added map shows up on the next reload and
+the rest stay available offline. Installability needs HTTPS, so the service
 worker registers only over http(s) — opening `index.html` off disk (`file://`)
-just plays normally with no worker. The home-screen icons live in `assets/`
+runs the menus with no worker, but can't fetch its maps (see **Play**). The
+home-screen icons live in `assets/`
 and are generated from the favicon by `node tools/gen-icons.js` (dependency-free
 PNG encoder — re-run it if the favicon's look changes).
 
@@ -39,10 +53,9 @@ Browsers cache JS by URL, so a fresh build could otherwise keep serving the old
 `js/*.js` to returning visitors. The workflow prevents that: it stamps a
 cache-busting token (the commit SHA) onto every `<script src="js/*.js">` URL in
 the published copy, e.g. `js/game.js?v=ad15825e4c`. A changed URL forces the
-browser to refetch. The committed source stays query-free, so opening
-`index.html` off disk keeps working; only the deployed artifact is stamped
-(`tools/stamp-version.js` does the rewrite — run it by hand only to preview a
-stamped build).
+browser to refetch. The committed source stays query-free; only the deployed
+artifact is stamped (`tools/stamp-version.js` does the rewrite — run it by hand
+only to preview a stamped build).
 
 `index.html` itself can't be URL-versioned — its address is fixed — but GitHub
 Pages serves it with a short cache TTL plus an ETag, so returning visitors
@@ -195,22 +208,35 @@ control reference; the short version:
   with unsaved edits they ask to confirm first (`Enter` discards, `Esc`
   keeps it).
 
-A `.bmm` file is JSON: a format header (`format`, `version`, `savedAt`)
-plus exactly the fields of a `LEVELS` entry (below). To put a finished
-map into a single-player track, strip the three header fields and paste
-the rest into `LEVELS` in `js/levels.js`, then add it to the right
-`TRACKS` entry — this is the pipeline for authoring the Advanced and Expert
-tracks.
+A `.bmm` file is JSON: a format header (`format`, `version`, `savedAt`) plus the
+fields of a level (the vertex list, `start`, `burgers`, `goal`, `theme`, and the
+optional terrain fields below). The single-player tracks are made of these
+files: each lives under `levels/tracks/<trackId>/`, and the game fetches them at
+boot.
 
 ## Adding levels
 
-Append an entry to `LEVELS` in `js/levels.js` (or build one in the map
-editor and paste its `.bmm` body): a polygon vertex list
-(y grows downward), a `start` position, `burgers` coordinates, a
-`goal` position (the popcorn bucket), and a `theme` (a key of `THEMES`
-in `js/render.js` — every 5-map block between checkpoints shares one).
-A new theme also wants a song under the same name in `js/music.js`, or
-its maps ride in silence (`node test/music_check.js` catches this).
+Levels live in `levels/tracks/<trackId>/*.bmm` (e.g. `levels/tracks/beginner/`)
+and are listed per track in `js/levels.js`. To add one:
+
+1. Build the course in the map editor and **Save** it as a `.bmm` into the track's
+   `levels/tracks/<trackId>/` directory (the converter `tools/lev2bmm.js` can also
+   turn an Elasto Mania `.lev` into one).
+2. Add its filename to the right track's `files` list in the `TRACKS` array in
+   `js/levels.js`. The order of that list is the order the maps are played; a
+   track shows up disabled until its `files` list has at least one map. (This is
+   the pipeline for filling out the Advanced and Expert tracks.)
+
+`game.js` loads maps lazily: entering a track fetches its first map, then
+prefetches the next in the background, so only the map you're on and the one
+after it are ever held — the other tracks' maps never load unless played. Each
+file is parsed with `EDITOR.parse` into a playable level. A level needs a polygon
+vertex list (y grows downward), a
+`start` position, `burgers` coordinates, a `goal` (the popcorn bucket), and a
+`theme` (a key of `THEMES` in `js/render.js` — every 5-map block between
+checkpoints shares one). A new theme also wants a song under the same name in
+`js/music.js`, or its maps ride in silence (`node test/music_check.js` catches
+this).
 
 One optional field marks special terrain: `glassEdges` lists `[poly, edge]`
 pairs that are obsidian — volcanic glass the tires barely grip, where the

@@ -112,6 +112,10 @@ const tiny = name => ({
   burgers: [],
   goal: [4, 8.6],
 });
+// override the Beginner track with a 2-map course. files is the size the game
+// reads (maps load lazily by filename); pre-seeding levels with the two tiny
+// maps means the lazy loader finds them cached and never fetches.
+TRACKS[0].files = ['test-a.bmm', 'test-b.bmm'];
 TRACKS[0].levels = [tiny('Test A'), tiny('Test B')];
 TRACKS[0].length = 2;
 

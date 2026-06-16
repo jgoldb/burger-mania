@@ -78,13 +78,75 @@
 <script src="js/editor.js"></script>
 <script src="js/game.js"></script>
 <!-- Register the service worker (offline play + installable PWA). Only runs on
-     http/https; opening index.html off disk (file://) silently no-ops. -->
+     http/https; opening index.html off disk (file://) silently no-ops.
+
+     Auto-update flow (works with the ?v= cache-busting, doesn't replace it):
+     every deploy ships a byte-different sw.js (BUILD = commit SHA). We poll for
+     it, let the new worker install and *wait*, then tell it to activate and
+     reload the page — but only at a moment that won't discard an active ride
+     (on a menu/victory screen, or while the app is backgrounded). See
+     window.__bmSafeToReload in js/game.js. -->
 <script>
-  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-    addEventListener('load', () => {
-      navigator.serviceWorker.register('sw.js').catch(() => {});
-    });
+(function () {
+  if (!('serviceWorker' in navigator) || !location.protocol.startsWith('http')) return;
+  var sw = navigator.serviceWorker;
+  var hadController = !!sw.controller;  // false on the very first visit
+  var waiting = null;                   // a new worker that's installed & waiting
+  var poll = null;
+  var reloading = false;
+
+  // The new worker taking control is our cue to reload into it. Guard against
+  // the first-ever install (no prior controller) so a fresh visit doesn't bounce,
+  // and against firing twice.
+  sw.addEventListener('controllerchange', function () {
+    if (!hadController || reloading) return;
+    reloading = true;
+    location.reload();
+  });
+
+  // Safe to swap when backgrounded, or when the game says no run is at stake.
+  function safe() {
+    var pred = window.__bmSafeToReload;
+    return document.hidden || (typeof pred === 'function' && pred());
   }
+  function apply() {
+    if (!waiting || !safe()) return;
+    // Leave a per-tab breadcrumb so the reloaded page knows this was our update
+    // swap (not a manual refresh) and can skip the tap-to-start overlay + revive
+    // audio. sessionStorage survives the reload and clears when the tab closes.
+    try { sessionStorage.setItem('bm-swReload', '1'); } catch (e) {}
+    waiting.postMessage({ type: 'SKIP_WAITING' });
+  }
+  function ready(worker) {
+    waiting = worker;
+    apply();                                    // swap now if it's already safe…
+    if (!poll) poll = setInterval(apply, 2000); // …otherwise keep checking
+  }
+
+  // Re-evaluate whenever visibility flips (becoming hidden is always safe).
+  document.addEventListener('visibilitychange', apply);
+
+  addEventListener('load', function () {
+    sw.register('sw.js').then(function (reg) {
+      // A worker that finished installing before this page loaded.
+      if (reg.waiting && sw.controller) ready(reg.waiting);
+      // …or one that installs while we're open.
+      reg.addEventListener('updatefound', function () {
+        var nw = reg.installing;
+        if (!nw) return;
+        nw.addEventListener('statechange', function () {
+          if (nw.state === 'installed' && sw.controller) ready(nw);
+        });
+      });
+      // An installed PWA can stay open for days without re-navigating, so nudge
+      // the browser to look for a new build hourly and each time we're refocused.
+      setInterval(function () { reg.update().catch(function () {}); }, 36e5);
+      document.addEventListener('visibilitychange', function () {
+        if (!document.hidden) reg.update().catch(function () {});
+      });
+    }).catch(function () {});
+  });
+})();
 </script>
 </body>
 </html>

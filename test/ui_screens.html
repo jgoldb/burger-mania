@@ -15,7 +15,7 @@
 <script src="../js/render.js"></script>
 <script>
   // statically renders one UI screen
-  // (?ui=menu|difficulty|continue|pause|audio|audio-pause|skip|skip-game|victory|...)
+  // (?ui=menu|difficulty|continue|pause|audio|audio-pause|skip|skip-game|victory|biker|...)
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
   const params = new URLSearchParams(location.search);
@@ -39,11 +39,29 @@
   const ui = params.get('ui') || 'menu';
   // optional ?theme= to preview menu screens in another world
   const menuPat = patterns[params.get('theme')] || patterns.meadow;
+  // optional ?skin=0..3 to preview the cosmetic bike upgrade tiers (stock /
+  // warmed up / red hot / afterburner) on any screen with a bike
+  if (params.get('skin')) setBikeSkin(parseInt(params.get('skin'), 10) || 0);
 
   // manifest paths are relative to the page; this page lives in test/
   ASSET_MANIFEST.images.biker = '../assets/biker.webp';
 
-  loadAssets().then(() => {
+  // The real maps live in ../levels/tracks/<id>/*.bmm (js/levels.js only lists the
+  // filenames now), so fetch + parse them into TRACKS[*].levels / LEVELS the
+  // way game.js does at boot. Needs a server (open this page over http, e.g.
+  // via `npm start`), since fetch() is blocked on file://.
+  async function loadTracksUI() {
+    for (const t of TRACKS) {
+      t.levels = [];
+      for (const f of (t.files || [])) {
+        try { t.levels.push(JSON.parse(await fetch('../levels/tracks/' + t.id + '/' + f).then(r => r.text()))); }
+        catch (e) { console.warn('level load failed', f, e); }
+      }
+    }
+    LEVELS = TRACKS.reduce((a, t) => a.concat(t.levels), []);
+  }
+
+  Promise.all([loadAssets(), loadTracksUI()]).then(() => {
   if (ui === 'menu') {
     // ?t= scrubs the backdrop clock (seconds since the menu opened); the
     // astro gag is held back 30s, so the default clears that delay and lands
@@ -180,6 +198,77 @@
       names: track.levels.map(l => l.name),
       results, sel: 0, hover: -1, touch: false, saveNote: 'S: save replay',
     });
+  } else if (ui === 'biker') {
+    // close-up of the bike + rider at a few tilts / engine loads, with a
+    // hand-built exhaust plume so the smoke and tip glow can be eyeballed
+    // (the real plume lives in game.js; here we fake a settled trail)
+    ctx.fillStyle = '#16324a';
+    ctx.fillRect(0, 0, W, H);
+    const fakeSmoke = (bike, load) => {
+      const puffs = [];
+      if (load < 0.05) return puffs;
+      const mode = bikePalette(BIKE_SKIN).exhaust;  // smoke | flame | mirage
+      const tip = bike.l2w(EXHAUST_TIP[0], EXHAUST_TIP[1], true);
+      const vent = bike.l2w(EXHAUST_VENT[0], EXHAUST_VENT[1], true);
+      let dx = tip.x - vent.x, dy = tip.y - vent.y;
+      const dl = Math.hypot(dx, dy) || 1; dx /= dl; dy /= dl;
+      const tint = Math.round(150 - 70 * load);
+      const life = mode === 'flame' ? 0.28 : 0.6 + load * 0.4;
+      const n = Math.round((mode === 'flame' ? 30 : 44) * load);
+      for (let i = 0; i < n; i++) {
+        const age = (i / n) * life, out = (0.5 + load) * (mode === 'flame' ? 1.8 : 1.1);
+        const base = {
+          x: tip.x + (dx * out + (i % 5 - 2) * 0.18) * age,
+          y: tip.y + (dy * out - 0.3) * age - 0.55 * age * age,
+          age, life,
+        };
+        if (mode === 'flame') {
+          // soot streams out ~2× further down the trail than the short fire
+          const sAge = (i / n) * 1.2, sOut = (0.5 + load) * 1.5;
+          puffs.push({
+            x: tip.x + (dx * sOut + (i % 5 - 2) * 0.18) * sAge,
+            y: tip.y + (dy * sOut - 0.3) * sAge - 0.55 * sAge * sAge,
+            age: sAge, life: 1.3, r0: 0.1, r1: 0.62, alpha: 0.6, tint: '24,22,26',
+          });
+          puffs.push({ ...base, r0: 0.09, r1: 0.24, alpha: 0.8, flame: true,
+            tint: i % 2 ? '255,232,150' : '255,138,40' });
+        } else if (mode === 'mirage') {
+          puffs.push({ ...base, r0: 0.16, r1: 0.7, alpha: 1, mirage: true,
+            seed: i * 1.7, tint: '150,200,255' });
+        } else {
+          puffs.push({ ...base, r0: 0.1, r1: 0.4 + load * 0.25, alpha: 0.45,
+            tint: `${tint},${tint},${tint + 6}` });
+        }
+      }
+      return puffs;
+    };
+    const tNow = params.get('t') ? parseFloat(params.get('t')) : performance.now() / 1000;
+    // ?skin=all lines up all four upgrade tiers (stock → afterburner) for
+    // comparison; otherwise the global ?skin tier is shown at a few tilts/loads
+    const cells = params.get('skin') === 'all'
+      ? [{ lx: -9, angle: 0, facing: 1, load: 0.6, skin: 0 },
+         { lx: -3, angle: 0, facing: 1, load: 0.6, skin: 1 },
+         { lx: 3, angle: 0, facing: 1, load: 0.6, skin: 2 },
+         { lx: 9, angle: 0, facing: 1, load: 0.6, skin: 3 }]
+      : [{ lx: -7, angle: 0, facing: 1, load: 0 },
+         { lx: 0, angle: -0.35, facing: 1, load: 0.55 },
+         { lx: 7, angle: 0, facing: -1, load: 1 }];
+    const Z = Math.min(W / (cells.length * 6.5), H / 12);
+    ctx.save();
+    ctx.translate(W / 2, H / 2);
+    ctx.scale(Z, Z);
+    for (const c of cells) {
+      if (c.skin != null) setBikeSkin(c.skin);
+      const bike = new Bike(c.lx, 0);
+      bike.angle = c.angle;
+      bike.facing = c.facing;
+      bike.turnT = 9;
+      bike.engineLoad = c.load;
+      bike.vel.x = c.facing * c.load * 6;
+      drawExhaust(ctx, fakeSmoke(bike, c.load));
+      drawBike(ctx, bike, false, false, false, tNow);
+    }
+    ctx.restore();
   }
   // outline the safe band so it's obvious whether the chrome respects it
   if (window.__inset) {

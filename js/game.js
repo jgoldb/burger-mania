@@ -85,6 +85,12 @@
   // victoryFade instead of finished: a slow dissolve into the victory
   // feast ('victory'), which routes back to the menu
   let state = 'loading';
+  // The service-worker update glue (index.html) asks this before swapping in a
+  // freshly deployed build: a reload mid-ride would throw away the player's
+  // active attempt, so 'playing'/'paused' are unsafe; everything else (menus,
+  // ready, victory, dead) has nothing live to lose. Read lazily via the closure
+  // so it always reflects the current state.
+  window.__bmSafeToReload = () => state !== 'playing' && state !== 'paused';
   let bike = null, time = 0, burgers = [], headBody = null;
   let currentTrack = null, levelIndex = 0;
   const MAX_CONTINUES = 2;
@@ -92,8 +98,11 @@
   // this campaign's outcome per map ({ time, style, record flags } by map
   // index) — the victory scorecard; sparse where the skip cheat jumped past
   let runResults = [];
-  let currentRaw = LEVELS[0]; // unprepared level data (what a saved replay embeds)
-  let level = prepareLevel(LEVELS[0]);
+  // The real maps are fetched from levels/*.bmm at boot (loadTracks below);
+  // until they land the engine boots on a throwaway placeholder so the bike and
+  // camera have something valid to sit on behind the loading screen.
+  let currentRaw = BOOT_LEVEL; // unprepared level data (what a saved replay embeds)
+  let level = prepareLevel(BOOT_LEVEL);
   let bestKey = 'burger-mania-best-' + level.name;
   let best = parseFloat(localStorage.getItem(bestKey) || '');
   if (!isFinite(best)) best = null;
@@ -108,6 +117,9 @@
   let stoppieT = 0;     // same, for an unbroken stoppie (front down, rear up)
   let stylePopups = []; // floating "+N" toasts riding above the biker
   let popupSeq = 0;     // cycles spawn lanes so stacked toasts stay legible
+  let exhaust = [];     // live exhaust smoke puffs (cosmetic; see emitExhaust)
+  let exhaustAcc = 0;   // fractional puff carried between frames so a low rate
+                        // still spits the odd puff instead of rounding to zero
   let cam = { x: level.start.x, y: level.start.y };
   const CAM_LEAD = 4.2; // how far the view centers ahead of the bike's facing
   let camLead = CAM_LEAD; // smoothed, so turning around pans rather than snaps
@@ -146,19 +158,48 @@
   let hoverIdx = -1;
   const mouse = { x: -1, y: -1 };
 
+  // Only the image assets gate the loading screen. The level maps load lazily
+  // from levels/*.bmm — a track fetches its first map when it's entered, then
+  // prefetches the next in the background (see ensureLevel / enterLevel) — so
+  // nothing is fetched until it's needed, and a track's maps never load unless
+  // it's actually played. (fetch() needs http(s); over file:// it throws, which
+  // is why the game is served — npm start.)
   loadAssets((done, total) => { loadFrac = total ? done / total : 1; })
-    .then(() => { loadDone = true; });
+    .then(() => { loadDone = true; resumeAfterSwReload(); });
+
+  // ---------- cosmetic bike skin ----------
+  // Clearing a difficulty track banks a flag; the bike's skin tier is the
+  // highest cleared track's rank (Beginner→1, Advanced→2, Expert→3). Purely
+  // cosmetic — render.js owns the look (bikePalette/BIKE_SKIN); we just feed it.
+  // Re-read on every entry into the game world (loadLevel — covers playing,
+  // replays and editor test) rather than once at boot, so an unlock (or a
+  // hand-edited localStorage flag) takes effect on the next level start with no
+  // page reload.
+  const CLEARED_KEY = (track) => 'burger-mania-cleared-' + track.id;
+  function bikeSkinTier() {
+    let tier = 0;
+    TRACKS.forEach((t, i) => {
+      if (localStorage.getItem(CLEARED_KEY(t))) tier = Math.max(tier, i + 1);
+    });
+    return tier;
+  }
+  function refreshBikeSkin() { setBikeSkin(bikeSkinTier()); }
 
   function reset() {
     bike = new Bike(level.start.x, level.start.y);
     time = 0;
     // normal burgers plus the upside-down ones (identical to the rider, but
-    // collecting one flips gravity). Both count toward the burger total and
-    // collect alike, so they share the runtime list; only the `flip` flag and
-    // the gravity it toggles tell them apart
-    burgers = level.burgers.map(b => ({ x: b[0], y: b[1], got: false, flip: false }));
+    // collecting one SETS gravity to its direction). Both count toward the
+    // burger total and collect alike, so they share the runtime list; a normal
+    // burger carries grav:null, a gravity burger the unit vector it sets. The
+    // 3rd entry is the direction ('up'|'down'|'left'|'right'); absent => 'up'
+    // (the legacy reverse-gravity burger).
+    const GRAV_VECS = { up: { x: 0, y: -1 }, down: { x: 0, y: 1 }, left: { x: -1, y: 0 }, right: { x: 1, y: 0 } };
+    burgers = level.burgers.map(b => ({ x: b[0], y: b[1], got: false, grav: null }));
     if (level.flipBurgers) {
-      for (const b of level.flipBurgers) burgers.push({ x: b[0], y: b[1], got: false, flip: true });
+      for (const b of level.flipBurgers) {
+        burgers.push({ x: b[0], y: b[1], got: false, grav: GRAV_VECS[b[2]] || GRAV_VECS.up });
+      }
     }
     headBody = null;
     suspLevel = 0; // silence any crank still ringing from the last life at once
@@ -168,6 +209,8 @@
     stoppieT = 0;
     stylePopups = [];
     popupSeq = 0;
+    exhaust = [];
+    exhaustAcc = 0;
     camLead = bike.facing * CAM_LEAD;
     cam.x = level.start.x + camLead;
     cam.y = level.start.y;
@@ -186,6 +229,7 @@
     styleKey = 'burger-mania-style-' + level.name;
     styleBest = parseInt(localStorage.getItem(styleKey) || '', 10);
     if (!isFinite(styleBest)) styleBest = null;
+    refreshBikeSkin(); // pick up the earned (or cheated-in) skin on world entry
     reset();
   }
 
@@ -542,9 +586,63 @@
   }
 
   // ---------- screen flow ----------
-  function enterLevel(i) {
+  // Maps load lazily. A track's `levels` is a sparse cache filled on demand;
+  // `files` is the full ordered list, so `files.length` is the track's real
+  // size whether or not its maps are loaded. `loadingWhat` labels the
+  // 'levelLoading' overlay (see drawLevelLoading).
+  let loadingWhat = 'level';
+
+  // fetch + parse one map into the track's cache (idempotent; dedupes parallel
+  // fetches via track._fetching). Resolves to the level, or null if it couldn't
+  // be loaded. In the headless tests the cache is pre-filled from disk
+  // (js/levels.js), so this returns immediately without fetching.
+  function ensureLevel(track, i) {
+    if (!track || i < 0 || i >= track.files.length) return Promise.resolve(null);
+    if (track.levels[i]) return Promise.resolve(track.levels[i]);
+    track._fetching = track._fetching || {};
+    if (track._fetching[i]) return track._fetching[i];
+    const url = 'levels/tracks/' + track.id + '/' + track.files[i];
+    const p = fetch(url)
+      .then(res => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.text(); })
+      .then(text => (track.levels[i] = EDITOR.parse(text)))
+      .catch(err => { console.error('Could not load level ' + url, err); return null; })
+      .then(lvl => { delete track._fetching[i]; return lvl; });
+    track._fetching[i] = p;
+    return p;
+  }
+
+  // load every map of a track — for the screens that list them all (the skip
+  // picker, Records, the victory scorecard, which need names/results for maps
+  // the player may not have reached)
+  function ensureTrackLoaded(track) {
+    return Promise.all((track ? track.files : []).map((_, i) => ensureLevel(track, i)));
+  }
+  function trackFullyLoaded(track) {
+    return !!track && track.files.every((_, i) => track.levels[i]);
+  }
+  // a map's display name without forcing a load: the cached name, else a
+  // title-cased fallback off the filename ("03-onion-underpass.bmm" -> "Onion
+  // Underpass") so a list can render before (or despite) a failed fetch
+  function levelName(track, i) {
+    if (track.levels[i]) return track.levels[i].name;
+    return (track.files[i] || '').replace(/\.bmm$/i, '').replace(/^\d+[-_]?/, '')
+      .replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) || ('Map ' + (i + 1));
+  }
+
+  // enter map i (fetching it first, behind the loading overlay, if it isn't
+  // cached yet), then quietly prefetch the next map so the finish-line hand-off
+  // is instant. Owns the state transition to 'ready', so callers don't set it.
+  async function enterLevel(i) {
     levelIndex = i;
+    if (!currentTrack.levels[i]) {
+      loadingWhat = 'level';
+      state = 'levelLoading';
+      const raw = await ensureLevel(currentTrack, i);
+      if (!raw) { goMenu(); return; } // couldn't load — bail rather than hang
+    }
     loadLevel(currentTrack.levels[i]);
+    state = 'ready';
+    if (i + 1 < currentTrack.files.length) ensureLevel(currentTrack, i + 1);
   }
 
   function startGame(track) {
@@ -553,12 +651,11 @@
     continues = MAX_CONTINUES;
     checkpointIndex = 0;
     runResults = [];
-    enterLevel(0);
-    state = 'ready';
+    enterLevel(0); // sets state ('levelLoading' then 'ready')
   }
 
   function hasNextLevel() {
-    return !!currentTrack && levelIndex + 1 < currentTrack.levels.length;
+    return !!currentTrack && levelIndex + 1 < currentTrack.files.length;
   }
 
   function mapLabel() {
@@ -579,8 +676,7 @@
   function useContinue() {
     continues--;
     lives = 3;
-    enterLevel(checkpointIndex);
-    state = 'ready';
+    enterLevel(checkpointIndex); // sets state (checkpoint map is already cached)
   }
 
   function goMenu() {
@@ -609,18 +705,22 @@
     state = 'recordsDiff';
     recDiffT = 0;
     // land on the first track that actually has maps (Beginner, today)
-    recDiffSel = Math.max(0, TRACKS.findIndex(t => t.levels.length));
+    recDiffSel = Math.max(0, TRACKS.findIndex(t => t.files.length));
     hoverIdx = -1;
   }
 
   function activateRecordsDiff(i) {
     const track = TRACKS[i];
-    if (!track.levels.length) {
+    if (!track.files.length) {
       blip(180, 0.12); // no maps yet, so no records to show
       return;
     }
     blip(880, 0.08);
-    showRecords(track);
+    // the scorecard lists every map's best, so the whole track must be loaded
+    if (trackFullyLoaded(track)) { showRecords(track); return; }
+    loadingWhat = 'records';
+    state = 'levelLoading';
+    ensureTrackLoaded(track).then(() => showRecords(track));
   }
 
   // gather a track's stored bests into the scorecard's results shape. A map
@@ -629,8 +729,10 @@
   // already is the all-time best, so the scorecard draws them unstarred.
   function showRecords(track) {
     recTrack = track;
-    recNames = track.levels.map(l => l.name);
-    recResults = track.levels.map(raw => {
+    recNames = track.files.map((_, i) => levelName(track, i));
+    recResults = track.files.map((_, i) => {
+      const raw = track.levels[i];
+      if (!raw) return null; // map failed to load -> shown as dashes
       const t = parseFloat(localStorage.getItem('burger-mania-best-' + raw.name) || '');
       if (!isFinite(t)) return null;
       const s = parseInt(localStorage.getItem('burger-mania-style-' + raw.name) || '', 10);
@@ -920,11 +1022,18 @@
   }
 
   // dev cheat: typing "skip" raises a level-select overlay over whatever
-  // screen summoned it, letting any map in the track be jumped to
+  // screen summoned it, letting any map in the track be jumped to. It's gated
+  // behind ?skip=true in the page URL so a normal player can't stumble into it
+  // by chance — without the param the key sequence does nothing.
   const CHEAT_SKIP = 'skip';
   let cheatBuffer = '';
   let skipTrack = null, skipItems = [];
   let skipSel = 0, skipScroll = 0, skipT = 0, skipFrom = 'menu';
+  let cheatsEnabled = false;
+  try {
+    const qs = (window.location && window.location.search) || '';
+    cheatsEnabled = new URLSearchParams(qs).get('skip') === 'true';
+  } catch (e) { /* no URL context (headless) — cheat stays off unless enabled */ }
 
   function checkCheat(key) {
     if (key.length !== 1) return false;
@@ -942,12 +1051,16 @@
   }
 
   function openSkip() {
-    const track = currentTrack || TRACKS.find(t => t.levels.length);
+    const track = currentTrack || TRACKS.find(t => t.files.length);
     if (!track) return false;
     skipTrack = track;
     skipFrom = state;
-    skipItems = track.levels.map((raw, i) => ({
-      label: raw.name, sub: 'Map ' + (i + 1) + '/' + track.length,
+    // the picker only needs display names — levelName falls back to the
+    // filename — so it fetches nothing. A map is loaded only when one is
+    // actually chosen (activateSkip -> enterLevel), exactly like picking a
+    // track from Play.
+    skipItems = track.files.map((_, i) => ({
+      label: levelName(track, i), sub: 'Map ' + (i + 1) + '/' + track.length,
     }));
     // land on the current map when skipping from inside its own track
     skipSel = currentTrack ? levelIndex : 0;
@@ -978,8 +1091,7 @@
     // continue restarts from the checkpoint the player would hold having
     // ridden there: the map right after the last cleared 5th map
     checkpointIndex = Math.floor(i / 5) * 5;
-    enterLevel(i);
-    state = 'ready';
+    enterLevel(i); // sets state ('levelLoading' then 'ready'); track is loaded
     blip(1320, 0.15);
   }
 
@@ -998,6 +1110,26 @@
     introLaunched = introLanded = TITLE_ANIM.count;
     fanfared = true;
     goMenu();
+  }
+
+  // The auto-update reload (index.html) drops a per-tab sessionStorage flag just
+  // before it swaps in a new build. Spotting it on boot, we skip the tap-to-start
+  // overlay straight back to the menu and try to revive audio without a fresh
+  // gesture. The browser only grants that autostart to installed PWAs / high-
+  // engagement tabs; where it's refused the AudioContext simply stays suspended
+  // and the existing keydown/click/touch resume revives it on the next input.
+  // A manual refresh never sets the flag, so it still gets the normal gate.
+  function resumeAfterSwReload() {
+    let flagged = false;
+    try {
+      flagged = sessionStorage.getItem('bm-swReload') === '1';
+      if (flagged) sessionStorage.removeItem('bm-swReload');
+    } catch (e) { /* sessionStorage can be unavailable in locked-down contexts */ }
+    if (!flagged) return;
+    menuClock0 = performance.now() / 1000; // animate the menu world from now
+    goMenu();
+    ensureAudio();
+    if (AC && AC.state === 'suspended') { const p = AC.resume(); if (p && p.catch) p.catch(() => {}); }
   }
 
   // ---------- map editor ----------
@@ -1055,7 +1187,7 @@
       t: rt,
       pat: patterns.meadow, // the celebration basks in meadow sunshine
       label: currentTrack ? currentTrack.label : '',
-      names: currentTrack ? currentTrack.levels.map(l => l.name) : [],
+      names: currentTrack ? currentTrack.files.map((_, i) => levelName(currentTrack, i)) : [],
       results: runResults,
       sel: 0,
       hover: hoverIdx,
@@ -1085,7 +1217,7 @@
 
   function activateDifficulty(i) {
     const track = TRACKS[i];
-    if (!track.levels.length) {
+    if (!track.files.length) {
       blip(180, 0.12); // not available yet
       return;
     }
@@ -1189,7 +1321,8 @@
     // the cheat would clobber the replay tape mid-watch via reset(); while
     // the picker is already open, typing must not re-summon it. A test
     // ride stays out too: jumping tracks would abandon the editor's level
-    if (state !== 'loading' && state !== 'replay' && state !== 'replayEnd' &&
+    if (cheatsEnabled &&
+        state !== 'loading' && state !== 'replay' && state !== 'replayEnd' &&
         state !== 'skip' && state !== 'editorTest' && state !== 'editorTestEnd' &&
         checkCheat(e.key)) return;
 
@@ -1218,7 +1351,7 @@
           let next = diffSel;
           for (let k = 0; k < TRACKS.length; k++) {
             next = (next + d + TRACKS.length) % TRACKS.length;
-            if (TRACKS[next].levels.length) break;
+            if (TRACKS[next].files.length) break;
           }
           if (next !== diffSel) { diffSel = next; blip(520, 0.05); }
         } else if (e.key === 'Enter' || e.key === ' ') {
@@ -1234,7 +1367,7 @@
           let next = recDiffSel;
           for (let k = 0; k < TRACKS.length; k++) {
             next = (next + d + TRACKS.length) % TRACKS.length;
-            if (TRACKS[next].levels.length) break;
+            if (TRACKS[next].files.length) break;
           }
           if (next !== recDiffSel) { recDiffSel = next; blip(520, 0.05); }
         } else if (e.key === 'Enter' || e.key === ' ') {
@@ -1316,8 +1449,7 @@
         if (e.key === 's' || e.key === 'S') { saveReplay(); return; }
         if (e.key === 'Enter') {
           if (hasNextLevel()) {
-            enterLevel(levelIndex + 1);
-            state = 'ready';
+            enterLevel(levelIndex + 1); // sets state (next map is prefetched)
           } else {
             goMenu(); // track complete (as far as it exists, anyway)
           }
@@ -1402,10 +1534,10 @@
       menuSel = hoverIdx;
       activateMenu(hoverIdx);
     } else if (state === 'difficulty') {
-      if (TRACKS[hoverIdx].levels.length) diffSel = hoverIdx;
+      if (TRACKS[hoverIdx].files.length) diffSel = hoverIdx;
       activateDifficulty(hoverIdx);
     } else if (state === 'recordsDiff') {
-      if (TRACKS[hoverIdx].levels.length) recDiffSel = hoverIdx;
+      if (TRACKS[hoverIdx].files.length) recDiffSel = hoverIdx;
       activateRecordsDiff(hoverIdx);
     } else if (state === 'records') {
       blip(440, 0.08);
@@ -1601,8 +1733,7 @@
           if (lives > 0) { reset(); state = 'playing'; }
           else goContinue();
         } else if (hasNextLevel()) {
-          enterLevel(levelIndex + 1);
-          state = 'ready';
+          enterLevel(levelIndex + 1); // sets state (next map is prefetched)
         } else {
           goMenu();
         }
@@ -1749,6 +1880,101 @@
     }
   }
 
+  // ---------- exhaust smoke ----------
+  // Purely cosmetic, so it isn't recorded and may use Math.random freely (it
+  // never touches the sim, so replays stay deterministic). The harder the
+  // engine is pulling, the faster and fatter the puffs: bike.engineLoad is a
+  // smoothed 0..1 the sim updates each frame from throttle + how much
+  // acceleration the engine still has to give (full off the line, none at top
+  // speed — the same accelLeft the wheelie reaction uses). drawBike reads it
+  // for the warm tip glow; here it drives the spawn rate.
+  const SMOKE_RATE = 30;  // puffs/sec at full engine load
+  const SMOKE_MAX = 90;   // hard cap so a long pull can't grow the array forever
+
+  function updateEngineLoad(input) {
+    const rear = bike.wheels[bike.rearIndex];
+    const accelLeft = Math.max(0, 1 - Math.abs(rear.spin) / PHYS.maxSpin);
+    const target = (input.throttle && !bike.dead) ? 0.3 + 0.7 * accelLeft : 0;
+    bike.engineLoad = (bike.engineLoad || 0) + (target - (bike.engineLoad || 0)) * 0.12;
+  }
+
+  function emitExhaust(dt) {
+    const load = bike.engineLoad || 0;
+    if (load < 0.05) { exhaustAcc = 0; return; } // coasting: tailpipe is clean
+    // the muffler tip and the point just inside it, in world space, so puffs
+    // shoot out along the can's axis (back and up) no matter the bike's tilt
+    const tip = bike.l2w(EXHAUST_TIP[0], EXHAUST_TIP[1], true);
+    const vent = bike.l2w(EXHAUST_VENT[0], EXHAUST_VENT[1], true);
+    let dx = tip.x - vent.x, dy = tip.y - vent.y;
+    const dl = Math.hypot(dx, dy) || 1; dx /= dl; dy /= dl;
+    // what the pipe puts out scales with the cosmetic skin: grey smoke (0/1),
+    // actual flames (RED HOT) or a plasma heat-haze trail (AFTERBURNER)
+    const mode = bikePalette(BIKE_SKIN).exhaust;
+    // mirage ripples are big and costly (canvas self-sampling), so spawn fewer
+    const rate = mode === 'flame' ? SMOKE_RATE * 1.4
+               : mode === 'mirage' ? SMOKE_RATE * 0.6 : SMOKE_RATE;
+    const cap = mode === 'mirage' ? 18 : SMOKE_MAX;
+    exhaustAcc += load * rate * dt;
+    while (exhaustAcc >= 1 && exhaust.length < cap) {
+      exhaustAcc -= 1;
+      const rnd = (a, b) => a + Math.random() * (b - a);
+      const cvx = bike.vel.x * 0.3, cvy = bike.vel.y * 0.3; // carry some bike motion
+      if (mode === 'flame') {
+        // a sooty dark-smoke puff billowing off the fire — pushed FIRST so the
+        // fresh flame below draws over it (tip stays bright). It outlives the
+        // flame several times over, so it streams out into a long black trail
+        // that reaches well PAST where the short, bright fire dies
+        if (Math.random() < 0.7) {
+          const sout = rnd(0.9, 1.9) * (0.5 + load);
+          exhaust.push({
+            x: tip.x + rnd(-0.06, 0.06), y: tip.y + rnd(-0.06, 0.06),
+            vx: cvx + dx * sout + rnd(-0.35, 0.35), vy: cvy + dy * sout + rnd(-0.35, 0.35),
+            age: 0, life: rnd(0.9, 1.6), r0: rnd(0.08, 0.13), r1: rnd(0.45, 0.75),
+            alpha: rnd(0.5, 0.75), tint: '24,22,26', // very dark soot
+          });
+        }
+        const out = rnd(1.2, 2.6) * (0.5 + load);
+        exhaust.push({
+          x: tip.x + rnd(-0.05, 0.05), y: tip.y + rnd(-0.05, 0.05),
+          vx: cvx + dx * out + rnd(-0.4, 0.4), vy: cvy + dy * out + rnd(-0.4, 0.4),
+          age: 0, life: rnd(0.16, 0.30), r0: rnd(0.07, 0.12), r1: rnd(0.16, 0.28),
+          alpha: rnd(0.6, 0.9), flame: true,
+          tint: Math.random() < 0.5 ? '255,232,150' : '255,138,40', // white-yellow / orange
+        });
+      } else if (mode === 'mirage') {
+        const out = rnd(0.8, 1.8) * (0.5 + load);
+        exhaust.push({
+          x: tip.x + rnd(-0.05, 0.05), y: tip.y + rnd(-0.05, 0.05),
+          vx: cvx + dx * out + rnd(-0.3, 0.3), vy: cvy + dy * out - rnd(0.2, 0.6),
+          age: 0, life: rnd(0.5, 0.85), r0: rnd(0.14, 0.22), r1: rnd(0.5, 0.9),
+          alpha: 1, mirage: true, seed: Math.random() * 6.28, tint: '150,200,255',
+        });
+      } else { // smoke (tiers 0/1)
+        const out = rnd(0.6, 1.6) * (0.5 + load);
+        const tint = Math.round(150 - 70 * load); // richer/darker under load
+        exhaust.push({
+          x: tip.x + rnd(-0.05, 0.05), y: tip.y + rnd(-0.05, 0.05),
+          vx: cvx + dx * out + rnd(-0.4, 0.4), vy: cvy + dy * out + rnd(-0.4, 0.4),
+          age: 0, life: rnd(0.45, 0.7) + load * 0.4,
+          r0: rnd(0.07, 0.12), r1: rnd(0.32, 0.5) + load * 0.25,
+          alpha: rnd(0.35, 0.55), tint: `${tint},${tint},${tint + 6}`,
+        });
+      }
+    }
+  }
+
+  function ageExhaust(dt) {
+    for (const s of exhaust) {
+      s.age += dt;
+      s.x += s.vx * dt;
+      s.y += s.vy * dt;
+      s.vy -= 1.1 * dt;          // hot smoke rises (screen up is -y)
+      s.vx *= 1 - 1.6 * dt;      // air drag eases the puff to a drift
+      s.vy *= 1 - 1.6 * dt;
+    }
+    if (exhaust.length) exhaust = exhaust.filter(s => s.age < s.life);
+  }
+
   function checkPickups() {
     const h = bike.headPos();
     const pts = [
@@ -1767,7 +1993,7 @@
           // an upside-down burger reverses gravity as it's eaten; the swoop
           // sound follows the new pull. Deterministic (runs in the shared sim
           // frame), so replays flip at the same instant
-          if (b.flip) { bike.grav *= -1; gravWhoomp(bike.grav < 0); }
+          if (b.grav) { bike.gravDir = { x: b.grav.x, y: b.grav.y }; gravWhoomp(bike.gravDir.y < 0); }
           break;
         }
       }
@@ -1808,7 +2034,7 @@
     // checkpoint: a continue used later restarts from the NEXT map, so a
     // cleared checkpoint map never has to be re-beaten
     if (currentTrack && (levelIndex + 1) % 5 === 0) {
-      checkpointIndex = Math.min(levelIndex + 1, currentTrack.levels.length - 1);
+      checkpointIndex = Math.min(levelIndex + 1, currentTrack.files.length - 1);
     }
     const timeRecord = best === null || time < best;
     if (timeRecord) {
@@ -1826,8 +2052,12 @@
       runResults[levelIndex] = { time, style: stylePts, timeRecord, styleRecord };
     }
     if (currentTrack && !hasNextLevel()) {
-      // the whole track is beaten: no finished screen, the frozen finish
-      // pose hangs a beat and then dissolves into the victory feast
+      // the whole track is beaten: bank the cosmetic unlock (so the bike — and
+      // the parked bike on the feast that's about to show — wears the upgraded
+      // skin), then no finished screen: the frozen finish pose hangs a beat and
+      // dissolves into the victory feast
+      localStorage.setItem(CLEARED_KEY(currentTrack), '1');
+      refreshBikeSkin();
       state = 'victoryFade';
       victoryT = 0;
       hoverIdx = -1;
@@ -1865,7 +2095,8 @@
   // the detached helmet bounces around after a crash
   function stepHead(dt) {
     if (!headBody) return;
-    headBody.vy += PHYS.g * bike.grav * dt;
+    headBody.vx += PHYS.g * bike.gravDir.x * dt;
+    headBody.vy += PHYS.g * bike.gravDir.y * dt;
     headBody.x += headBody.vx * dt;
     headBody.y += headBody.vy * dt;
     headBody.rot += (headBody.vx / PHYS.headR) * 0.5 * dt;
@@ -1914,7 +2145,7 @@
     }
     simInput = input;
     const angle0 = bike.angle;
-    const voltDir0 = bike.voltDir;
+    const voltPumps0 = bike.voltPumps;
     // wheel touchdowns are caught per substep, not per frame: a hard landing
     // rebounds within a single 60 Hz frame (airborne → planted → airborne), so
     // a frame-boundary check would miss exactly the biggest hits. Track each
@@ -1925,7 +2156,7 @@
     const wasGround = bike.wheels.map(w => w.onGround);
     let frameSusp = 0;
     for (let i = 0; i < SUB; i++) {
-      const drop = bike.wheels.map(w => w.vel.y * bike.grav);
+      const drop = bike.wheels.map(w => w.vel.x * bike.gravDir.x + w.vel.y * bike.gravDir.y);
       bike.step(FDT / SUB, input, level.segments, level.nuts);
       bike.wheels.forEach((w, k) => {
         if (!wasGround[k] && w.onGround && drop[k] > WHEEL_HIT_MIN) {
@@ -1943,11 +2174,11 @@
       onDeath();
     } else {
       time += FDT;
-      // a volt "fires" one thump on the rising edge of the lean — when voltDir
-      // goes from 0 (idle) to a held direction. Holding the key sustains rotation
-      // but only thumps once at engage; the arm-pump it animates is driven off
-      // bike.voltReach over in render.js
-      if (voltDir0 === 0 && bike.voltDir !== 0) voltThump();
+      // bursty volt: thump once per PUMP — bike.voltPumps ticks up each time a new
+      // pump fires (at most one per 60 Hz frame, since voltCadence >> a frame), so
+      // holding gives a rhythmic pump-pump-pump. The arm punch it animates is driven
+      // off bike.voltReach over in render.js
+      if (bike.voltPumps > voltPumps0) voltThump();
       // net rotation, airborne or not (a ground loop-the-loop is style
       // too): every full lap pays out, wobble cancels itself
       spinAcc += bike.angle - angle0;
@@ -1985,6 +2216,10 @@
       }
       checkPickups();
     }
+    // cosmetic engine load + exhaust smoke (after the sim, alive or not, so the
+    // tailpipe keeps puffing as the load bleeds off on a crash)
+    updateEngineLoad(input);
+    emitExhaust(FDT);
   }
 
   function frame(now) {
@@ -2063,8 +2298,8 @@
           state !== 'victory') {
         updateCamera(FDT);
         // toasts keep rising over the crash/finish screens, but a pause
-        // freezes them along with everything else
-        if (state !== 'paused') agePopups(FDT);
+        // freezes them along with everything else; the smoke drifts on too
+        if (state !== 'paused') { agePopups(FDT); ageExhaust(FDT); }
       }
     }
     updateHover();
@@ -2074,6 +2309,33 @@
     updateSuspensionSound();
     updateMusic();
     requestAnimationFrame(frame);
+  }
+
+  // the brief overlay shown while a map is fetched (entering a track, or
+  // opening Records / the skip picker). Maps are tiny, so on a warm connection
+  // this barely flashes; it earns its keep on a cold first visit or a slow link.
+  function drawLevelLoading(rt) {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = '#1a0f06';
+    ctx.fillRect(0, 0, W, H);
+    const cx = W / 2, cy = H / 2, r = Math.max(14, Math.min(W, H) * 0.06);
+    ctx.save();
+    ctx.translate(cx, cy - r * 0.4);
+    ctx.rotate((rt * 3.2) % (Math.PI * 2));
+    ctx.strokeStyle = '#f9c623';
+    ctx.lineWidth = Math.max(3, r * 0.18);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 1.45);
+    ctx.stroke();
+    ctx.restore();
+    const label = loadingWhat === 'records' ? 'Loading records…' : 'Loading course…';
+    ctx.fillStyle = '#f0e8da';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = 'bold ' + Math.round(Math.max(16, Math.min(W, H) * 0.045)) + 'px ' +
+      '"Consolas","Courier New",monospace';
+    ctx.fillText(label, cx, cy + r * 1.6);
   }
 
   function draw() {
@@ -2094,6 +2356,10 @@
     }
     if (state === 'loading') {
       drawLoading(ctx, W, H, loadFrac, rt, loadDone, TOUCH.active);
+      return;
+    }
+    if (state === 'levelLoading') {
+      drawLevelLoading(rt);
       return;
     }
     if (state === 'intro' || state === 'menu') {
@@ -2181,17 +2447,25 @@
     ctx.scale(Z, Z);
     ctx.translate(-cam.x, -cam.y);
     const hw = W / 2 / Z + 1, hh = H / 2 / Z + 1;
-    drawWorld(ctx, level, theme,
-      { x0: cam.x - hw, y0: cam.y - hh, x1: cam.x + hw, y1: cam.y + hh }, rt, bike);
+    const worldView = { x0: cam.x - hw, y0: cam.y - hh, x1: cam.x + hw, y1: cam.y + hh };
+    drawWorld(ctx, level, theme, worldView, rt, bike);
     // back-layer doodads sit in the scene behind every actor; front-layer ones
     // (below) ride over the rider so he passes behind the prop
     drawDoodadLayer(ctx, level.doodads, 'back', rt);
     if (level.nuts) for (const n of level.nuts) drawNutMound(ctx, n[0], n[1], rt);
     for (const b of burgers) if (!b.got) drawBurger(ctx, b.x, b.y, rt);
     drawPopcorn(ctx, level.goal[0], level.goal[1], rt);
-    drawBike(ctx, bike, !!headBody, false, theme.dark);
+    // exhaust behind the bike so it trails off the pipe. The tier-3 plasma
+    // mirage re-stamps the canvas to distort the background, so it needs the
+    // EXACT visible world rect (no padding) that maps the canvas onto itself 1:1
+    const exhaustView = { x: cam.x - W / 2 / Z, y: cam.y - H / 2 / Z, w: W / Z, h: H / Z };
+    drawExhaust(ctx, exhaust, exhaustView);
+    drawBike(ctx, bike, !!headBody, false, theme.dark, rt);
     if (headBody) drawHead(ctx, headBody.x, headBody.y, bike.facing, headBody.rot);
     drawDoodadLayer(ctx, level.doodads, 'front', rt);
+    // foreground terrain: front-layer polygons over the rider AND the doodads,
+    // so he disappears behind them (see drawForeground)
+    drawForeground(ctx, level, theme, worldView, rt);
     // dark worlds (cave): the rider's screen position before we drop the world
     // transform, for the darkness pass below
     const lightX = W / 2 + (bike.pos.x - cam.x) * Z;

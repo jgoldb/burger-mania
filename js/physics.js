@@ -2,18 +2,15 @@
 
 // Tuning constants for the bike. Units: meters, seconds, radians.
 const PHYS = {
-  g: 4,
-  airGrav: 0.7,   // gravity multiplier while BOTH wheels are off the ground.
-                   // The AIR-TIME lever: lowering it floats jumps higher and
-                   // longer (peak height & hang time both scale 1/airGrav, so
-                   // 0.75 ~ +33%) WITHOUT touching the ground hold — on contact
-                   // the bike still gets full g, so a volt can't tip it off as
-                   // easily as globally lowering g did. Both frame and wheels
-                   // share the one value, so the airborne bike floats as a rigid
-                   // projectile (the suspension spring is internal/relative, so
-                   // its shape is unchanged). Side effect: a given drop lands a
-                   // touch softer (impact speed = sqrt(2*airGrav*g*h)), i.e.
-                   // slightly more forgiving falls. 1 = no float (old behaviour)
+  g: 2.8,          // ONE uniform gravity, air and ground alike (Elasto Mania — no
+                   // air/ground split). The ground feeling too light at this value
+                   // was NOT a gravity problem: it was the volt being too strong for
+                   // the ledge and the engine wheelie too strong for the volt to
+                   // hold down. Those are fixed at their own sources now — voltAcc
+                   // (ledge/air rotation) and engineR (wheelie) are independent
+                   // levers — instead of papering over both with a heavy-ground
+                   // split. gx/gy are scaled by this.gravDir, so a gravity burger
+                   // can aim it down/up/left/right (Elasto gravity-apple style)
 
   wheelR: 0.4,
   wheelM: 0.22,
@@ -28,24 +25,30 @@ const PHYS = {
                    // frame. This is the main "harder to volt / heavier" lever
                    // (engine wheelie and brake stoppie get a touch heavier too)
 
-  springK: 42,     // soft suspension: low rate so the bike gives a lot per
-                   // bump. Softened 60->42 — the ride felt too stiff. A lower
-                   // rate also lengthens the spring period (slower recoil) and
-                   // raises the damping ratio (less bouncy). Static sag is still
-                   // small (frameM*g/2K ~ 6cm)
-  springC: 5.0,
+  springK: 42,     // suspension stiffness — UNCHANGED. Sets the drop-death line:
+                   // a hard landing must compress the suspension far enough that
+                   // the rigidly-attached head reaches terrain (the body has no
+                   // collider), and that bottom-out depth scales with K. At 42 the
+                   // line sits at ~12.5 m/s / ~28m flat (a touch lower at an angle —
+                   // land flat to survive, Elasto-style), where the fall-toughness
+                   // was tuned. The springy FEEL comes from the light damping
+                   // (springC) below, NOT from changing this
+  springC: 2.8,    // suspension damping — THE bounce lever. Down from the old dead
+                   // 5.0 (damping ratio ~0.82, just absorbs) to 2.8 (~0.46):
+                   // underdamped so the suspension RECOILS and springs back, but not
+                   // so light it pogos. (2.0 / ~0.33 read as "too bouncy / bike too
+                   // light"; 2.8 settles in fewer, smaller bounces.) Barely touches
+                   // the spring SPEED — that's springK — so the snappy expand/
+                   // collapse is preserved. Lower = bouncier, higher = more planted
   springCFade: 12, // relative speed (m/s) where the suspension damper fades to
-                   // half. Raised 5->12 to make the bike take a harder hit: the
-                   // body has no terrain collider (it sinks through on a big
-                   // enough slam, dragging the head to its death), so how far the
-                   // frame bottoms out — and thus the fatal fall height — is set
-                   // by how much of the impact the suspension soaks up. A higher
-                   // fade keeps the damper biting deep into a fast compression,
-                   // so the rider SURVIVES BIGGER DROPS (flat-slam death ~12->15
-                   // m/s, ~19m->28m of fall) and hard landings plant instead of
-                   // springing back. The spring RATE (plushness/give-per-bump)
-                   // is untouched — this is the fall-toughness lever: higher =
-                   // tougher + more planted, lower = bouncier and dies lower
+                   // half, so a fast compression rides mostly on the spring (and
+                   // bounces) instead of being soaked dead. The body has no terrain
+                   // collider, so a big enough slam sinks the frame through until
+                   // the head hits terrain = death; how far the frame bottoms out
+                   // sets that fatal drop height. With springC now lighter the frame
+                   // compresses a little more (dies a touch lower) — this is the
+                   // fall-toughness fine-tune: higher fade = damper bites deeper into
+                   // a slam = tougher falls. Re-tune by playtest with springC
   maxStretch: 5.0,  // FAR safety backstop on suspension travel from the raw
                     // anchor — the wheels can never escape past this, but it's
                     // set way out so normal play never reaches it. The real
@@ -79,7 +82,11 @@ const PHYS = {
                    // wheel spin, gone by engineKnee. Steep-hill starts get
                    // the grunt without raising cruise acceleration
   engineKnee: 12,  // wheel spin (rad/s, ~4.8 m/s) where the extra runs out
-  engineR: 6.5,    // reaction torque on the frame while the engine spins up
+  engineR: 4.5,    // reaction torque on the frame while the engine spins up — the
+                   // WHEELIE-strength lever, independent of gravity/volt. Lowered
+                   // 6.5->4.5: at uniform low gravity the front popped up faster than
+                   // a volt could hold it down; a gentler reaction lets the volt
+                   // counter the gas wheelie. Higher = stronger wheelie/stoppie
   wheelieRate: 0.5, // rad/s pitch-back rate the engine reaction saturates at
   maxSpin: 55,     // rad/s cap on driven wheel spin
   brakeRate: 30,   // exponential lock rate for both wheels
@@ -106,37 +113,41 @@ const PHYS = {
                    // sets the break-away grade (~45deg): on steeper slopes
                    // the braked slow-roll never gets slow enough to clamp
 
-  // Volt = the rider's lean: a CONTINUOUS rotational drive while a key is held
-  // (Elasto Mania volting), identical on the ground and in the air. Holding
-  // left/right applies voltAcc torque toward that lean, and the torque fades to
-  // zero as |avel| nears voltMaxSpin, so the rotation winds UP to a capped rate
-  // and HOLDS there; releasing lets the light avelDamp settle the angle. Pressing
-  // BOTH keys is an alovolt — a stronger clockwise burst (alovoltAcc) with its
-  // own higher cap. One model, ground and air (no discrete throttle any more).
-  voltAcc: 10,      // angular drive of a held volt — the wind-up / TAP strength.
-                    // LOW on purpose: a quick tap is a small nudge, not a flip;
-                    // the bike eases up to its held rate over ~0.5s instead of
-                    // slamming there. The held rate is this BALANCED against
-                    // avelDamp (terminal ≈ voltAcc/(frameI*avelDamp)), then capped
-                    // by voltMaxSpin. Raise for a punchier lean. Ground == air
-  voltMaxSpin: 10,  // rad/s — a SAFETY ceiling on volt rotation (the drive fades
-                    // to zero as |avel| nears it). The everyday held rate is set
-                    // lower by the voltAcc-vs-avelDamp balance; this just stops a
-                    // long hold from winding past a sane top rate
-  alovoltAcc: 18,   // angular drive of an alovolt (both keys) — a punchier
-                    // clockwise burst than a normal volt (the signature trick)
-  alovoltMaxSpin: 14, // rad/s — the alovolt's own (higher) ceiling, so the
-                    // both-keys trick can spin faster than a normal volt
-  voltReachRate: 14, // 1/s the rider's arm-flick pose eases toward fully-leaned
-                    // while volting and back to rest when idle (render.js reads
-                    // bike.voltReach). Purely cosmetic; sim-inert
-  avelDamp: 2.0,   // angular drag bled off avel per second, ground AND air — the
-                   // KEY controllability lever. It sets the held rate (with
-                   // voltAcc) AND, on release, settles the rotation in ~1/avelDamp
-                   // s so a volt STOPS instead of free-spinning the bike forever.
-                   // Was 0.12 (≈ no damping): one tap then imparted a spin that
-                   // never decayed, flipping the bike over and over. Higher =
-                   // tighter / quicker to settle; lower = floatier coast
+  // Volt = the rider's lean. NORMAL volting (one key) is BURSTY — discrete torque
+  // PUMPS (Elasto's tap-volting): a pump fires for voltBurstDur every voltCadence,
+  // and the gaps between pumps let gravity act (a dangling body sags back, so a
+  // ledge recovery is a pump-and-time skill). The ALOVOLT (both keys) is CONTINUOUS
+  // instead — a sustained strong clockwise drive while held, the supervolt for big
+  // air rotations and recoveries. NEITHER has a hard spin cap: the top rate is
+  // EMERGENT, set by the drive torque balancing avelDamp (angular drag) below — the
+  // physics decides the ceiling, not a clamp. A fresh normal press pumps at once.
+  voltAcc: 17,      // torque of ONE normal volt pump (the punch). Sets normal-volt
+                    // rotation (fine control / balance) AND how easily you can pump
+                    // off a ledge — keep it modest so a DANGLING body (gravity
+                    // resisting) can't be pumped up, while a body whose CoM is still
+                    // OVER the ledge (gravity not resisting) rotates back easily
+  voltBurstDur: 0.133, // seconds each pump applies torque — the length of one punch.
+                    // Raised 0.1->0.133 in step with voltCadence 0.45->0.6 (×1.333) so
+                    // the AVERAGE torque (voltAcc*voltBurstDur/voltCadence ≈ 4) holds:
+                    // same overall power, just delivered in fewer, longer/meatier pumps
+  voltCadence: 0.6, // seconds between pump starts while held (~1.7 pumps/s) — fewer,
+                    // more distinct pumps (raised 0.45->0.6, the volts were too quick).
+                    // The GAP is where gravity/damping act on a hang
+  alovoltAcc: 8.5,    // CONTINUOUS torque of the alovolt (both keys) — sustained, not
+                    // pulsed, so it clearly out-spins the bursty normal volt (emergent
+                    // air terminal ≈ alovoltAcc/(frameI*avelDamp) ≈ 6 rad/s). ONE rule,
+                    // ground and air — no gate. Kept modest ON PURPOSE: a stronger
+                    // sustained torque VAULTS the bike off flat ground (you'd pogo into
+                    // flips); at 8 a ground spin reaches only ~0.5 of a turn before the
+                    // head hits and crashes — past ~10-11 it starts completing flips. So
+                    // the no-flat-ground-flip behaviour falls out of the physics, no gate
+  voltReachRate: 14, // 1/s the rider's arm pumps toward fully-leaned DURING each
+                    // torque punch and falls back in the gap, so the arm visibly
+                    // punches per pump (render.js reads bike.voltReach). Cosmetic
+  avelDamp: 2.0,   // angular drag bled off avel per second, ground AND air — settles
+                   // rotation between pumps and on release (a volt STOPS instead of
+                   // free-spinning) and lets gravity drag a hanging body back in the
+                   // pump gaps. Higher = tighter/quicker to settle; lower = floatier
 
   mu: 1.1,         // tire friction coefficient
   muGlass: 0.06,   // tire friction on obsidian glass: the engine can barely
@@ -173,12 +184,14 @@ const PHYS = {
   // head is dragged down to its death. This is what makes a big drop fatal — the
   // survive/die line falls out of impact force vs. suspension stiffness, with no
   // belly spring, no speed cutoff and no special-casing.
-  wheelBounce: 0.18,   // tire restitution at full slam speed (0.3->0.18:
-                       // less dramatic rebound off surfaces)
+  wheelBounce: 0.18,   // tire restitution — kept LOW (0.18). The lively recoil now
+                       // comes from the underdamped spring (springC), not a
+                       // superball tyre; a HIGH restitution here actually fights
+                       // drop-death (it kicks the wheel back up before the head can
+                       // bottom out), so it deliberately stays modest
   wheelBounceLo: 1.5,  // impact speed (m/s) where tire rebound starts...
-  wheelBounceHi: 4.0,  // ...and where it reaches full strength: mild hits
-                       // and post-slam chatter land dead, real slams keep
-                       // the whole elastic-bar kick
+  wheelBounceHi: 4.0,  // ...and where it reaches full strength: mild hits and
+                       // post-slam chatter land dead, real slams keep the kick
   wheelMeetDamp: 0.6,  // fraction of the wheels' SEPARATING relative velocity
                        // bled off per step while they overlap (centres within
                        // 2*wheelR). Soaks up the suspension-spring rebound after
@@ -187,29 +200,16 @@ const PHYS = {
                        // cancels the rebound. Only damps separation (never adds
                        // a push), so wheels can still overlap almost completely
 
-  // Crash trip. A motorcycle that slams the ground doesn't politely bounce off
-  // a tyre — its momentum carries it OVER the planted wheel (face-first if it
-  // came in nose-down, over the tail on the rear wheel). These constants turn a
-  // hard wheel impact into that throw. (The fall-from-too-high death is handled
-  // separately, by the body having no collider — the frame just sinks through.)
-  tripMin: 6,      // closing speed (m/s) a wheel impact must exceed before it
-                   // trips the frame at all. Below this — rolling contact,
-                   // gentle landings, post-bounce chatter — nothing trips, so
-                   // ordinary riding is untouched
-  tripFull: 16,    // closing speed where the trip reaches full strength
-  tripGain: 0.6,   // how hard a full slam pivots the frame toward rotating
-                   // about the planted wheel (1 = the frame instantly takes
-                   // that pivot's angular velocity, i.e. goes fully over the
-                   // bars). A steep one-wheel slam trips hard and drives the
-                   // head down; a FLAT two-wheel slam cancels — the wheels
-                   // pivot opposite ways — so clean both-wheel landings, even
-                   // fast ones, don't trip (they only pick up a mild forward
-                   // nod from forward speed). This is the "thrown forward /
-                   // backward on a crash" lever
+  // (Crash-trip removed: Elasto doesn't throw the rider over the bars on a hard
+  // wheel impact — a hard landing either plants or, if the drop is high enough,
+  // sinks the colliderless body through until the head hits terrain and dies.
+  // That fall-from-too-high death is unchanged; only the impact "throw" is gone.)
 
-  headR: 0.24,
-  headX: -0.18,    // head offset in frame space (x is mirrored by facing)
-  headY: -0.90,
+  headR: 0.238,    // head collider radius — Elma/Across "Fejsugar" (ADATOK.CPP)
+  headX: -0.102,   // head offset in frame space (x is mirrored by facing). Elma's
+                   // Kor12Fejr() (LEPTET.CPP) hangs the head 1.02 out from the body
+                   // at angle pi/2 - 0.1 rad = (0.102 toward the rear, 1.015 up).
+  headY: -1.015,   // Was -0.18 / -0.90 (a more compact, smaller-feeling bike)
 
   nutR: 0.45,      // lethal radius of a nut mound — this world's "killer", the
                    // Elasto Mania spinning-spike equivalent. Touching one with
@@ -217,8 +217,10 @@ const PHYS = {
                    // instantly fatal. A touch tighter than the drawn pile so
                    // death only fires once a part is clearly buried in it
 
-  anchorX: 0.55,   // wheel anchor offsets in frame space
-  anchorY: 0.30,
+  anchorX: 0.85,   // wheel anchor offsets in frame space — Elma/Across bike geometry
+  anchorY: 0.60,   // (ADATOK.CPP): the wheels (Kor2/Kor4) sit ±0.85 from the body
+                   // (Kor1) in x — wheelbase 1.70 — and 0.60 below it. Was ±0.55 /
+                   // 0.30, a 65%-scale wheelbase that made the bike feel small
 };
 
 function closestOnSeg(px, py, s) {
@@ -251,35 +253,63 @@ function pointInPoly(px, py, poly) {
 // L.nuts ([[x, y], ...]) are nut mounds — lethal "killer" hazards the rider
 // dies on contact with (see PHYS.nutR / Bike.step). They pass straight through
 // here untouched; the sim reads L.nuts directly.
+// L.noCollide ([[polyIndex, edgeIndex], ...]) flags edges the rider rides
+// straight through: a flagged edge (same [poly, edge] keying as glassEdges) is
+// dropped from the collision set, opening a gap there. The edge still RENDERS
+// (it is part of the polygon fill/grass), so the wall looks solid but is
+// passable — a hidden passage. L.invisible ([polyIndex, ...]) flags whole polygons that
+// keep full collision but draw NOTHING (no fill, outline or grass): a normal
+// nested polygon cuts a visible island out of the ground, an invisible one is
+// solid but unseen. L.frontPolys ([polyIndex, ...]) flags whole polygons drawn
+// on the FOREGROUND layer — over the rider and the doodads, instead of behind
+// them as terrain is (drawForeground in render.js). Their collision is normal
+// (so pairing one with noCollide walls lets the rider slip behind it, out of
+// view); only their draw order moves. So their grass/glass tops are gathered
+// into separate frontGrass/frontGlassTops lists the foreground pass draws.
+// All of these are additive + inert when absent (no shipped level or replay
+// carries them), so existing maps and tapes are untouched.
 function prepareLevel(L) {
-  const segments = [], grass = [], glassTops = [];
+  const segments = [], grass = [], glassTops = [], frontGrass = [], frontGlassTops = [];
   const glassSpans = L.glass || [];
   const glassEdges = new Set((L.glassEdges || []).map(e => e[0] + ':' + e[1]));
+  const noColl = new Set((L.noCollide || []).map(e => e[0] + ':' + e[1]));
+  const invisible = new Set(L.invisible || []);
+  const front = new Set(L.frontPolys || []);
   L.polygons.forEach((poly, pi) => {
     // a polygon nested inside another is a solid island in the playable
     // area (evenodd fill), so its playable side is the inverse
     const island = L.polygons.some(p =>
       p !== poly && pointInPoly(poly[0][0], poly[0][1], p));
+    const polyInvisible = invisible.has(pi);
+    // foreground polygons route their grass/glass to the front lists, drawn over
+    // the rider instead of behind him
+    const gList = front.has(pi) ? frontGrass : grass;
+    const glList = front.has(pi) ? frontGlassTops : glassTops;
     for (let i = 0; i < poly.length; i++) {
       const a = poly[i], b = poly[(i + 1) % poly.length];
       const s = { ax: a[0], ay: a[1], bx: b[0], by: b[1] };
       const mx = (s.ax + s.bx) / 2, my = (s.ay + s.by) / 2;
       s.glass = glassEdges.has(pi + ':' + i) ||
         glassSpans.some(r => mx >= r[0] && mx <= r[1]);
-      segments.push(s);
+      // an edge flagged "no collision" is passable: it never enters the
+      // collision set, so the rider rides straight through it. It still gets
+      // grass/visuals below, so in play it looks like ordinary solid ground.
+      const ghost = noColl.has(pi + ':' + i);
+      if (!ghost) segments.push(s);
       const dx = s.bx - s.ax, dy = s.by - s.ay;
       // grass grows on edges that are not too steep and face the playable
-      // side upward; glass gets a sheen instead
-      if (Math.abs(dx) > 0.001 && Math.abs(dy / dx) < 2.0) {
+      // side upward; glass gets a sheen instead. Invisible polygons draw
+      // nothing at all, so they get no grass/glass top either.
+      if (!polyInvisible && Math.abs(dx) > 0.001 && Math.abs(dy / dx) < 2.0) {
         const up = pointInPoly(mx, my - 0.3, poly);
         const down = pointInPoly(mx, my + 0.3, poly);
         if (island ? (down && !up) : (up && !down)) {
-          (s.glass ? glassTops : grass).push(s);
+          (s.glass ? glList : gList).push(s);
         }
       }
     }
   });
-  return Object.assign({}, L, { segments, grass, glassTops });
+  return Object.assign({}, L, { segments, grass, glassTops, frontGrass, frontGlassTops });
 }
 
 class Bike {
@@ -291,12 +321,20 @@ class Bike {
     this.facing = 1; // 1 = right, -1 = left
     this.turnT = 9;  // seconds since last turn-around (drives the flip animation)
     this.voltDir = 0;   // current lean: -1 left, +1 right, +2 alovolt (drives the
-                        // arm-flick in render.js + the volt-sound onset in game.js)
-    this.voltReach = 0; // 0..1 arm-flick engagement: eases toward 1 while volting,
-                        // back to 0 when idle (cosmetic; read by render.js)
-    this.grav = 1;          // gravity direction: +1 pulls down (normal), -1 up.
-                            // An upside-down burger flips it, Elasto-Mania
-                            // gravity-apple style, so the bike rides ceilings
+                        // arm-flick direction in render.js)
+    this.voltReach = 0; // 0..1 arm-flick engagement: pumps toward 1 during each volt
+                        // punch, falls back between (cosmetic; read by render.js)
+    this.voltPhase = PHYS.voltCadence; // timer within the bursty volt cycle; parked
+                        // at voltCadence when idle so the next press pumps at once
+    this.voltPumps = 0; // count of volt pumps fired (game.js thumps on each new one)
+    this.voltLead = 1;  // the lean direction the rider last committed to with a SINGLE
+                        // key (-1 left / +1 right). A both-key alovolt drives THIS way,
+                        // so you can supervolt either direction by leading with that key
+    // gravity direction as a unit vector: down {0,1} (normal), up {0,-1}, or
+    // sideways {±1,0}. A gravity burger SETS it (Elasto-Mania gravity-apple
+    // style — up/down ride ceilings, left/right ride walls); the whole bike
+    // (frame and both wheels) shares the one direction.
+    this.gravDir = { x: 0, y: 1 };
     this.dead = false;
     this.wheels = [];
     for (const sx of [-1, 1]) {
@@ -333,48 +371,53 @@ class Bike {
     if (this.dead) return;
     this.turnT += dt;
     const P = PHYS;
-    // grounded = at least one wheel touched last step (contacts run later, so this
-    // is the previous step's state — a 1-frame lag that doesn't matter). Used only
-    // for the gravity multiplier now; rotation (the volt drive, the wheel-spring
-    // reaction torque, and avelDamp) is unified across air and ground for an
-    // Elasto-faithful feel — the bike is one consistent springy body either way.
-    const grounded = this.wheels.some(w => w.onGround);
     const c = Math.cos(this.angle), s = Math.sin(this.angle);
-    // gravity acceleration, signed by this.grav so an upside-down burger can
-    // invert it (the whole bike — frame and both wheels — shares the one sign,
-    // so flipping it just changes which way everything falls), and scaled by
-    // airGrav once airborne so jumps float without weakening the ground hold
-    const gy = P.g * this.grav * (grounded ? 1 : P.airGrav);
+    // gravity acceleration as a vector, so a gravity burger can aim it any of the
+    // four ways (the whole bike — frame and both wheels — shares it). ONE uniform
+    // value (Elasto Mania — no air/ground split): the bike weighs the same airborne
+    // and grounded, so a jump is a clean constant-g parabola.
+    const gx = P.g * this.gravDir.x;
+    const gy = P.g * this.gravDir.y;
 
-    let fx = 0, fy = P.frameM * gy, torque = 0;
-    // lean ("volt"): a CONTINUOUS rotational drive while a key is held — identical
-    // on the ground and in the air (Elasto Mania). Holding left/right applies
-    // voltAcc torque toward that lean, and the torque fades to zero as |avel| nears
-    // voltMaxSpin, so the rotation winds up to a capped rate and HOLDS there;
-    // releasing lets avelDamp (below) settle the angle. Pressing BOTH keys is an
-    // alovolt: a stronger clockwise burst (alovoltAcc) with its own higher cap.
-    const alovolt = input.left && input.right;
-    let lean;
+    let fx = P.frameM * gx, fy = P.frameM * gy, torque = 0;
+    // lean ("volt") — ONE rule, ground and air, no gates. NORMAL volt (one key) is
+    // BURSTY: a discrete torque pump for voltBurstDur every voltCadence, the gaps
+    // letting gravity act (Elasto tap-volting; can't winch a hanging body up). The
+    // ALOVOLT (both keys) is the CONTINUOUS supervolt — a sustained clockwise drive.
+    // No hard spin cap (the air top-rate is emergent, where the drive balances
+    // avelDamp), and no air/ground branch: that a hard spin crashes you on flat
+    // ground but rotates you in the air EMERGES from the contact + the modest torque
+    // (alovoltAcc is small enough it can't vault the bike off the ground — see there).
+    const L = !!input.left, R = !!input.right;
+    // remember the direction the rider commits to with a SINGLE key, so a follow-up
+    // both-key alovolt supercharges THAT way (lead with left = CCW, right = CW) —
+    // bidirectional, unlike Elasto's clockwise-only quirk. Both/neither keep the last.
+    if (L !== R) this.voltLead = L ? -1 : 1;
+    const alovolt = L && R;
+    // voltPhase = time since the last pump fired, advanced EVERY step (held, idle, OR
+    // between taps) and capped at voltCadence. A pump can only fire once it reaches
+    // voltCadence (`ready`), so the throttle holds however you input it — hammering
+    // left/right can't sneak extra volts in inside the cadence window. Capped (not
+    // re-armed on release), so a fresh press after a real gap still pumps at once.
+    this.voltPhase = Math.min(this.voltPhase + dt, P.voltCadence);
+    const ready = this.voltPhase >= P.voltCadence;
     if (alovolt) {
-      lean = 1; // alovolt rotates clockwise (positive avel, like a right volt)
-      const room = Math.min(1, Math.max(0, 1 - this.avel / P.alovoltMaxSpin));
-      torque += P.alovoltAcc * room;
-      this.voltDir = 2; // arm-flick + sound flag (clockwise, extra strong)
+      const dir = this.voltLead;       // ±1: which way the lead key pointed
+      torque += dir * P.alovoltAcc;    // CONTINUOUS supervolt, either direction
+      if (ready) { this.voltPhase = 0; this.voltPumps++; } // (just paces the sound)
+      this.voltDir = dir * 2;          // ±2 -> arm flicks the right way (render.js)
+      this.voltReach += (1 - this.voltReach) * Math.min(1, P.voltReachRate * dt); // arm held
     } else {
-      lean = (input.right ? 1 : 0) - (input.left ? 1 : 0);
-      if (lean !== 0) {
-        // room reopens to full when countering an opposite spin, so a reversal
-        // gets the whole torque; it only fades as you approach the cap your way
-        const room = Math.min(1, Math.max(0, 1 - lean * this.avel / P.voltMaxSpin));
-        torque += lean * P.voltAcc * room;
-      }
-      this.voltDir = lean;
+      const lean = (R ? 1 : 0) - (L ? 1 : 0);
+      // fire a pump only when the cadence is ready AND a lean is pressed, and LATCH its
+      // direction. The arm-flick then plays out over voltBurstDur on its own — driven by
+      // the burst window, NOT live input — so hammering the key during the cooldown is
+      // ignored: it can't fire a new pump (throttle) and it can't twitch the arm either.
+      if (ready && lean !== 0) { this.voltPhase = 0; this.voltPumps++; this.voltDir = lean; }
+      const inBurst = this.voltPhase < P.voltBurstDur;
+      if (inBurst && lean !== 0) torque += lean * P.voltAcc; // pump torque (while held)
+      this.voltReach += ((inBurst ? 1 : 0) - this.voltReach) * Math.min(1, P.voltReachRate * dt);
     }
-    // arm-flick engagement (cosmetic): ease toward fully-leaned while volting and
-    // back to rest when idle, so render.js can hold the lean pose while the key is
-    // down instead of pulsing once per discrete volt
-    const voltOn = alovolt || lean !== 0 ? 1 : 0;
-    this.voltReach += (voltOn - this.voltReach) * Math.min(1, P.voltReachRate * dt);
 
     // fast spins sling the wheels outward: the spring's rest anchor extends
     // radially with the square of the spin rate, like elastic bars. The
@@ -406,7 +449,7 @@ class Bike {
         (1 + (rvx * rvx + rvy * rvy) / (P.springCFade * P.springCFade));
       const Fx = -P.springK * dx - cf * rvx;
       const Fy = -P.springK * dy - cf * rvy;
-      w.vel.x += (Fx / P.wheelM) * dt;
+      w.vel.x += (Fx / P.wheelM + gx) * dt;
       w.vel.y += (Fy / P.wheelM + gy) * dt;
       fx -= Fx;
       fy -= Fy;
@@ -452,8 +495,8 @@ class Bike {
         // cap the engine's own wind-up without clawing back the extra
         if (w.spin * this.facing > P.maxSpin) w.spin = P.maxSpin * this.facing;
         // engine reaction torque pitches the frame backward (wheelies, and
-        // mid-air attitude adjustment); weaker in the air so gas doesn't
-        // overpower the lean controls. Two fades stack:
+        // mid-air attitude adjustment) — ONE rule, ground and air (the old 0.4×
+        // air-weakening gate is gone). Two fades stack:
         //  - `fade` on pitch-back rate, so a held wheelie climbs slowly
         //    instead of snapping over — until gravity takes it past balance.
         //  - `accelLeft` on remaining engine headroom (1 at a standstill,
@@ -467,7 +510,7 @@ class Bike {
           const back = this.avel * -this.facing; // current pitch-back rate
           const fade = Math.min(1, Math.max(0, 1 - back / P.wheelieRate));
           const accelLeft = Math.max(0, 1 - Math.abs(w.spin) / P.maxSpin);
-          torque -= P.engineR * this.facing * (w.onGround ? 1 : 0.4) * fade * accelLeft;
+          torque -= P.engineR * this.facing * fade * accelLeft;
         }
       }
       if (input.brake) {
@@ -655,27 +698,6 @@ class Bike {
         jn = -(1 + e) * vn * P.wheelM;
         w.vel.x += nx * jn / P.wheelM;
         w.vel.y += ny * jn / P.wheelM;
-      }
-
-      // crash trip — over the bars / over the tail. A hard slam doesn't just
-      // bounce the tyre: the frame's fall momentum keeps going and pivots the
-      // whole bike about the planted wheel. Add a slice of that pivot rate,
-      // omega = (r x v) / |r|^2 with r from the wheel to the frame centre,
-      // scaled by how hard the wheel drove into the ground. A nose-down slam
-      // pivots the head into the floor (face-plant); landing pitched back on
-      // the rear wheel throws it over backward. The kick is ADDED (not blended
-      // toward), so on a flat both-wheel landing the two wheels contribute
-      // exactly opposite omegas that cancel — a clean landing never trips
-      // itself over, it just picks up a mild forward nod from forward speed.
-      const closing = -vn; // frame/wheel speed driving into the surface
-      if (closing > P.tripMin) {
-        const rx = this.pos.x - w.pos.x, ry = this.pos.y - w.pos.y;
-        const r2 = rx * rx + ry * ry;
-        if (r2 > 1e-4) {
-          const omega = (rx * this.vel.y - ry * this.vel.x) / r2;
-          const hard = Math.min(1, (closing - P.tripMin) / (P.tripFull - P.tripMin));
-          this.avel += omega * P.tripGain * hard;
-        }
       }
 
       const tx = -ny, ty = nx;

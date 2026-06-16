@@ -2107,15 +2107,26 @@ function drawWorld(ctx, level, pat, view, t, actor, bg) {
   const gdy = (level.groundY != null && pat.groundY != null)
     ? level.groundY - pat.groundY : 0;
 
+  // polygons left out of the BACK terrain: invisible ones (level.invisible) keep
+  // their collision but draw nothing, and foreground ones (level.frontPolys) are
+  // drawn later by drawForeground, over the rider. Both are skipped from the back
+  // fill clip (so they cut no island/hole) and the outline below; their geometry
+  // still rides the sim. Front polys' grass is in level.frontGrass, not here.
+  const skip = (level.invisible && level.invisible.length) ||
+               (level.frontPolys && level.frontPolys.length)
+    ? new Set([...(level.invisible || []), ...(level.frontPolys || [])]) : null;
+  const backPoly = pi => !skip || !skip.has(pi);
+
   // the playable inside: gradient sky, distant silhouettes behind the
   // terrain, then a slowly drifting haze/cloud layer over both
   ctx.save();
   ctx.beginPath();
-  for (const poly of level.polygons) {
+  level.polygons.forEach((poly, pi) => {
+    if (!backPoly(pi)) return;
     ctx.moveTo(poly[0][0], poly[0][1]);
     for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i][0], poly[i][1]);
     ctx.closePath();
-  }
+  });
   ctx.clip('evenodd');
   if (bg) {
     ctx.fillStyle = skyGradient(ctx, pat, -8 + gdy, 12 + gdy);
@@ -2135,17 +2146,59 @@ function drawWorld(ctx, level, pat, view, t, actor, bg) {
   ctx.restore();
 
   ctx.beginPath();
-  for (const poly of level.polygons) {
+  level.polygons.forEach((poly, pi) => {
+    if (!backPoly(pi)) return;
     ctx.moveTo(poly[0][0], poly[0][1]);
     for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i][0], poly[i][1]);
     ctx.closePath();
-  }
+  });
   ctx.strokeStyle = pat.outline;
   ctx.lineWidth = 0.07;
   ctx.stroke();
 
   for (const e of level.grass) pat.edge(ctx, e, pat, t);
   for (const e of level.glassTops || []) drawObsidianEdge(ctx, e, t);
+}
+
+// The foreground terrain pass: polygons flagged level.frontPolys are drawn here,
+// AFTER the rider and the doodads, so the rider passes behind them (an occluder).
+// They're filled with the same ground texture + outline + grass as back terrain,
+// so they read as solid foreground rock — pair one with noCollide walls and the
+// rider can ride straight through it while staying hidden behind it. Called by
+// game.js (in play) and the editor after the actors; a no-op when none are set.
+function drawForeground(ctx, level, pat, view, t) {
+  const front = level.frontPolys;
+  if (!front || !front.length) return;
+  t = t || 0;
+  const invisible = level.invisible && level.invisible.length
+    ? new Set(level.invisible) : null;
+  // an invisible flag wins over the front layer (draw nothing), so skip those
+  const shown = front.filter(pi => !(invisible && invisible.has(pi)));
+  if (!shown.length) return;
+  const vw = view.x1 - view.x0, vh = view.y1 - view.y0;
+  const trace = () => {
+    ctx.beginPath();
+    for (const pi of shown) {
+      const poly = level.polygons[pi];
+      if (!poly) continue;
+      ctx.moveTo(poly[0][0], poly[0][1]);
+      for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i][0], poly[i][1]);
+      ctx.closePath();
+    }
+  };
+  // fill the front polygons with the ground texture (evenodd: a nested front
+  // poly cuts a hole), then outline them, then their grass / glass tops
+  ctx.save();
+  trace();
+  ctx.clip('evenodd');
+  fillGround(ctx, pat, view.x0, view.y0, vw, vh);
+  ctx.restore();
+  trace();
+  ctx.strokeStyle = pat.outline;
+  ctx.lineWidth = 0.07;
+  ctx.stroke();
+  for (const e of level.frontGrass || []) pat.edge(ctx, e, pat, t);
+  for (const e of level.frontGlassTops || []) drawObsidianEdge(ctx, e, t);
 }
 
 // obsidian glass: where the volcano world grows molten crust, a frozen
@@ -3422,34 +3475,175 @@ function strokeSeg(ctx, a, b, w, color) {
   ctx.stroke();
 }
 
+// The rider's cut-out rim: a pale cream laid down at low alpha for a soft, thin
+// edge that lifts the body off the machine. Tier-independent (every skin keeps
+// the same readable outline), so it lives apart from the per-tier palette below.
+const RIDER = { rim: '244,236,217', rimSolid: '#f4ecd9' };
+
+// ---- cosmetic bike skin: the "Heat & Flames" upgrade ladder ----
+// BIKE_SKIN is the unlocked tier — 0 stock, then +1 for each difficulty track
+// cleared (Beginner→1, Advanced→2, Expert→3). Purely cosmetic; game.js sets it
+// from the cleared-track flags in localStorage. Every drawBike / screen pose
+// pulls its colours and flags from bikePalette(BIKE_SKIN), so the whole machine
+// AND the rider upgrade together and stay consistent across screens.
+let BIKE_SKIN = 0;
+function setBikeSkin(n) { BIKE_SKIN = Math.max(0, Math.min(3, n | 0)); }
+
+// stock blue → WARMED UP (orange stripe, twin pipe) → RED HOT (crimson frame,
+// glowing pipe, flame decals) → AFTERBURNER (black frame, blue flames, glowing
+// rims, a flame exhaust trail). Higher tiers layer on top of the lower ones.
+function bikePalette(tier) {
+  const p = {
+    frame: '#2f6cae', frameDark: '#23507f', engine: '#41414a',
+    tank: '#2f6cae', tankHi: '#5b91cf', seat: '#1b1b20',
+    jacket: '#c0392b', shade: '#8f2519', hi: '#e25b48',
+    pants: '#2c2a33', boot: '#43301f', sole: '#caa46a',
+    pad: '#c0392b', knuckle: '#c0392b', glove: '#15151a',
+    header: '#34343a', muffler: '#4c4c55', mufflerHi: '#76767f',
+    pipeScale: 1,        // muffler thickness multiplier
+    twinExhaust: false,  // a second muffler stacked below the first
+    stripe: null,        // race-stripe colour (tank + a band on the sleeve)
+    flame: null,         // flame-lick decal colour along the tank
+    exhaust: 'smoke',    // pipe output: 'smoke' | 'flame' | 'mirage' (game.js)
+    tipGlow: null,       // rgb → a pulsing glow at the exhaust tip
+    plasma: false,       // a bright white-cored plasma burn at the tip (tier 3)
+    rimGlow: null,       // rgb → glowing halo around the wheels
+    sparkle: null,       // rgb → twinkles drifting around the bike
+    tread: 'slick',      // tyre tread: 'slick' | 'grip' | 'knob'
+    rimColor: '#d8d8de', // wheel rim ring
+  };
+  if (tier >= 1) {                                   // WARMED UP
+    p.twinExhaust = true;
+    p.stripe = '#ff8a3d';
+    p.tipGlow = '255,150,70';   // the pipe runs hot — fire shows at the tip
+    p.tread = 'grip';           // a little grip texture (more than a bald slick)
+  }
+  if (tier >= 2) {                                   // RED HOT
+    p.frame = '#b62121'; p.frameDark = '#7c1414';
+    p.tank = '#b62121'; p.tankHi = '#ef6a48';
+    p.jacket = '#d6371c'; p.shade = '#8f2113'; p.hi = '#ff6f43';
+    p.flame = '#ff8a1c'; p.stripe = '#ffd24a';
+    p.exhaust = 'flame';        // actual flames spit from the pipe
+    p.tipGlow = '255,120,40';
+    p.header = '#241a1c'; p.muffler = '#241a1c'; p.mufflerHi = '#47312f'; // darker
+    p.pipeScale = 1.3;          // ...and thicker
+    p.tread = 'knob';           // chunky off-road knobs
+    p.rimColor = '#f6c94a';     // gold rims
+  }
+  if (tier >= 3) {                                   // AFTERBURNER
+    p.frame = '#191920'; p.frameDark = '#0d0d12'; p.engine = '#1d1d24';
+    p.tank = '#191920'; p.tankHi = '#3a3a46';
+    p.jacket = '#16161d'; p.shade = '#0b0b11'; p.hi = '#3aa0ff';
+    p.pants = '#15151b'; p.pad = '#2f8fe8'; p.knuckle = '#5ab0ff';
+    p.flame = '#46a6ff'; p.stripe = '#46a6ff';
+    p.exhaust = 'mirage';       // bright plasma glow + a heat-haze trail (no smoke)
+    p.tipGlow = '120,200,255'; p.plasma = true;
+    p.muffler = '#16161e'; p.mufflerHi = '#5ab0ff';
+    p.rimGlow = '90,170,255'; p.sparkle = '150,200,255';
+    p.rimColor = '#7ac8ff';     // bright blue plasma rims
+  }
+  return p;
+}
+
+// a capsule limb with the soft cut-out rim: a thin OPAQUE cream core (so the
+// bike never shows through the body) wrapped in one faint translucent feather
+// (so the edge stays soft, not a hard line). Matches the in-game rider's edge.
+function riderLimb(ctx, a, b, w, col) {
+  strokeSeg(ctx, a, b, w + 0.075, `rgba(${RIDER.rim},0.12)`);
+  strokeSeg(ctx, a, b, w + 0.040, RIDER.rimSolid);
+  strokeSeg(ctx, a, b, w, col);
+}
+
+// a rimmed disc (pads, gloves, the belly) with the same soft opaque-core edge
+function riderDisc(ctx, pt, r, col) {
+  ctx.fillStyle = `rgba(${RIDER.rim},0.12)`;
+  ctx.beginPath(); ctx.arc(pt.x, pt.y, r + 0.038, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = RIDER.rimSolid;
+  ctx.beginPath(); ctx.arc(pt.x, pt.y, r + 0.020, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = col;
+  ctx.beginPath(); ctx.arc(pt.x, pt.y, r, 0, Math.PI * 2); ctx.fill();
+}
+
 function drawWheel(ctx, w) {
+  // tyre tread + rim are skin-tier dependent: stock = bald slick, WARMED UP =
+  // light grip texture, RED HOT/AFTERBURNER = chunky off-road knobs; rims go
+  // silver → gold (tier 2) → glowing blue plasma (tier 3)
+  const sk = bikePalette(BIKE_SKIN);
   ctx.save();
   ctx.translate(w.pos.x, w.pos.y);
-  // tire
-  ctx.strokeStyle = '#181818';
-  ctx.lineWidth = 0.13;
+  ctx.rotate(w.rot); // spin the whole wheel so the tread and spokes show speed
+  // fat tire — its outer stroke edge reaches ~wheelR (the collider)
+  ctx.strokeStyle = '#15151a';
+  ctx.lineWidth = 0.17;
   ctx.beginPath();
-  ctx.arc(0, 0, 0.335, 0, Math.PI * 2);
+  ctx.arc(0, 0, 0.315, 0, Math.PI * 2);
   ctx.stroke();
-  // rim
-  ctx.strokeStyle = '#cfcfcf';
-  ctx.lineWidth = 0.045;
-  ctx.beginPath();
-  ctx.arc(0, 0, 0.23, 0, Math.PI * 2);
-  ctx.stroke();
-  // spokes
+  if (sk.tread === 'knob') {
+    // chunky knobs poking out around the carcass
+    ctx.strokeStyle = '#0b0b0f';
+    ctx.lineWidth = 0.055;
+    ctx.beginPath();
+    for (let k = 0; k < 16; k++) {
+      const a = k * Math.PI * 2 / 16, c = Math.cos(a), s = Math.sin(a);
+      ctx.moveTo(c * 0.30, s * 0.30);
+      ctx.lineTo(c * 0.42, s * 0.42);
+    }
+    ctx.stroke();
+  } else if (sk.tread === 'grip') {
+    // light grip: fine, shallow sipes cut around the outer edge
+    ctx.strokeStyle = '#07070b';
+    ctx.lineWidth = 0.028;
+    ctx.beginPath();
+    for (let k = 0; k < 30; k++) {
+      const a = k * Math.PI * 2 / 30, c = Math.cos(a), s = Math.sin(a);
+      ctx.moveTo(c * 0.345, s * 0.345);
+      ctx.lineTo(c * 0.40, s * 0.40);
+    }
+    ctx.stroke();
+  } else {
+    // smooth slick: a faint sidewall sheen so the bald tire looks deliberate
+    ctx.strokeStyle = '#33333c';
+    ctx.lineWidth = 0.03;
+    ctx.beginPath();
+    ctx.arc(0, 0, 0.355, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  // plasma rims (tier 3): a soft glowing ring behind the rim
+  if (sk.rimGlow) {
+    ctx.strokeStyle = `rgba(${sk.rimGlow},0.5)`;
+    ctx.lineWidth = 0.12;
+    ctx.beginPath(); ctx.arc(0, 0, 0.245, 0, Math.PI * 2); ctx.stroke();
+  }
+  // rim ring (tier colour)
+  ctx.strokeStyle = sk.rimColor;
   ctx.lineWidth = 0.05;
   ctx.beginPath();
-  for (let k = 0; k < 3; k++) {
-    const a = w.rot + k * Math.PI * 2 / 3;
+  ctx.arc(0, 0, 0.245, 0, Math.PI * 2);
+  ctx.stroke();
+  // brake disc (inner ring)
+  ctx.strokeStyle = '#8a8a92';
+  ctx.lineWidth = 0.025;
+  ctx.beginPath();
+  ctx.arc(0, 0, 0.135, 0, Math.PI * 2);
+  ctx.stroke();
+  // beefier 5-spoke set
+  ctx.strokeStyle = '#b7b7be';
+  ctx.lineWidth = 0.05;
+  ctx.beginPath();
+  for (let k = 0; k < 5; k++) {
+    const a = k * Math.PI * 2 / 5;
     ctx.moveTo(0, 0);
-    ctx.lineTo(Math.cos(a) * 0.23, Math.sin(a) * 0.23);
+    ctx.lineTo(Math.cos(a) * 0.235, Math.sin(a) * 0.235);
   }
   ctx.stroke();
   // hub
-  ctx.fillStyle = '#999';
+  ctx.fillStyle = '#6f6f78';
   ctx.beginPath();
-  ctx.arc(0, 0, 0.07, 0, Math.PI * 2);
+  ctx.arc(0, 0, 0.095, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#3a3a40';
+  ctx.beginPath();
+  ctx.arc(0, 0, 0.04, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 }
@@ -3469,7 +3663,7 @@ function drawHead(ctx, x, y, facing, angle, back) {
     // facing is continuous during the turn animation, so the face
     // squashes through edge-on as the rider swings around
     ctx.scale(Math.abs(facing) < 0.04 ? 0.04 : facing, 1);
-    const h = 0.62;
+    const h = 0.72;
     const w = h * headImg.naturalWidth / headImg.naturalHeight;
     ctx.drawImage(headImg, -w / 2, -h / 2, w, h);
   } else {
@@ -3489,8 +3683,20 @@ function drawHead(ctx, x, y, facing, angle, back) {
   ctx.restore();
 }
 
-// `back` (used by the mirror reflection) draws the rider's head from behind
-function drawBike(ctx, bike, headless, back, lamps) {
+// exhaust routing in the bike's local frame (x forward, -y up): a header off
+// the engine bottom, sweeping back and up to a fat upswept muffler. EXHAUST_TIP
+// is the outlet the smoke puffs from and EXHAUST_VENT the point just inside it,
+// so game.js can spit particles along the can's axis. Shared so the drawn pipe
+// and the smoke origin can never drift apart.
+const EXHAUST_HEAD = [0.22, 0.10];
+const EXHAUST_MID  = [-0.06, 0.16];
+const EXHAUST_VENT = [-0.46, -0.02];
+const EXHAUST_TIP  = [-0.80, -0.30];
+
+// `back` (used by the mirror reflection) draws the rider's head from behind.
+// `t` is the render clock (seconds) for the animated cosmetic flair; pass 0 (or
+// omit) for a still frame.
+function drawBike(ctx, bike, headless, back, lamps, t) {
   // turn-around animation: the rider and frame mirror smoothly through a
   // flat squash (with a little hop) over the 0.28 s after a flip
   const p = Math.min(1, (bike.turnT == null ? 1 : bike.turnT) / 0.28);
@@ -3507,35 +3713,223 @@ function drawBike(ctx, bike, headless, back, lamps) {
   };
   const rw = bike.wheels[bike.rearIndex];
   const fw = bike.wheels[1 - bike.rearIndex];
+  const sk = bikePalette(BIKE_SKIN);   // cosmetic upgrade tier
+  const T = t || 0;                    // render clock for the animated flair
 
+  // wheels first; the chassis, bodywork and rider all layer over them
   for (const w of bike.wheels) drawWheel(ctx, w);
+  // glowing wheel rims (Afterburner) — a soft pulsing halo hugging each tire
+  if (sk.rimGlow) {
+    const gp = 0.55 + 0.45 * Math.sin(T * 4);
+    for (const w of bike.wheels) {
+      const rg = ctx.createRadialGradient(w.pos.x, w.pos.y, 0.22, w.pos.x, w.pos.y, 0.52);
+      rg.addColorStop(0, `rgba(${sk.rimGlow},0)`);
+      rg.addColorStop(0.55, `rgba(${sk.rimGlow},${0.5 * gp})`);
+      rg.addColorStop(1, `rgba(${sk.rimGlow},0)`);
+      ctx.fillStyle = rg;
+      ctx.beginPath(); ctx.arc(w.pos.x, w.pos.y, 0.52, 0, Math.PI * 2); ctx.fill();
+    }
+  }
 
   ctx.lineCap = 'round';
-  const pedal = L(0.02, 0.06);
-  const seatB = L(-0.45, -0.45);
-  const seatF = L(-0.02, -0.43);
-  const handle = L(0.46, -0.44);
-  const engine = L(0.06, -0.12);
+  ctx.lineJoin = 'round';
+  // a filled polygon from a list of L() world points (used for the bodywork
+  // panels — tank, engine, seat, the rider's jacket and boot)
+  const poly = (pts, fill) => {
+    ctx.fillStyle = fill;
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.closePath();
+    ctx.fill();
+  };
 
-  // frame
-  strokeSeg(ctx, pedal, rw.pos, 0.09, '#b9b9b9');
-  strokeSeg(ctx, handle, fw.pos, 0.07, '#b9b9b9');
-  strokeSeg(ctx, pedal, seatF, 0.07, '#b9b9b9');
-  strokeSeg(ctx, pedal, handle, 0.06, '#a5a5a5');
-  strokeSeg(ctx, seatB, seatF, 0.13, '#d9d9d9');
-  ctx.fillStyle = '#8d8d8d';
+  // chassis anchor points in local frame space (L mirrors x by facing)
+  const peg     = L(0.06, 0.20);    // footpeg / engine floor
+  const swPivot = L(-0.16, 0.04);   // swingarm pivot
+  const seatB   = L(-0.66, -0.40);  // tail
+  const seatF   = L(-0.08, -0.50);  // front of the seat
+  const steer   = L(0.50, -0.40);   // steering head (top of the forks)
+  const handle  = L(0.52, -0.55);   // grips — also the rider's hand rest
+  const engine  = L(0.10, -0.02);   // engine-block centre
+
+  // ---- exhaust: header under the engine sweeping up to a fat muffler ----
+  const exH = L(EXHAUST_HEAD[0], EXHAUST_HEAD[1]);
+  const exM = L(EXHAUST_MID[0],  EXHAUST_MID[1]);
+  const exV = L(EXHAUST_VENT[0], EXHAUST_VENT[1]);
+  const exT = L(EXHAUST_TIP[0],  EXHAUST_TIP[1]);
+  // higher tiers run a darker, thicker pipe (pipeScale)
+  const pw = sk.pipeScale;
+  // a second muffler stacked just below (WARMED UP and up) — drawn first/behind
+  const exT2 = L(EXHAUST_TIP[0] + 0.03, EXHAUST_TIP[1] + 0.16);
+  if (sk.twinExhaust) {
+    const v2 = L(EXHAUST_VENT[0] - 0.02, EXHAUST_VENT[1] + 0.14);
+    strokeSeg(ctx, v2, exT2, 0.18 * pw, sk.muffler);
+    strokeSeg(ctx, v2, exT2, 0.085 * pw, sk.mufflerHi);
+    ctx.fillStyle = '#101014';
+    ctx.beginPath(); ctx.arc(exT2.x, exT2.y, 0.075 * pw, 0, Math.PI * 2); ctx.fill();
+  }
+  strokeSeg(ctx, exH, exM, 0.12 * pw, sk.header);
+  strokeSeg(ctx, exM, exV, 0.12 * pw, sk.header);
+  strokeSeg(ctx, exV, exT, 0.21 * pw, sk.muffler);    // muffler can
+  strokeSeg(ctx, exV, exT, 0.11 * pw, sk.mufflerHi);  // highlight down the can
+  ctx.fillStyle = '#101014';
+  ctx.beginPath(); ctx.arc(exT.x, exT.y, 0.085 * pw, 0, Math.PI * 2); ctx.fill();
+  // the tip glows warm when the engine is pulling hard (cosmetic engineLoad)
+  const load = Math.max(0, Math.min(1, bike.engineLoad || 0));
+  if (load > 0.05) {
+    const gl = ctx.createRadialGradient(exT.x, exT.y, 0, exT.x, exT.y, 0.17);
+    gl.addColorStop(0, `rgba(255,150,60,${0.55 * load})`);
+    gl.addColorStop(1, 'rgba(255,150,60,0)');
+    ctx.fillStyle = gl;
+    ctx.beginPath(); ctx.arc(exT.x, exT.y, 0.17, 0, Math.PI * 2); ctx.fill();
+  }
+  // a coloured glow lit at the tip(s) once the pipe runs hot (tiers ≥1),
+  // pulsing gently so it reads as "lit" even at a standstill; the Afterburner
+  // (plasma) burns far brighter and bigger, with a white-hot core
+  if (sk.tipGlow) {
+    const tp = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(T * 5));
+    const tips = sk.twinExhaust ? [exT, exT2] : [exT];
+    const R = sk.plasma ? 0.34 : 0.2;
+    for (const tt of tips) {
+      const g2 = ctx.createRadialGradient(tt.x, tt.y, 0, tt.x, tt.y, R);
+      if (sk.plasma) {
+        g2.addColorStop(0, `rgba(238,250,255,${0.9 * tp})`);   // white-hot core
+        g2.addColorStop(0.35, `rgba(${sk.tipGlow},${0.85 * tp})`);
+        g2.addColorStop(1, `rgba(${sk.tipGlow},0)`);
+      } else {
+        g2.addColorStop(0, `rgba(${sk.tipGlow},${0.6 * tp})`);
+        g2.addColorStop(1, `rgba(${sk.tipGlow},0)`);
+      }
+      ctx.fillStyle = g2;
+      ctx.beginPath(); ctx.arc(tt.x, tt.y, R, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+
+  // ---- suspension to the moving wheels ----
+  strokeSeg(ctx, swPivot, rw.pos, 0.13, '#83838c');                 // swingarm
+  strokeSeg(ctx, L(-0.34, -0.40), L(-0.26, 0.02), 0.06, '#c75a2c'); // rear shock spring
+  strokeSeg(ctx, L(0.44, -0.38), fw.pos, 0.11, '#8c8c95');          // fork lower
+  strokeSeg(ctx, L(0.56, -0.38), fw.pos, 0.07, '#cfcfd6');          // chrome stanchion
+
+  // ---- frame tubes (tier colour) ----
+  const FR = sk.frame, FRD = sk.frameDark;
+  strokeSeg(ctx, steer, seatF, 0.14, FR);    // backbone / top tube
+  strokeSeg(ctx, steer, engine, 0.13, FR);   // down tube
+  strokeSeg(ctx, seatF, swPivot, 0.12, FR);  // seat post to pivot
+  strokeSeg(ctx, engine, peg, 0.11, FRD);    // engine cradle
+  strokeSeg(ctx, seatF, seatB, 0.11, FR);    // subframe
+
+  // skid plate under the engine
+  poly([L(-0.10, 0.20), L(0.30, 0.18), L(0.30, 0.28), L(-0.08, 0.30)], '#5a5a63');
+
+  // engine block with cooling fins + crankcase highlight
+  poly([L(-0.16, -0.20), L(0.32, -0.22), L(0.36, 0.00), L(0.30, 0.18),
+        L(-0.12, 0.18), L(-0.20, -0.02)], sk.engine);
+  ctx.strokeStyle = '#26262c'; ctx.lineWidth = 0.025;
   ctx.beginPath();
-  ctx.arc(engine.x, engine.y, 0.14, 0, Math.PI * 2);
-  ctx.fill();
+  for (let i = 0; i < 4; i++) {
+    const fy = -0.12 + i * 0.075;
+    const a = L(-0.12, fy), b = L(0.30, fy);
+    ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+  }
+  ctx.stroke();
+  ctx.fillStyle = '#5b5b66';
+  { const c = L(0.06, 0.04); ctx.beginPath(); ctx.arc(c.x, c.y, 0.085, 0, Math.PI * 2); ctx.fill(); }
 
-  // rider
+  // fuel tank over the backbone, with a glint
+  poly([L(-0.06, -0.48), L(-0.02, -0.62), L(0.30, -0.62), L(0.44, -0.50),
+        L(0.40, -0.42), L(0.04, -0.44)], sk.tank);
+  poly([L(0.02, -0.58), L(0.24, -0.58), L(0.30, -0.52), L(0.06, -0.50)], sk.tankHi);
+
+  // flame licks curling back off the tank (RED HOT and up), then race stripes
+  if (sk.flame) {
+    ctx.fillStyle = sk.flame;
+    const lick = (bx, by, len) => {
+      const a = L(bx, by - 0.05), b = L(bx - len * 0.5, by - 0.13),
+            c = L(bx - len, by - 0.02), d = L(bx - len * 0.45, by + 0.03), e = L(bx, by + 0.05);
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.lineTo(c.x, c.y);
+      ctx.lineTo(d.x, d.y); ctx.lineTo(e.x, e.y); ctx.closePath(); ctx.fill();
+    };
+    lick(0.12, -0.50, 0.26); lick(0.20, -0.46, 0.22); lick(0.02, -0.52, 0.20);
+  }
+  if (sk.stripe) {
+    strokeSeg(ctx, L(-0.02, -0.605), L(0.40, -0.49), 0.05, sk.stripe);
+    strokeSeg(ctx, L(-0.02, -0.55), L(0.40, -0.435), 0.022, sk.stripe);
+  }
+
+  // front number plate / headlight cowl
+  poly([L(0.46, -0.34), L(0.62, -0.40), L(0.60, -0.16), L(0.46, -0.12)], FRD);
+
+  // seat (black pad) + tail cowl
+  strokeSeg(ctx, seatF, seatB, 0.14, sk.seat);
+  poly([L(-0.64, -0.46), L(-0.78, -0.46), L(-0.74, -0.30), L(-0.62, -0.34)], FR);
+
+  // ---------- rider ----------
+  // The rider sits right on top of the bike, so to keep the body readable as a
+  // separate figure from the (blue + dark-metal) machine, every rider part is
+  // drawn over a soft, thin "cut-out" rim: a faint pale edge feathered out in
+  // two translucent passes (a wide whisper + a narrower, slightly stronger one).
+  // The rims go down first, then the colour fills cover their inner half, so
+  // only a gentle pale halo shows around the silhouette — no hard white line,
+  // no stray seams where two body parts meet. The torso runs from the seat
+  // (its rear sits back into the saddle) up to the shoulders so the rider reads
+  // as a long body leaning over the tank, not a stubby blob.
   const hip = L(-0.30, -0.46);
-  const shoulder = L(-0.11, -0.76);
-  const knee = L(0.14, -0.30);
-  const foot = L(0.03, 0.02);
-  strokeSeg(ctx, hip, knee, 0.11, '#15151a');
-  strokeSeg(ctx, knee, foot, 0.09, '#15151a');
-  strokeSeg(ctx, hip, shoulder, 0.14, '#15151a');
+  const shoulder = L(-0.13, -0.78);
+  const knee = L(0.16, -0.28);
+  const foot = L(0.04, 0.04);
+  const RIMC = '244,236,217';   // cream; a thin OPAQUE core + a faint feather
+  const RIMO = '#f4ecd9';       // so it reads as a soft edge, never see-through
+  const bootPts = [L(-0.06, -0.02), L(0.18, -0.04), L(0.22, 0.10), L(0.22, 0.18), L(-0.08, 0.18)];
+  // torso silhouette: rear/butt set back into the seat (-0.62) → up the spine →
+  // shoulders → chest leaning forward over the tank → belly → back to the hip
+  const torsoPts = [L(-0.14, -0.48), L(0.07, -0.70), L(0.00, -0.84), L(-0.26, -0.85),
+                    L(-0.46, -0.74), L(-0.60, -0.56), L(-0.62, -0.44), L(-0.34, -0.45)];
+  const outline = (pts, w, col) => {  // stroke a closed panel path
+    ctx.strokeStyle = col; ctx.lineWidth = w; ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.closePath(); ctx.stroke();
+  };
+  // a thin OPAQUE cream core (so the dark bike never shows through the body)
+  // wrapped in one faint translucent feather (so the edge stays soft, not sharp)
+  const limbRim = (a, b, w) => {
+    strokeSeg(ctx, a, b, w + 0.075, `rgba(${RIMC},0.12)`);
+    strokeSeg(ctx, a, b, w + 0.040, RIMO);
+  };
+  const polyRim = (pts) => {
+    outline(pts, 0.085, `rgba(${RIMC},0.12)`);
+    outline(pts, 0.040, RIMO);
+  };
+  const disc = (pt, r, col) => {  // rimmed circle (knee/shoulder/glove)
+    ctx.fillStyle = `rgba(${RIMC},0.12)`; ctx.beginPath(); ctx.arc(pt.x, pt.y, r + 0.038, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = RIMO; ctx.beginPath(); ctx.arc(pt.x, pt.y, r + 0.020, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = col; ctx.beginPath(); ctx.arc(pt.x, pt.y, r, 0, Math.PI * 2); ctx.fill();
+  };
+  // rim pass — the soft silhouette under the lower body + torso
+  limbRim(hip, knee, 0.17);
+  limbRim(knee, foot, 0.13);
+  polyRim(bootPts);
+  polyRim(torsoPts);
+  // colour pass — fills cover the rim's inner half, leaving a thin soft edge
+  strokeSeg(ctx, hip, knee, 0.17, sk.pants);                     // riding pants
+  strokeSeg(ctx, knee, foot, 0.13, sk.pants);
+  poly(bootPts, sk.boot);                                        // boot
+  strokeSeg(ctx, L(0.14, 0.18), L(0.24, 0.18), 0.04, sk.sole);   // sole
+  disc(knee, 0.10, sk.pad);                                      // knee pad
+  poly(torsoPts, sk.jacket);                                     // jacket
+  poly([L(-0.62, -0.44), L(-0.60, -0.56), L(-0.44, -0.62), L(-0.36, -0.46)], sk.shade); // lower-back shade
+  poly([L(-0.08, -0.56), L(0.07, -0.70), L(0.00, -0.80), L(-0.16, -0.66)], sk.hi);      // chest highlight
+  if (sk.stripe) strokeSeg(ctx, L(-0.30, -0.50), L(-0.04, -0.80), 0.04, sk.stripe);     // chest stripe
+  disc(shoulder, 0.14, sk.pad);                                  // shoulder pad
+  // collar (under the head photo, which overlaps it) — skipped when the head
+  // has popped off on death, so there's no floating neck stub
+  if (!headless) {
+    ctx.fillStyle = sk.shade;
+    const nk = L(-0.10, -0.88); ctx.beginPath(); ctx.arc(nk.x, nk.y, 0.10, 0, Math.PI * 2); ctx.fill();
+  }
 
   // The arm is two bones hinged at the elbow: an upper arm (shoulder→elbow) and
   // a forearm (elbow→hand). At rest the hand grips the bar; while the rider volts
@@ -3582,15 +3976,39 @@ function drawBike(ctx, bike, headless, back, lamps) {
     elbow = swing(restElbow);
     hand = swing(restHand);
   }
-  strokeSeg(ctx, shoulder, elbow, 0.10, '#15151a'); // upper arm
+  limbRim(shoulder, elbow, 0.13);                   // soft upper-arm rim
+  strokeSeg(ctx, shoulder, elbow, 0.13, sk.jacket); // upper arm (sleeve)
+  if (sk.stripe) strokeSeg(ctx, shoulder, elbow, 0.04, sk.stripe); // sleeve stripe
 
   if (!headless) {
     const head = L(PHYS.headX, PHYS.headY);
     drawHead(ctx, head.x, head.y, m, bike.angle, back);
   }
-  // forearm is drawn last, OVER the helmet, so the raised volt hand passes
-  // in front of the head instead of disappearing behind it
-  strokeSeg(ctx, elbow, hand, 0.08, '#15151a');     // forearm
+  // forearm + glove are drawn last, OVER the helmet, so the raised volt hand
+  // passes in front of the head instead of disappearing behind it
+  limbRim(elbow, hand, 0.11);                       // soft forearm rim
+  strokeSeg(ctx, elbow, hand, 0.11, sk.jacket);     // forearm (sleeve)
+  if (sk.stripe) strokeSeg(ctx, elbow, hand, 0.035, sk.stripe); // sleeve stripe
+  disc(hand, 0.085, sk.glove);                       // gloved hand (rimmed)
+  ctx.fillStyle = sk.knuckle;                        // knuckle accent
+  ctx.beginPath(); ctx.arc(hand.x, hand.y, 0.04, 0, Math.PI * 2); ctx.fill();
+
+  // twinkling sparkles drifting around the bike (Afterburner flair)
+  if (sk.sparkle) {
+    const spots = [[0.52, -0.5], [-0.56, -0.56], [0.10, -0.98], [-0.30, 0.12], [0.36, -0.18]];
+    spots.forEach((sp, i) => {
+      const tw = 0.5 + 0.5 * Math.sin(T * 7 + i * 1.7);
+      if (tw < 0.45) return;
+      const pt = L(sp[0], sp[1]);
+      ctx.fillStyle = `rgba(${sk.sparkle},${tw})`;
+      ctx.beginPath(); ctx.arc(pt.x, pt.y, 0.028 * tw, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = `rgba(${sk.sparkle},${tw * 0.7})`; ctx.lineWidth = 0.012;
+      ctx.beginPath();
+      ctx.moveTo(pt.x - 0.06 * tw, pt.y); ctx.lineTo(pt.x + 0.06 * tw, pt.y);
+      ctx.moveTo(pt.x, pt.y - 0.06 * tw); ctx.lineTo(pt.x, pt.y + 0.06 * tw);
+      ctx.stroke();
+    });
+  }
 
   // headlight (front) and taillight (rear) — the cave world equips the bike
   // with lamps; the big illuminating beams are the darkness pass, here we draw
@@ -3616,6 +4034,67 @@ function drawBike(ctx, bike, headless, back, lamps) {
     ctx.beginPath(); ctx.arc(tl.x, tl.y, 0.08, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = '#ff5347';
     ctx.beginPath(); ctx.arc(tl.x, tl.y, 0.05, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+// exhaust puffs (see game.js), drawn behind the bike so they trail off. Three
+// kinds, flagged on the puff:
+//  • smoke  — soft growing grey discs (tiers 0/1), richer/darker under load
+//  • flame  — additive hot discs with a bright core (tier 2, "actual flames")
+//  • mirage — a transparent heat-haze that DISTORTS the background (tier 3): it
+//    re-stamps the already-drawn frame inside the puff, nudged a hair, so what's
+//    behind ripples like an afterburner's plasma wake. Needs `view` (the visible
+//    world rect, so the canvas maps back onto itself 1:1); without it (screen
+//    poses / previews) it falls back to a faint blue wash.
+function drawExhaust(ctx, puffs, view) {
+  if (!puffs || !puffs.length) return;
+  for (const s of puffs) {
+    const k = s.age / s.life;               // 0..1 lifetime
+    if (k >= 1) continue;
+    const r = s.r0 + (s.r1 - s.r0) * k;      // billows out as it ages
+
+    if (s.mirage) {
+      const fade = Math.min(1, k * 5) * (1 - k);
+      if (view) {
+        const wob = Math.sin(s.age * 22 + s.seed) * 0.055 + 0.025;
+        ctx.save();
+        ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, Math.PI * 2); ctx.clip();
+        ctx.globalAlpha = 0.6 + 0.4 * fade;  // mostly the shifted background
+        ctx.drawImage(ctx.canvas, view.x + wob, view.y - 0.05 - wob * 0.5, view.w, view.h);
+        ctx.restore();
+      }
+      // a whisper of blue plasma colour riding over the ripple
+      const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, r);
+      g.addColorStop(0, `rgba(${s.tint},${0.12 * fade})`);
+      g.addColorStop(1, `rgba(${s.tint},0)`);
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, Math.PI * 2); ctx.fill();
+      continue;
+    }
+
+    if (s.flame) {
+      // additive so overlapping licks brighten into fire; brightest when young
+      const fa = (1 - k) * s.alpha;
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, r);
+      g.addColorStop(0, `rgba(${s.tint},${fa})`);
+      g.addColorStop(0.5, `rgba(${s.tint},${fa * 0.4})`);
+      g.addColorStop(1, `rgba(${s.tint},0)`);
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+      continue;
+    }
+
+    // grey smoke: pops in over the first sliver of life, then fades to nothing
+    const a = Math.min(1, k * 6) * (1 - k) * (1 - k) * s.alpha;
+    const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, r);
+    g.addColorStop(0, `rgba(${s.tint},${a})`);
+    g.addColorStop(0.6, `rgba(${s.tint},${a * 0.5})`);
+    g.addColorStop(1, `rgba(${s.tint},0)`);
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, Math.PI * 2); ctx.fill();
   }
 }
 
@@ -4167,9 +4646,11 @@ function drawDifficulty(ctx, W, H, alpha, tracks, sel, hover, touch, title) {
 
   const items = tracks.map(t => ({
     label: t.label,
-    sub: t.levels.length ? t.length + ' maps' : 'Coming soon',
+    // a track's maps load lazily, so availability/size come from its file list
+    // (`files`), not the loaded-so-far `levels` cache
+    sub: (t.files ? t.files.length : t.levels.length) ? t.length + ' maps' : 'Coming soon',
     color: t.color,
-    disabled: !t.levels.length,
+    disabled: !(t.files ? t.files.length : t.levels.length),
   }));
   const rects = menuRects(W, H, tracks.length, H * 0.34);
   drawButtons(ctx, rects, items, sel, hover, alpha);
@@ -4201,6 +4682,7 @@ function drawDejectedBiker(ctx, x, y, scale, t) {
     { pos: { x: 0.62, y: 0 }, rot: 1.3 },
   ];
   for (const w of wheels) drawWheel(ctx, w);
+  const sk = bikePalette(BIKE_SKIN);  // current cosmetic upgrade tier
 
   const br = Math.sin(t * 1.7) * 0.015; // slow, heavy breathing
   const P = (lx, ly) => ({ x: lx, y: ly - 0.40 });
@@ -4208,25 +4690,32 @@ function drawDejectedBiker(ctx, x, y, scale, t) {
   const handle = P(0.46, -0.44), engine = P(0.06, -0.12);
 
   ctx.lineCap = 'round';
-  strokeSeg(ctx, pedal, wheels[0].pos, 0.09, '#b9b9b9');
-  strokeSeg(ctx, handle, wheels[1].pos, 0.07, '#b9b9b9');
-  strokeSeg(ctx, pedal, seatF, 0.07, '#b9b9b9');
-  strokeSeg(ctx, pedal, handle, 0.06, '#a5a5a5');
-  strokeSeg(ctx, seatB, seatF, 0.13, '#d9d9d9');
-  ctx.fillStyle = '#8d8d8d';
-  ctx.beginPath();
-  ctx.arc(engine.x, engine.y, 0.14, 0, Math.PI * 2);
-  ctx.fill();
+  ctx.lineJoin = 'round';
+  // bike — the same frame / engine / seat colours the earned skin wears in play
+  strokeSeg(ctx, pedal, wheels[0].pos, 0.11, sk.frame);
+  strokeSeg(ctx, handle, wheels[1].pos, 0.09, sk.frame);
+  strokeSeg(ctx, pedal, seatF, 0.10, sk.frame);
+  strokeSeg(ctx, pedal, handle, 0.08, sk.frameDark);
+  ctx.fillStyle = sk.engine;
+  ctx.beginPath(); ctx.arc(engine.x, engine.y, 0.17, 0, Math.PI * 2); ctx.fill();
+  strokeSeg(ctx, seatB, seatF, 0.15, sk.seat);
 
-  // slumped rider: hunched back, shoulders dropped over the bars
+  // slumped rider: hunched back, shoulders dropped over the bars — in the
+  // same leathers (and trim) he wears in play
   const hip = P(-0.32, -0.42 + br);
   const shoulder = P(-0.04, -0.64 + br * 1.6);
   const knee = P(0.14, -0.28);
   const foot = P(0.03, 0.02);
-  strokeSeg(ctx, hip, knee, 0.11, '#15151a');
-  strokeSeg(ctx, knee, foot, 0.09, '#15151a');
-  strokeSeg(ctx, hip, shoulder, 0.14, '#15151a');
-  strokeSeg(ctx, shoulder, handle, 0.08, '#15151a');
+  riderLimb(ctx, hip, knee, 0.15, sk.pants);
+  riderLimb(ctx, knee, foot, 0.12, sk.pants);
+  riderLimb(ctx, foot, P(0.15, 0.06), 0.11, sk.boot);   // boot
+  riderDisc(ctx, knee, 0.09, sk.pad);                   // knee pad
+  riderLimb(ctx, hip, shoulder, 0.19, sk.jacket);       // jacket torso
+  if (sk.stripe) strokeSeg(ctx, hip, shoulder, 0.05, sk.stripe); // jacket stripe
+  riderDisc(ctx, shoulder, 0.12, sk.pad);               // shoulder pad
+  riderLimb(ctx, shoulder, handle, 0.11, sk.jacket);    // arm slumped to the bars
+  if (sk.stripe) strokeSeg(ctx, shoulder, handle, 0.035, sk.stripe);
+  riderDisc(ctx, handle, 0.075, sk.glove);              // gloved hand
 
   // head hanging below the shoulders, almost on the bars, swaying
   // with a slow, sorry little shake
@@ -4268,15 +4757,17 @@ function drawContinue(ctx, W, H, alpha, t, continuesLeft, sel, hover) {
 
 // ---------- victory screen ----------
 
-// the trusty bike parked beside the feast, leaning on its stand — the
-// same frame the dejected pose uses, minus the rider
-function drawParkedBike(ctx, x, y, scale) {
+// the trusty bike parked beside the feast, leaning on its stand — wearing the
+// just-earned skin, so the upgrade is shown off the moment the track is cleared
+function drawParkedBike(ctx, x, y, scale, t) {
   ctx.save();
   ctx.translate(x, y);
   ctx.scale(scale, scale);
   ctx.rotate(-0.05);
   ctx.translate(0, -PHYS.wheelR);
 
+  const sk = bikePalette(BIKE_SKIN);
+  const T = t || 0;
   const wheels = [
     { pos: { x: -0.62, y: 0 }, rot: 2.1 },
     { pos: { x: 0.62, y: 0 }, rot: 0.6 },
@@ -4286,18 +4777,42 @@ function drawParkedBike(ctx, x, y, scale) {
   const handle = P(0.46, -0.44), engine = P(0.06, -0.12);
 
   ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
   // kickstand first so it tucks behind the frame
   strokeSeg(ctx, pedal, { x: 0.20, y: PHYS.wheelR }, 0.05, '#7d7d7d');
   for (const w of wheels) drawWheel(ctx, w);
-  strokeSeg(ctx, pedal, wheels[0].pos, 0.09, '#b9b9b9');
-  strokeSeg(ctx, handle, wheels[1].pos, 0.07, '#b9b9b9');
-  strokeSeg(ctx, pedal, seatF, 0.07, '#b9b9b9');
-  strokeSeg(ctx, pedal, handle, 0.06, '#a5a5a5');
-  strokeSeg(ctx, seatB, seatF, 0.13, '#d9d9d9');
-  ctx.fillStyle = '#8d8d8d';
-  ctx.beginPath();
-  ctx.arc(engine.x, engine.y, 0.14, 0, Math.PI * 2);
-  ctx.fill();
+  // glowing rims (Afterburner)
+  if (sk.rimGlow) {
+    const gp = 0.55 + 0.45 * Math.sin(T * 4);
+    for (const w of wheels) {
+      const rg = ctx.createRadialGradient(w.pos.x, w.pos.y, 0.22, w.pos.x, w.pos.y, 0.52);
+      rg.addColorStop(0, `rgba(${sk.rimGlow},0)`);
+      rg.addColorStop(0.55, `rgba(${sk.rimGlow},${0.5 * gp})`);
+      rg.addColorStop(1, `rgba(${sk.rimGlow},0)`);
+      ctx.fillStyle = rg;
+      ctx.beginPath(); ctx.arc(w.pos.x, w.pos.y, 0.52, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+  // frame / engine / seat in the earned skin's colours
+  strokeSeg(ctx, pedal, wheels[0].pos, 0.11, sk.frame);
+  strokeSeg(ctx, handle, wheels[1].pos, 0.09, sk.frame);
+  strokeSeg(ctx, pedal, seatF, 0.10, sk.frame);
+  strokeSeg(ctx, pedal, handle, 0.08, sk.frameDark);
+  ctx.fillStyle = sk.engine;
+  ctx.beginPath(); ctx.arc(engine.x, engine.y, 0.17, 0, Math.PI * 2); ctx.fill();
+  strokeSeg(ctx, seatB, seatF, 0.15, sk.seat);
+  // flame licks along the spine (RED HOT and up)
+  if (sk.flame) {
+    ctx.fillStyle = sk.flame;
+    const lick = (bx, by, len) => {
+      const a = P(bx, by - 0.05), b = P(bx - len * 0.5, by - 0.12),
+            c = P(bx - len, by - 0.02), d = P(bx - len * 0.45, by + 0.03), e = P(bx, by + 0.05);
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.lineTo(c.x, c.y);
+      ctx.lineTo(d.x, d.y); ctx.lineTo(e.x, e.y); ctx.closePath(); ctx.fill();
+    };
+    lick(0.10, -0.42, 0.24); lick(-0.10, -0.44, 0.20);
+  }
   ctx.restore();
 }
 
@@ -4318,14 +4833,19 @@ function drawVictoryBiker(ctx, x, y, scale, t) {
 
   const breathe = Math.sin(t * 1.9) * 0.012; // full and happy
   ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  const sk = bikePalette(BIKE_SKIN);  // wears the earned skin's leathers
 
   // seated low on the ground: hips by the dirt, legs stretched out with
-  // the knees easing up and apart, feet resting on the ground ahead
+  // the knees easing up and apart, feet resting on the ground ahead — in the
+  // same pants, boots and pads he rides in
   const hip = { x: -0.12, y: -0.10 };
   for (const [kx, ky, fx, fy] of [[0.22, -0.24, 0.54, -0.05],
                                   [0.16, -0.18, 0.48, -0.02]]) {
-    strokeSeg(ctx, hip, { x: kx, y: ky }, 0.11, '#15151a');
-    strokeSeg(ctx, { x: kx, y: ky }, { x: fx, y: fy }, 0.09, '#15151a');
+    riderLimb(ctx, hip, { x: kx, y: ky }, 0.13, sk.pants);
+    riderLimb(ctx, { x: kx, y: ky }, { x: fx, y: fy }, 0.11, sk.pants);
+    riderLimb(ctx, { x: fx, y: fy }, { x: fx + 0.12, y: fy + 0.03 }, 0.10, sk.boot);
+    riderDisc(ctx, { x: kx, y: ky }, 0.08, sk.pad); // knee pad
   }
 
   // the feast bucket, planted on the ground over his ankles
@@ -4335,18 +4855,26 @@ function drawVictoryBiker(ctx, x, y, scale, t) {
   drawPopcorn(ctx, 0, 0, t + 4.2);
   ctx.restore();
 
-  // torso leaning back at ease, with a well-earned belly
+  // torso leaning back at ease, with a big, well-earned belly — the red
+  // racing jacket stretched right over the gut. The belly stays his
+  // signature; the jacket just clothes it.
   const shoulder = { x: -0.24, y: -0.50 + breathe };
-  strokeSeg(ctx, hip, shoulder, 0.14, '#15151a');
-  ctx.fillStyle = '#15151a';
-  ctx.beginPath();
-  ctx.arc(-0.02, -0.26 + breathe * 0.5, 0.17, 0, Math.PI * 2);
-  ctx.fill();
+  riderLimb(ctx, hip, shoulder, 0.18, sk.jacket);       // jacket trunk
+  const bellyC = { x: -0.04, y: -0.24 + breathe * 0.5 };
+  riderDisc(ctx, bellyC, 0.23, sk.jacket);              // the pot belly, clothed
+  ctx.fillStyle = sk.hi;                                // a sheen up the gut
+  ctx.beginPath(); ctx.arc(bellyC.x - 0.10, bellyC.y - 0.08, 0.085, 0, Math.PI * 2); ctx.fill();
+  // a stripe arcing over the gut, matching the bike (WARMED UP and up)
+  if (sk.stripe) {
+    ctx.strokeStyle = sk.stripe; ctx.lineWidth = 0.045;
+    ctx.beginPath(); ctx.arc(bellyC.x, bellyC.y, 0.20, -2.5, -0.5); ctx.stroke();
+  }
 
   // the off arm, short and bent, props him up on the ground behind
   const propEl = { x: -0.42, y: -0.30 };
-  strokeSeg(ctx, shoulder, propEl, 0.08, '#15151a');
-  strokeSeg(ctx, propEl, { x: -0.50, y: -0.04 }, 0.08, '#15151a');
+  riderLimb(ctx, shoulder, propEl, 0.10, sk.jacket);
+  riderLimb(ctx, propEl, { x: -0.50, y: -0.04 }, 0.10, sk.jacket);
+  riderDisc(ctx, shoulder, 0.12, sk.pad);               // shoulder pad
 
   // the shovel cycle: scoop off the rim, swing up, stuff, swing back —
   // a fistful and a half every second, continuously
@@ -4373,8 +4901,8 @@ function drawVictoryBiker(ctx, x, y, scale, t) {
   const chew = f > 0.7 ? Math.sin(t * 26) * 0.05 : 0;
   drawHead(ctx, -0.15, -0.74 + breathe, 1, -0.14 + chew);
 
-  strokeSeg(ctx, shoulder, elbow, 0.09, '#15151a');
-  strokeSeg(ctx, elbow, hand, 0.08, '#15151a');
+  riderLimb(ctx, shoulder, elbow, 0.10, sk.jacket); // upper arm (sleeve)
+  riderLimb(ctx, elbow, hand, 0.085, sk.jacket);    // forearm (sleeve)
 
   // the fistful rides the hand up, then shrinks away as it's eaten
   const sz = p < 0.4 ? 0.075 : 0.075 * (0.55 - p) / 0.15;
@@ -4382,11 +4910,10 @@ function drawVictoryBiker(ctx, x, y, scale, t) {
     drawKernel(ctx, hand.x + 0.02, hand.y - 0.06, sz, 3.1);
     drawKernel(ctx, hand.x - 0.05, hand.y - 0.02, sz * 0.8, 5.7);
   }
-  // glove over the popcorn
-  ctx.fillStyle = '#15151a';
-  ctx.beginPath();
-  ctx.arc(hand.x, hand.y, 0.065, 0, Math.PI * 2);
-  ctx.fill();
+  // gloved hand over the popcorn, with the knuckle accent
+  riderDisc(ctx, hand, 0.065, sk.glove);
+  ctx.fillStyle = sk.knuckle;
+  ctx.beginPath(); ctx.arc(hand.x, hand.y, 0.03, 0, Math.PI * 2); ctx.fill();
 
   // a stray puff tumbles from the mouthful back into the grass
   if (p >= 0.42 && p < 0.92) {
@@ -4535,8 +5062,8 @@ function drawVictory(ctx, W, H, o) {
     drawKernel(ctx, kx, ky, 0.04 + srand(i * 5.7 + 1.3) * 0.05, i * 1.3);
   }
 
-  // the bike parked off to the side, done for the season
-  drawParkedBike(ctx, w * 0.86, gy, 1.5);
+  // the bike parked off to the side, done for the season — wearing its skin
+  drawParkedBike(ctx, w * 0.86, gy, 1.5, t);
 
   // buckets surrounding the champion (x fraction, scale)
   const buckets = [[0.05, 1.5], [0.13, 1.9], [0.40, 1.55],

@@ -1,8 +1,10 @@
-// Gravity-flip check: an upside-down burger is the Elasto Mania gravity apple —
-// collecting one reverses gravity. The collection lives in game.js, but the
-// engine effect is the bike's `grav` sign, tested here directly: +1 pulls down,
-// -1 pulls up, the two mirror exactly, and a bike that never flips is
-// bit-identical to before the feature (the multiplier is inert at +1).
+// Directional gravity check: a gravity burger SETS the bike's gravity direction
+// (the Elasto Mania gravity apple — up/down/left/right). The collection lives in
+// game.js, but the engine effect is the bike's `gravDir` unit vector, tested here
+// directly: down {0,1} falls +y, up {0,-1} falls -y, left {-1,0} falls -x, right
+// {1,0} falls +x; opposite pairs mirror exactly, all four share one magnitude,
+// and a bike that never changes gravity is bit-identical to before (gravDir
+// defaults to down).
 // Run with: node test/gravity_check.js
 const fs = require('fs');
 const path = require('path');
@@ -14,46 +16,43 @@ let fail = 0;
 const bad = m => { console.log('FAIL', m); fail++; };
 
 // open air: no segments, so the bike is purely ballistic under gravity
-function drop(grav) {
+function drop(dir) {
   const b = new Bike(0, 0);
-  b.grav = grav;
+  b.gravDir = dir;
   for (let i = 0; i < 120; i++) b.step(dt, {}, []);
   return b;
 }
 
-// a fresh bike falls down by default
-if (new Bike(0, 0).grav !== 1) bad('a fresh bike should start with grav = +1 (down)');
+// a fresh bike falls straight down by default
+const fresh = new Bike(0, 0);
+if (fresh.gravDir.x !== 0 || fresh.gravDir.y !== 1) bad('a fresh bike should start with gravDir {0,1} (down)');
 
-const down = drop(1);
-if (!(down.pos.y > 0.05 && down.vel.y > 0)) {
-  bad('grav +1 should pull the bike DOWN (got y=' + down.pos.y.toFixed(3) + ' vy=' + down.vel.y.toFixed(3) + ')');
-}
+const down = drop({ x: 0, y: 1 });
+if (!(down.pos.y > 0.05 && down.vel.y > 0)) bad('down gravity should pull +y (got y=' + down.pos.y.toFixed(3) + ')');
 
-const up = drop(-1);
-if (!(up.pos.y < -0.05 && up.vel.y < 0)) {
-  bad('grav -1 should pull the bike UP (got y=' + up.pos.y.toFixed(3) + ' vy=' + up.vel.y.toFixed(3) + ')');
-}
+const up = drop({ x: 0, y: -1 });
+if (!(up.pos.y < -0.05 && up.vel.y < 0)) bad('up gravity should pull -y (got y=' + up.pos.y.toFixed(3) + ')');
 
-// reversing gravity mirrors the fall exactly: same magnitude, opposite sign
-if (Math.abs(down.pos.y + up.pos.y) > 1e-9) {
-  bad('up and down falls should mirror (|y sum|=' + Math.abs(down.pos.y + up.pos.y) + ')');
-}
-if (Math.abs(down.vel.y + up.vel.y) > 1e-9) bad('up and down fall speeds should mirror');
+const left = drop({ x: -1, y: 0 });
+if (!(left.pos.x < -0.05 && left.vel.x < 0)) bad('left gravity should pull -x (got x=' + left.pos.x.toFixed(3) + ')');
 
-// flipping twice is back to normal (an even number of upside-down burgers)
-let b = new Bike(0, 0);
-b.grav *= -1; b.grav *= -1;
-if (b.grav !== 1) bad('two flips should restore normal gravity');
+const right = drop({ x: 1, y: 0 });
+if (!(right.pos.x > 0.05 && right.vel.x > 0)) bad('right gravity should pull +x (got x=' + right.pos.x.toFixed(3) + ')');
 
-// the feature is inert when never triggered: a default-gravity fall is
-// bit-identical to an explicit grav=+1 fall (so existing maps/replays are safe)
+// opposite directions mirror exactly: same magnitude, opposite sign
+if (Math.abs(down.pos.y + up.pos.y) > 1e-9) bad('up/down falls should mirror');
+if (Math.abs(left.pos.x + right.pos.x) > 1e-9) bad('left/right falls should mirror');
+// all four are the same fall, just rotated: equal magnitude (uniform g, no contact)
+if (Math.abs(down.pos.y - right.pos.x) > 1e-9) bad('vertical and horizontal falls should be equal in magnitude');
+
+// inert when never changed: a default fall is bit-identical to explicit down
 const plain = new Bike(0, 0);
 for (let i = 0; i < 120; i++) plain.step(dt, {}, []);
 if (plain.pos.y !== down.pos.y || plain.vel.y !== down.vel.y) {
-  bad('default-gravity fall changed vs explicit grav=+1 — the multiplier is not inert');
+  bad('default-gravity fall changed vs explicit down — gravDir is not inert at default');
 }
 
-console.log(fail ? 'FAILED (' + fail + ')' : 'OK  gravity flip: +1 down, -1 up, symmetric, inert at rest');
+console.log(fail ? 'FAILED (' + fail + ')' : 'OK  directional gravity: down/up/left/right pull correctly, opposite pairs mirror, inert at default');
 process.exit(fail ? 1 : 0);
 `;
 eval(code);

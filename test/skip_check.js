@@ -55,6 +55,8 @@ function FakeAudioContext() {
 const clock = { t: 0 };
 global.window = {
   innerWidth: 800, innerHeight: 600,
+  // the skip cheat is gated behind ?skip=true in the URL; this test drives it
+  location: { search: '?skip=true' },
   AudioContext: function () { const ac = FakeAudioContext(); ac.__real = true; lastAC = ac; return ac; },
   addEventListener(type, fn) { (windowHandlers[type] = windowHandlers[type] || []).push(fn); },
 };

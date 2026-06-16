@@ -5,3 +5,7 @@ _scratch_*
 
 # Claude Code local state: personal settings + nested worktrees
 .claude/
+
+# Local level scratch dirs (raw .lev imports + bmm staging)
+levels/bmm/*
+levels/lev/*

@@ -6,10 +6,15 @@
 // nested polygons are solid islands), start, burgers, goal, theme, plus the
 // optional object/terrain fields: `nuts` [x,y] lethal mounds, `flipBurgers`
 // [x,y] gravity-reversing burgers (identical to the rider, marked only in the
-// editor), and `glassEdges` [poly, edge] pairs (obsidian the tires barely
-// grip, painted on per-edge). Maps save to
-// .bmm files: JSON whose body IS a LEVELS entry plus a format header, so
-// a finished map can be pasted straight into a track.
+// editor), `glassEdges` [poly, edge] pairs (obsidian the tires barely grip,
+// painted on per-edge), `noCollide` [poly, edge] pairs (edges the rider rides
+// straight through — the wall still draws, but doesn't collide),
+// `invisible` [poly] indices (polygons that keep their collision but draw
+// nothing — solid yet unseen), and `frontPolys` [poly] indices (polygons drawn
+// on the foreground layer, over the rider). Maps save to
+// .bmm files: JSON whose body IS a level entry plus a format header, so a
+// finished map can be saved into levels/tracks/<trackId>/ and added to a track's
+// `files` list in js/levels.js (the game fetches and parses it at boot).
 //
 // The world view renders through the real drawWorld/drawBurger/drawPopcorn
 // renderers, so what the editor shows is what the rider gets. game.js owns
@@ -49,11 +54,31 @@ const EDITOR = (() => {
   let prepared = null;   // prepareLevel(map), rebuilt after every change
   let cam = { x: 0, y: 0 };
   let zoom = 36;         // screen px per world unit
-  let tool = 'select';   // select | poly | burger | nut | glass | doodad
-  // the +Burger tool drops either a normal or a gravity-flip burger; its kind
-  // is chosen from the tool's palette (they look identical in play). Flip
-  // burgers still live in their own map array, so the data model is unchanged.
-  let burgerKind = 'normal'; // 'normal' | 'flip'
+  let tool = 'select';   // select | poly | object | glass | doodad
+  // the +Object tool drops a placed object, chosen from its palette: a normal
+  // burger, one of four directional gravity burgers (each identical to a normal
+  // one in play — collecting it SETS gravity up/down/left/right, Elasto-Mania
+  // gravity-apple style), or a lethal nut mound. Burgers and gravity burgers
+  // share the map.flipBurgers array (a gravity burger carries its direction as a
+  // third entry, [x, y, dir]); nuts live in map.nuts.
+  let objectKind = 'burger'; // 'burger' | 'flipUp' | 'flipDown' | 'flipLeft' | 'flipRight' | 'nut'
+  // objectKind -> gravity-burger direction (and the directions a burger can set)
+  const OBJ_FLIP_DIR = { flipUp: 'up', flipDown: 'down', flipLeft: 'left', flipRight: 'right' };
+  const FLIP_DIRS = ['up', 'down', 'left', 'right'];
+  const normFlipDir = d => FLIP_DIRS.indexOf(d) >= 0 ? d : 'up';
+  // the +Edge tool (tool id stays 'glass') has two brushes, chosen from its
+  // palette, both painted onto edges exactly like the glass brush: 'glass'
+  // paints obsidian (low grip), 'nocollide' marks an edge the rider passes
+  // straight through (the wall still draws — see map.noCollide)
+  let glassMode = 'glass';   // 'glass' | 'nocollide'
+  // the +Poly tool draws either a normal polygon or an 'invisible' one (full
+  // collision, but drawn only here in the editor — see map.invisible)
+  let polyMode = 'solid';    // 'solid' | 'invisible'
+  // ...and on either the back or front layer (like a doodad). A 'front' polygon
+  // keeps normal collision but draws OVER the rider and the doodads (see
+  // map.frontPolys / drawForeground), so pairing one with noCollide walls lets
+  // the rider slip behind it, out of view. Defaults to back (normal terrain).
+  let polyLayer = 'back';    // 'back' (behind the rider) | 'front' (over him)
   // the +Doodad tool drops the current sprite onto the current layer, both
   // chosen from the tool's palette panel
   let doodadType = DOODADS[0].id;
@@ -102,12 +127,18 @@ const EDITOR = (() => {
       theme: 'meadow',
       groundY: 0,
       polygons: [[[0, -16], [65, -16], [65, 0], [0, 0]]],
-      start: { x: 7.5, y: -0.75 },
+      // start is the bike's FRAME CENTRE; -1.05 rests the wheels (which now hang
+      // anchorY 0.60 + wheelR 0.40 = 1.00 below the centre) just above this
+      // template's floor at y=0. Was -0.75, tuned to the older, smaller bike.
+      start: { x: 7.5, y: -1.05 },
       burgers: [[25, -0.7], [45, -0.7]],
       goal: [60, -0.75],
       nuts: [],
       flipBurgers: [],
       glassEdges: [],
+      noCollide: [],
+      invisible: [],
+      frontPolys: [],
       doodads: [],
     };
   }
@@ -145,8 +176,16 @@ const EDITOR = (() => {
     // Inert when absent (older maps, shipped levels), so no version bump.
     if (map.groundY != null) L.groundY = round2(map.groundY);
     if (map.nuts.length) L.nuts = map.nuts.map(n => [round2(n[0]), round2(n[1])]);
-    if (map.flipBurgers.length) L.flipBurgers = map.flipBurgers.map(b => [round2(b[0]), round2(b[1])]);
+    // a gravity burger keeps its direction as a 3rd entry; 'up' (the legacy
+    // reverse-gravity burger) is omitted so old maps round-trip byte-identical
+    if (map.flipBurgers.length) L.flipBurgers = map.flipBurgers.map(b =>
+      b[2] && b[2] !== 'up' ? [round2(b[0]), round2(b[1]), b[2]] : [round2(b[0]), round2(b[1])]);
     if (map.glassEdges.length) L.glassEdges = map.glassEdges.map(e => [e[0], e[1]]);
+    // no-collision edges and invisible polygons: additive + inert when absent,
+    // so omitting them keeps older maps and replays byte-identical (like nuts)
+    if (map.noCollide.length) L.noCollide = map.noCollide.map(e => [e[0], e[1]]);
+    if (map.invisible.length) L.invisible = map.invisible.slice();
+    if (map.frontPolys.length) L.frontPolys = map.frontPolys.slice();
     if (map.doodads.length) {
       L.doodads = map.doodads.map(d => {
         const o = { type: d.type, x: round2(d.x), y: round2(d.y), layer: d.layer };
@@ -240,8 +279,11 @@ const EDITOR = (() => {
       burgers: d.burgers.map(b => [Number(b[0]), Number(b[1])]),
       goal: [Number(d.goal[0]), Number(d.goal[1])],
       nuts: Array.isArray(d.nuts) ? d.nuts.map(n => [Number(n[0]), Number(n[1])]) : [],
-      flipBurgers: Array.isArray(d.flipBurgers) ? d.flipBurgers.map(b => [Number(b[0]), Number(b[1])]) : [],
+      flipBurgers: Array.isArray(d.flipBurgers) ? d.flipBurgers.map(b => [Number(b[0]), Number(b[1]), normFlipDir(b[2])]) : [],
       glassEdges: parseGlass(d, polygons),
+      noCollide: parseNoCollide(d, polygons),
+      invisible: parsePolyIndices(d.invisible, polygons, 'invisible polygons'),
+      frontPolys: parsePolyIndices(d.frontPolys, polygons, 'foreground polygons'),
       doodads: Array.isArray(d.doodads) ? d.doodads.map(o =>
         ({ type: String(o.type), x: Number(o.x), y: Number(o.y),
            layer: o.layer === 'front' ? 'front' : 'back',
@@ -265,6 +307,32 @@ const EDITOR = (() => {
     if (!spans.every(isPt)) throw new Error('map glass spans are damaged');
     return spansToEdges(polygons,
       spans.map(g => [Math.min(g[0], g[1]), Math.max(g[0], g[1])]));
+  }
+
+  // no-collision edges: optional [polyIndex, edgeIndex] pairs (added after v2),
+  // same shape as glassEdges. Absent on older maps -> none; validated in range
+  // (edge i runs poly[i]->poly[i+1], so the index range matches the vertex count).
+  function parseNoCollide(d, polygons) {
+    if (d.noCollide == null) return [];
+    if (!Array.isArray(d.noCollide) || !d.noCollide.every(e =>
+        Array.isArray(e) && e.length === 2 &&
+        Number.isInteger(e[0]) && e[0] >= 0 && e[0] < polygons.length &&
+        Number.isInteger(e[1]) && e[1] >= 0 && e[1] < polygons[e[0]].length)) {
+      throw new Error('map no-collision edges are damaged');
+    }
+    return d.noCollide.map(e => [e[0], e[1]]);
+  }
+
+  // a list of polygon indices (added after v2): the invisible flag and the
+  // foreground-layer flag both take this shape. Absent on older maps -> none;
+  // validated as in-range polygon indices.
+  function parsePolyIndices(arr, polygons, label) {
+    if (arr == null) return [];
+    if (!Array.isArray(arr) || !arr.every(p =>
+        Number.isInteger(p) && p >= 0 && p < polygons.length)) {
+      throw new Error('map ' + label + ' are damaged');
+    }
+    return arr.slice();
   }
 
   // the midpoint rule prepareLevel classifies glass with — kept in step here
@@ -403,34 +471,43 @@ const EDITOR = (() => {
     closeMenu();
   }
 
-  // ---------- glass edges ----------
+  // ---------- per-edge markers (glass + no-collision) ----------
 
-  // glass lives as [poly, edge] pairs. The three ops that renumber a
-  // polygon's edges keep these in step so a painted edge stays painted (and
-  // never points at the wrong segment): splitting an edge (inserting a
-  // vertex) glasses both halves, deleting a vertex drops glass from the two
-  // edges it merged, and removing a polygon renumbers the rest.
-  function remapGlassVertexInsert(pi, vi) {
+  // Both glass and no-collision live as [poly, edge] pairs (edge i = segment
+  // poly[i]->poly[i+1]); they renumber identically when a polygon's edges
+  // change, so one set of helpers keeps either list in step: splitting an edge
+  // (inserting a vertex) keeps BOTH halves marked, deleting a vertex drops the
+  // two edges it merged, and removing a polygon renumbers the rest. Each returns
+  // the new list (callers assign it back), so glass and noCollide reuse them.
+  function remapEdgesVertexInsert(list, pi, vi) {
     const out = [];
-    for (const e of map.glassEdges) {
+    for (const e of list) {
       if (e[0] !== pi || e[1] < vi) out.push(e);
       else if (e[1] > vi) out.push([e[0], e[1] + 1]);
       else { out.push([pi, vi]); out.push([pi, vi + 1]); } // the split edge: both halves
     }
-    map.glassEdges = out;
+    return out;
   }
 
-  function remapGlassVertexDelete(pi, vi, n) {
+  function remapEdgesVertexDelete(list, pi, vi, n) {
     const prev = (vi - 1 + n) % n;        // the other edge folded into the merge
-    map.glassEdges = map.glassEdges
+    return list
       .filter(e => e[0] !== pi || (e[1] !== vi && e[1] !== prev))
       .map(e => (e[0] === pi && e[1] > vi ? [e[0], e[1] - 1] : e));
   }
 
-  function remapGlassPolyDelete(pi) {
-    map.glassEdges = map.glassEdges
+  function remapEdgesPolyDelete(list, pi) {
+    return list
       .filter(e => e[0] !== pi)
       .map(e => (e[0] > pi ? [e[0] - 1, e[1]] : e));
+  }
+
+  // a poly-index list (the invisible flag, the foreground-layer flag) renumbers
+  // when a polygon below it is removed; returns the new list (caller assigns it)
+  function remapPolyIndexDelete(list, pi) {
+    return list
+      .filter(p => p !== pi)
+      .map(p => (p > pi ? p - 1 : p));
   }
 
   function cycleTheme() {
@@ -498,7 +575,7 @@ const EDITOR = (() => {
 
   function addFlip(w) {
     pushUndo();
-    map.flipBurgers.push([snap(w.x), snap(w.y)]);
+    map.flipBurgers.push([snap(w.x), snap(w.y), OBJ_FLIP_DIR[objectKind] || 'up']);
     commit(true);
   }
 
@@ -523,11 +600,48 @@ const EDITOR = (() => {
       ? 'front - drawn over the rider' : 'back - drawn behind the rider'));
   }
 
-  // the +Burger tool's kind, driven by its palette (placement-only, no undo)
-  function setBurgerKind(k) {
-    burgerKind = k === 'flip' ? 'flip' : 'normal';
-    note('Burger kind: ' + (burgerKind === 'flip'
-      ? 'upside-down - collecting it flips gravity' : 'normal'));
+  // the +Object tool's kind, driven by its palette (placement-only, no undo).
+  // Each kind drops into its own map array, so the data model is unchanged.
+  function setObjectKind(k) {
+    const KINDS = ['burger', 'flipUp', 'flipDown', 'flipLeft', 'flipRight', 'nut'];
+    objectKind = KINDS.indexOf(k) >= 0 ? k : 'burger';
+    const dir = OBJ_FLIP_DIR[objectKind];
+    note('Object: ' + (dir
+      ? 'gravity burger (' + dir + ') - collecting it sets gravity ' + dir
+      : objectKind === 'nut' ? 'nut mound - a lethal hazard' : 'burger'));
+  }
+
+  // drop the armed object at the click (each kind keeps its own undo via its adder)
+  function placeObject(w) {
+    if (objectKind === 'nut') addNut(w);
+    else if (OBJ_FLIP_DIR[objectKind]) addFlip(w);
+    else addBurger(w);
+  }
+
+  // the +Edge tool's brush, driven by its palette (no map data, no undo):
+  // 'glass' paints obsidian edges, 'nocollide' paints pass-through edges
+  function setGlassMode(m) {
+    glassMode = m === 'nocollide' ? 'nocollide' : 'glass';
+    note(glassMode === 'nocollide'
+      ? 'No-Collision brush: paint an edge to let the rider ride through it'
+      : 'Glass brush: paint obsidian onto edges');
+  }
+
+  // the +Poly tool's mode, driven by its palette (no map data until you draw)
+  function setPolyMode(m) {
+    polyMode = m === 'invisible' ? 'invisible' : 'solid';
+    note(polyMode === 'invisible'
+      ? 'Invisible Polygon: solid collision, drawn only in the editor'
+      : 'Polygon: a solid shape (one inside the play area is an island)');
+  }
+
+  // the +Poly tool's layer, driven by its palette toggles (no map data until you
+  // draw). A front polygon draws over the rider; back is normal terrain.
+  function setPolyLayer(layer) {
+    polyLayer = layer === 'front' ? 'front' : 'back';
+    note('Polygon layer: ' + (polyLayer === 'front'
+      ? 'front - drawn over the rider (collision unchanged)'
+      : 'back - normal terrain behind the rider'));
   }
 
   // pick a theme by name from the Theme dropdown (an edit, so it takes undo)
@@ -562,9 +676,16 @@ const EDITOR = (() => {
     }
     pushUndo();
     map.polygons.push(draft);
+    const idx = map.polygons.length - 1;
+    if (polyMode === 'invisible') map.invisible.push(idx);
+    if (polyLayer === 'front') map.frontPolys.push(idx);
     draft = null;
     commit(true);
-    note('Polygon added - one inside the playable area is a solid island');
+    note(polyMode === 'invisible'
+      ? 'Invisible polygon added - solid collision, drawn only here in the editor'
+      : polyLayer === 'front'
+      ? 'Foreground polygon added - drawn over the rider (collision is normal)'
+      : 'Polygon added - one inside the playable area is a solid island');
   }
 
   function deleteVertex(p) {
@@ -573,7 +694,9 @@ const EDITOR = (() => {
       return;
     }
     pushUndo();
-    remapGlassVertexDelete(p.pi, p.vi, map.polygons[p.pi].length);
+    const n = map.polygons[p.pi].length;
+    map.glassEdges = remapEdgesVertexDelete(map.glassEdges, p.pi, p.vi, n);
+    map.noCollide = remapEdgesVertexDelete(map.noCollide, p.pi, p.vi, n);
     map.polygons[p.pi].splice(p.vi, 1);
     sel = null;
     commit(true);
@@ -586,8 +709,12 @@ const EDITOR = (() => {
     }
     pushUndo();
     map.polygons.splice(pi, 1);
-    // glass indices shift down past the removed polygon
-    remapGlassPolyDelete(pi);
+    // glass edges, no-collision edges, the invisible flag and the front-layer
+    // flag all index by polygon, so they shift down past the removed one
+    map.glassEdges = remapEdgesPolyDelete(map.glassEdges, pi);
+    map.noCollide = remapEdgesPolyDelete(map.noCollide, pi);
+    map.invisible = remapPolyIndexDelete(map.invisible, pi);
+    map.frontPolys = remapPolyIndexDelete(map.frontPolys, pi);
     sel = null; hov = null;
     commit(true);
     note('Polygon removed');
@@ -605,15 +732,19 @@ const EDITOR = (() => {
         return;
       case 'edge': {
         if (wholePoly) { deletePolygon(sel.pi); return; }
-        // a glassed edge clears its glass; a bare edge can't be deleted alone
+        // Del clears an edge's marks: glass (low grip) and/or no-collision
+        // (pass-through). A bare edge can't be deleted on its own.
         const gi = map.glassEdges.findIndex(g => g[0] === sel.pi && g[1] === sel.vi);
-        if (gi >= 0) {
+        const ni = map.noCollide.findIndex(g => g[0] === sel.pi && g[1] === sel.vi);
+        if (gi >= 0 || ni >= 0) {
           pushUndo();
-          map.glassEdges.splice(gi, 1);
+          if (gi >= 0) map.glassEdges.splice(gi, 1);
+          if (ni >= 0) map.noCollide.splice(ni, 1);
           commit(true);
-          note('Glass removed');
+          note(gi >= 0 && ni >= 0 ? 'Glass and edge collision restored'
+            : gi >= 0 ? 'Glass removed' : 'Edge collision restored');
         } else {
-          note('That edge has no glass - Shift+Del removes the whole polygon');
+          note('That edge has no glass or removed collision - Shift+Del removes the whole polygon');
         }
         return;
       }
@@ -964,12 +1095,13 @@ const EDITOR = (() => {
     if (naming) finishNaming(true); // a click off the name box commits it
     const w = s2w(x, y);
     if (tool === 'poly') { polyClick(w); return; }
-    if (tool === 'burger') { burgerKind === 'flip' ? addFlip(w) : addBurger(w); return; }
-    if (tool === 'nut') { addNut(w); return; }
+    if (tool === 'object') { placeObject(w); return; }
     if (tool === 'doodad') { addDoodad(w); return; }
     if (tool === 'glass') {
+      // both brushes paint the same way — a click + drag stroke along edges;
+      // glassMode picks which list (glass vs no-collision) the edge lands in
       drag = { kind: 'paint', moved: false };
-      paintGlassAt(w);
+      paintEdge(w);
       return;
     }
     // select tool. The rotate handle floats over the current selection and is
@@ -1008,7 +1140,7 @@ const EDITOR = (() => {
         return;
       }
       if (drag.kind === 'paint') {
-        paintGlassAt(w);
+        paintEdge(w);
         return;
       }
       if (drag.kind === 'rotate' && sel) {
@@ -1044,7 +1176,7 @@ const EDITOR = (() => {
         map.nuts[p.ni] = [snap(w.x), snap(w.y)];
         break;
       case 'flip':
-        map.flipBurgers[p.fi] = [snap(w.x), snap(w.y)];
+        map.flipBurgers[p.fi] = [snap(w.x), snap(w.y), map.flipBurgers[p.fi][2] || 'up'];
         break;
       case 'doodad': {
         const d = map.doodads[p.di];
@@ -1075,16 +1207,18 @@ const EDITOR = (() => {
     }
   }
 
-  // glass brush: glass the one edge under the cursor. A whole stroke (down +
-  // drag) coalesces into a single undo step, and re-touching an already-glassed
-  // edge is a no-op, so dragging back and forth is safe. To clear glass, select
-  // the edge and press Del (see deleteSel).
-  function paintGlassAt(w) {
+  // the +Edge brush: mark the one edge under the cursor, in whichever list the
+  // current mode targets (glass or no-collision). A whole stroke (down + drag)
+  // coalesces into a single undo step, and re-touching an already-marked edge is
+  // a no-op, so dragging back and forth is safe. To clear, select the edge and
+  // press Del (see deleteSel).
+  function paintEdge(w) {
+    const list = glassMode === 'nocollide' ? map.noCollide : map.glassEdges;
     const e = pickEdge(w.x, w.y, BRUSH_R / zoom);
     if (!e) return;
-    if (map.glassEdges.some(g => g[0] === e.pi && g[1] === e.vi)) return;   // already glass
+    if (list.some(g => g[0] === e.pi && g[1] === e.vi)) return;   // already marked
     if (!drag.moved) { pushUndo(); drag.moved = true; }
-    map.glassEdges.push([e.pi, e.vi]);
+    list.push([e.pi, e.vi]);
     commit();
   }
 
@@ -1092,7 +1226,9 @@ const EDITOR = (() => {
     if (x != null) { mx = x; my = y; }
     if (drag && drag.kind === 'paint' && drag.moved) {
       commit(true);
-      note('Glass painted - the tires barely grip it');
+      note(glassMode === 'nocollide'
+        ? 'Edge collision removed - the rider rides straight through it'
+        : 'Glass painted - the tires barely grip it');
     }
     if (drag && drag.kind === 'move' && drag.moved) commit(true);
     if (drag && drag.kind === 'rotate' && drag.moved) commit(true);
@@ -1107,7 +1243,8 @@ const EDITOR = (() => {
       deleteVertex(p);
     } else if (p && p.kind === 'edge') {
       pushUndo();
-      remapGlassVertexInsert(p.pi, p.vi);
+      map.glassEdges = remapEdgesVertexInsert(map.glassEdges, p.pi, p.vi);
+      map.noCollide = remapEdgesVertexInsert(map.noCollide, p.pi, p.vi);
       map.polygons[p.pi].splice(p.vi + 1, 0, [snap(p.px), snap(p.py)]);
       sel = { kind: 'vertex', pi: p.pi, vi: p.vi + 1 };
       commit(true);
@@ -1152,12 +1289,18 @@ const EDITOR = (() => {
         return;
       case '1': case 'v': case 'V': setTool('select'); return;
       case '2': case 'p': case 'P': setTool('poly'); return;
-      // the burger tool now carries a kind; 3/B arms a normal burger, 6/F a
-      // gravity-flip one (the old +Flip tool folded into the +Burger palette)
-      case '3': case 'b': case 'B': setTool('burger'); setBurgerKind('normal'); return;
+      // the +Object tool carries a kind; 3/B arms a burger, 5/K a nut mound,
+      // 6/F a gravity burger (press 6/F again to cycle up->down->left->right).
+      // Glass (4/G) keeps whichever brush its palette last set.
+      case '3': case 'b': case 'B': setTool('object'); setObjectKind('burger'); return;
       case '4': case 'g': case 'G': setTool('glass'); return;
-      case '5': case 'k': case 'K': setTool('nut'); return;
-      case '6': case 'f': case 'F': setTool('burger'); setBurgerKind('flip'); return;
+      case '5': case 'k': case 'K': setTool('object'); setObjectKind('nut'); return;
+      case '6': case 'f': case 'F': {
+        setTool('object');
+        const order = ['flipUp', 'flipDown', 'flipLeft', 'flipRight'];
+        setObjectKind(order[(order.indexOf(objectKind) + 1) % order.length]);
+        return;
+      }
       case '7': case 'd': case 'D': setTool('doodad'); return;
       case 't': case 'T': cycleTheme(); return;
       case 'n': case 'N': startNaming(); return;
@@ -1183,10 +1326,13 @@ const EDITOR = (() => {
     // / theme); the toolbar tool buttons emit a bare tool id
     if (id.indexOf('doodadPick:') === 0) { setDoodadType(id.slice(11)); return; }
     if (id === 'doodadLayer:back' || id === 'doodadLayer:front') { setDoodadLayer(id.slice(12)); return; }
-    if (id.indexOf('burgerKind:') === 0) { setBurgerKind(id.slice(11)); return; }
+    if (id.indexOf('objectKind:') === 0) { setObjectKind(id.slice(11)); return; }
+    if (id.indexOf('glassMode:') === 0) { setGlassMode(id.slice(10)); return; }
+    if (id.indexOf('polyMode:') === 0) { setPolyMode(id.slice(9)); return; }
+    if (id.indexOf('polyLayer:') === 0) { setPolyLayer(id.slice(10)); return; }
     if (id.indexOf('theme:') === 0) { setTheme(id.slice(6)); closeMenu(); return; }
     switch (id) {
-      case 'select': case 'poly': case 'burger': case 'glass': case 'nut': case 'doodad': setTool(id); break;
+      case 'select': case 'poly': case 'object': case 'glass': case 'doodad': setTool(id); break;
       case 'rider': toggleRider(); break;
       case 'grid': toggleGrid(); break;
       case 'background': toggleBackground(); break;
@@ -1265,17 +1411,24 @@ const EDITOR = (() => {
     drawDoodadLayer(ctx, map.doodads, 'back', rt);   // scenery behind the actors
     for (const n of map.nuts) drawNutMound(ctx, n[0], n[1], rt);
     for (const b of map.burgers) drawBurger(ctx, b[0], b[1], rt);
-    // upside-down burgers draw identically to normal ones in play; here in the
-    // editor a badge marks them so the author can tell them apart
+    // gravity burgers draw identically to normal ones in play; here in the editor
+    // a directional badge marks them and shows which way they set gravity
     for (const b of map.flipBurgers) {
       drawBurger(ctx, b[0], b[1], rt);
-      drawFlipBadge(ctx, b[0], b[1]);
+      drawFlipBadge(ctx, b[0], b[1], b[2]);
     }
     drawPopcorn(ctx, map.goal[0], map.goal[1], rt);
     drawStartMarker(ctx);
     drawDoodadLayer(ctx, map.doodads, 'front', rt);  // props that ride over the rider
+    // foreground polygons draw over the rider in play; dim them here so the
+    // author can still see and edit the scene behind them
+    ctx.save();
+    ctx.globalAlpha = 0.55;
+    drawForeground(ctx, prepared, pat, view, rt);
+    ctx.restore();
     drawGlassEdges(ctx);
     drawPolyOverlay(ctx);
+    drawNoCollideOverlay(ctx);
     drawDoodadOverlay(ctx);
     if (showRider) drawRiderPreview(ctx);
     drawDrafts(ctx, rt);
@@ -1289,8 +1442,10 @@ const EDITOR = (() => {
     // go stale when the tool, the open dropdown, or a modal changes
     popups = [];
     if (!helpOpen && !confirmPrompt) {
-      if (tool === 'burger') drawBurgerPalette(ctx, W, H, rt);
+      if (tool === 'object') drawObjectPalette(ctx, W, H, rt);
       else if (tool === 'doodad') drawDoodadPalette(ctx, W, H, rt);
+      else if (tool === 'glass') drawGlassPalette(ctx, W, H, rt);
+      else if (tool === 'poly') drawPolyPalette(ctx, W, H, rt);
       if (menu === 'view') drawDropdown(ctx, uiRects.find(b => b.id === 'view'), viewItems());
       else if (menu === 'theme') drawDropdown(ctx, uiRects.find(b => b.id === 'theme'), themeItems());
     }
@@ -1368,11 +1523,14 @@ const EDITOR = (() => {
     ctx.restore();
   }
 
-  // an editor-only badge over an upside-down burger: a violet ring around the
-  // burger plus a small disc with a double-headed vertical arrow (the gravity-
-  // flip glyph). In play these burgers look exactly like normal ones; this
-  // marker exists only so the author can place and spot them.
-  function drawFlipBadge(ctx, x, y) {
+  // an editor-only badge over a gravity burger: a violet ring around the burger
+  // plus a small disc with a single arrow pointing the way the burger sets
+  // gravity (up/down/left/right). In play these burgers look exactly like normal
+  // ones; this marker exists only so the author can place and tell them apart.
+  const FLIP_BADGE_VEC = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
+  function drawFlipBadge(ctx, x, y, dir) {
+    const a = FLIP_BADGE_VEC[dir] || FLIP_BADGE_VEC.up;
+    const ax = a[0], ay = a[1];
     ctx.save();
     ctx.translate(x, y);
     ctx.lineCap = 'round';
@@ -1390,12 +1548,16 @@ const EDITOR = (() => {
     ctx.arc(bx, by, 0.26, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
+    // a single arrow through the disc, pointing the gravity direction
+    const tipx = bx + ax * 0.15, tipy = by + ay * 0.15;
+    const px = -ay, py = ax;               // perpendicular, for the arrowhead barbs
     ctx.strokeStyle = '#fff';
     ctx.lineWidth = 0.05;
     ctx.beginPath();
-    ctx.moveTo(bx, by - 0.15); ctx.lineTo(bx, by + 0.15);                         // shaft
-    ctx.moveTo(bx - 0.07, by - 0.07); ctx.lineTo(bx, by - 0.16); ctx.lineTo(bx + 0.07, by - 0.07); // up head
-    ctx.moveTo(bx - 0.07, by + 0.07); ctx.lineTo(bx, by + 0.16); ctx.lineTo(bx + 0.07, by + 0.07); // down head
+    ctx.moveTo(bx - ax * 0.15, by - ay * 0.15); ctx.lineTo(tipx, tipy);           // shaft
+    ctx.moveTo(tipx - ax * 0.1 + px * 0.08, tipy - ay * 0.1 + py * 0.08);         // barb
+    ctx.lineTo(tipx, tipy);
+    ctx.lineTo(tipx - ax * 0.1 - px * 0.08, tipy - ay * 0.1 - py * 0.08);         // barb
     ctx.stroke();
     ctx.restore();
   }
@@ -1484,9 +1646,27 @@ const EDITOR = (() => {
     map.polygons.forEach((poly, pi) => {
       // a whole-polygon selection lights up the entire outline and every handle
       const polySel = sel && sel.kind === 'poly' && sel.pi === pi;
-      ctx.strokeStyle = polySel ? '#f9c623' : 'rgba(255,255,255,0.45)';
-      ctx.lineWidth = (polySel ? 3 : 1.5) / zoom;
+      const invis = map.invisible.includes(pi);
+      const front = map.frontPolys.includes(pi);
+      ctx.save();
+      if (invis && !polySel) {
+        // an invisible polygon draws nothing in play — here a dashed violet
+        // outline marks the solid-but-unseen region so the author can edit it
+        ctx.strokeStyle = 'rgba(206,128,236,0.9)';
+        ctx.setLineDash([8 / zoom, 5 / zoom]);
+        ctx.lineWidth = 2 / zoom;
+      } else if (front && !polySel) {
+        // a foreground polygon draws over the rider — a dashed amber outline
+        // (the doodad front-layer tint) flags it
+        ctx.strokeStyle = 'rgba(255,170,90,0.9)';
+        ctx.setLineDash([8 / zoom, 5 / zoom]);
+        ctx.lineWidth = 2 / zoom;
+      } else {
+        ctx.strokeStyle = polySel ? '#f9c623' : 'rgba(255,255,255,0.45)';
+        ctx.lineWidth = (polySel ? 3 : 1.5) / zoom;
+      }
       strokePoly(ctx, poly);
+      ctx.restore();
       for (let vi = 0; vi < poly.length; vi++) {
         const isSel = polySel || (sel && sel.kind === 'vertex' && sel.pi === pi && sel.vi === vi);
         const isHov = hov && hov.kind === 'vertex' && hov.pi === pi && hov.vi === vi;
@@ -1535,10 +1715,40 @@ const EDITOR = (() => {
     ctx.save();
     ctx.lineCap = 'round';
     for (const [pi, vi] of map.glassEdges) stroke(pi, vi, 'rgba(170,215,235,0.85)', 4);
-    if (tool === 'glass' && !overChrome()) {
+    if (tool === 'glass' && glassMode === 'glass' && !overChrome()) {
       const w = s2w(mx, my);
       const e = pickEdge(w.x, w.y, BRUSH_R / zoom);
       if (e) stroke(e.pi, e.vi, '#f9c623', 6);
+    }
+    ctx.restore();
+  }
+
+  // no-collision edges (map.noCollide): trace each one in dashed "ghost" cyan so
+  // the author sees where the rider rides through (the wall still draws, so the
+  // overlay is the only tell). In the no-collision brush the edge under the
+  // cursor lights up gold, like the glass brush.
+  function drawNoCollideOverlay(ctx) {
+    const stroke = (pi, vi, color, w, dash) => {
+      const poly = map.polygons[pi];
+      if (!poly) return;
+      const a = poly[vi], b = poly[(vi + 1) % poly.length];
+      if (!a || !b) return;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = w / zoom;
+      ctx.setLineDash(dash ? [7 / zoom, 5 / zoom] : []);
+      ctx.beginPath();
+      ctx.moveTo(a[0], a[1]);
+      ctx.lineTo(b[0], b[1]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    };
+    ctx.save();
+    ctx.lineCap = 'round';
+    for (const [pi, vi] of map.noCollide) stroke(pi, vi, 'rgba(90,220,235,0.9)', 4, true);
+    if (tool === 'glass' && glassMode === 'nocollide' && !overChrome()) {
+      const w = s2w(mx, my);
+      const e = pickEdge(w.x, w.y, BRUSH_R / zoom);
+      if (e) stroke(e.pi, e.vi, '#f9c623', 6, false);
     }
     ctx.restore();
   }
@@ -1577,7 +1787,11 @@ const EDITOR = (() => {
     const w = s2w(mx, my);
     const cx = snap(w.x), cy = snap(w.y);
     if (tool === 'poly') {
-      ctx.strokeStyle = '#ffe27a';
+      // the draft is tinted to match its editor outline: violet when invisible,
+      // amber on the front layer, gold otherwise
+      const draftCol = polyMode === 'invisible' ? 'rgba(206,128,236,0.95)'
+        : polyLayer === 'front' ? 'rgba(255,170,90,0.95)' : '#ffe27a';
+      ctx.strokeStyle = draftCol;
       ctx.lineWidth = 2 / zoom;
       ctx.setLineDash([6 / zoom, 4 / zoom]);
       if (draft && draft.length) {
@@ -1593,24 +1807,23 @@ const EDITOR = (() => {
           ctx.stroke();
         }
         ctx.setLineDash([]);
-        ctx.fillStyle = '#ffe27a';
+        ctx.fillStyle = draftCol;
         const r = 4 / zoom;
         for (const v of draft) ctx.fillRect(v[0] - r, v[1] - r, r * 2, r * 2);
       }
       ctx.setLineDash([]);
     }
-    if (tool === 'burger' && !overChrome()) {
-      // ghost the armed burger kind; the flip one wears its editor badge
+    if (tool === 'object' && !overChrome()) {
+      // ghost the armed object kind at the snapped cursor; the flip burger wears
+      // its editor badge, the nut mound its pile
       ctx.save();
       ctx.globalAlpha = 0.55;
-      drawBurger(ctx, cx, cy, rt);
-      if (burgerKind === 'flip') drawFlipBadge(ctx, cx, cy);
-      ctx.restore();
-    }
-    if (tool === 'nut' && !overChrome()) {
-      ctx.save();
-      ctx.globalAlpha = 0.55;
-      drawNutMound(ctx, cx, cy, rt);
+      if (objectKind === 'nut') {
+        drawNutMound(ctx, cx, cy, rt);
+      } else {
+        drawBurger(ctx, cx, cy, rt);
+        if (OBJ_FLIP_DIR[objectKind]) drawFlipBadge(ctx, cx, cy, OBJ_FLIP_DIR[objectKind]);
+      }
       ctx.restore();
     }
     if (tool === 'doodad' && !overChrome()) {
@@ -1792,7 +2005,27 @@ const EDITOR = (() => {
   // id), then click the world to place. Shared by the +Burger and +Doodad
   // tools; the grid columns adapt so it always fits between the toolbar and the
   // status bar. Pushes its panel onto `popups` so clicks on it are handled.
+  // one thumbnail cell of a palette: highlight box, thumbnail, label, hit rect.
+  // Shared by the flat layout and the sectioned one (drawSectionedPalette).
+  function drawPaletteCell(ctx, c, cx, cy, cw, ch, rt, rects) {
+    const hot = hitRect({ x: cx, y: cy, w: cw, h: ch }, mx, my);
+    ctx.fillStyle = c.on ? 'rgba(120,62,16,0.92)' : hot ? 'rgba(60,30,10,0.9)' : 'rgba(22,14,8,0.85)';
+    roundRectPath(ctx, cx, cy, cw, ch, 7);
+    ctx.fill();
+    ctx.lineWidth = c.on ? 2.5 : hot ? 2 : 1.2;
+    ctx.strokeStyle = c.on ? '#f9c623' : hot ? 'rgba(249,198,35,0.6)' : 'rgba(249,198,35,0.28)';
+    ctx.stroke();
+    const thumb = ch - 22;
+    drawThumb(ctx, c, cx + (cw - thumb) / 2, cy + 4, thumb, rt);
+    ctx.fillStyle = c.on ? '#ffe27a' : '#e8dcc8';
+    ctx.font = '11px ' + FONT;
+    ctx.textAlign = 'center';
+    ctx.fillText(ellipsize(ctx, c.label, cw - 8), cx + cw / 2, cy + ch - 9);
+    rects.push({ id: c.id, x: cx, y: cy, w: cw, h: ch });
+  }
+
   function drawPalettePanel(ctx, W, H, rt, opts) {
+    if (opts.sections) { drawSectionedPalette(ctx, rt, opts); return; }
     const pad = 10, cellW = 86, cellH = 80, gap = 8;
     const titleH = 22, headerH = titleH + (opts.toggles ? 30 : 0);
     const panelX = 10 + SAFE.left;
@@ -1847,44 +2080,233 @@ const EDITOR = (() => {
     }
 
     // thumbnail cells
-    ctx.textAlign = 'center';
     opts.cells.forEach((c, i) => {
       const cx = panelX + pad + (i % cols) * (cellW + gap);
       const cy = gridTop + Math.floor(i / cols) * (cellH + gap);
-      const hot = hitRect({ x: cx, y: cy, w: cellW, h: cellH }, mx, my);
-      ctx.fillStyle = c.on ? 'rgba(120,62,16,0.92)' : hot ? 'rgba(60,30,10,0.9)' : 'rgba(22,14,8,0.85)';
-      roundRectPath(ctx, cx, cy, cellW, cellH, 7);
-      ctx.fill();
-      ctx.lineWidth = c.on ? 2.5 : hot ? 2 : 1.2;
-      ctx.strokeStyle = c.on ? '#f9c623' : hot ? 'rgba(249,198,35,0.6)' : 'rgba(249,198,35,0.28)';
-      ctx.stroke();
-      const thumb = cellH - 22;
-      drawThumb(ctx, c, cx + (cellW - thumb) / 2, cy + 4, thumb, rt);
-      ctx.fillStyle = c.on ? '#ffe27a' : '#e8dcc8';
-      ctx.font = '11px ' + FONT;
-      ctx.fillText(ellipsize(ctx, c.label, cellW - 8), cx + cellW / 2, cy + cellH - 9);
-      rects.push({ id: c.id, x: cx, y: cy, w: cellW, h: cellH });
+      drawPaletteCell(ctx, c, cx, cy, cellW, cellH, rt, rects);
     });
     ctx.restore();
     popups.push({ bounds: { x: panelX, y: panelY, w: panelW, h: panelH }, rects });
   }
 
-  // the two burger kinds, shown in the +Burger palette. Identical in play (the
-  // flip one just reverses gravity when collected); the editor badge sets them
-  // apart, and the model keeps them in separate map arrays.
-  const BURGER_KINDS = [
-    { id: 'normal', label: 'Burger', draw: (c, t) => drawBurger(c, 0, 0, t) },
-    { id: 'flip', label: 'Flip Burger', draw: (c, t) => { drawBurger(c, 0, 0, t); drawFlipBadge(c, 0, 0); } },
+  // a palette grouped into labelled sections (+ optional sub-groups), stacked
+  // vertically with a divider between sections — used by the +Object palette
+  // (Help / Harm, with a Gravity sub-group under Help). opts.sections is
+  // [{ label, groups: [{ label?, cells }] }]; cells take the same shape as the
+  // flat layout's. Cell ids/click routing are unchanged, so the existing popup
+  // hit-testing works as-is.
+  function drawSectionedPalette(ctx, rt, opts) {
+    const pad = 10, cellW = 86, cellH = 80, gap = 8, titleH = 22;
+    const secH = 20, grpH = 17, divH = 14;
+    const panelX = 10 + SAFE.left;
+    const panelY = toolbarBottom + 8;
+    let maxCells = 1;
+    for (const s of opts.sections) for (const g of s.groups) maxCells = Math.max(maxCells, g.cells.length);
+    const cols = Math.min(4, maxCells);
+    const panelW = cols * cellW + (cols - 1) * gap + pad * 2;
+    const rects = [];
+
+    // walk the structure once, emitting draw ops and measuring the height
+    const ops = [];
+    let y = panelY + pad + titleH;
+    opts.sections.forEach((s, si) => {
+      if (si > 0) { y += divH / 2; ops.push({ t: 'div', y }); y += divH / 2; }
+      ops.push({ t: 'sec', label: s.label, y });
+      y += secH;
+      for (const g of s.groups) {
+        if (g.label) { ops.push({ t: 'grp', label: g.label, y }); y += grpH; }
+        const rows = Math.ceil(g.cells.length / cols);
+        g.cells.forEach((c, i) => {
+          ops.push({ t: 'cell', c,
+            cx: panelX + pad + (i % cols) * (cellW + gap),
+            cy: y + Math.floor(i / cols) * (cellH + gap) });
+        });
+        y += rows * cellH + (rows - 1) * gap + gap;
+      }
+    });
+    const panelH = y - gap - panelY + pad;
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(10,6,3,0.92)';
+    roundRectPath(ctx, panelX, panelY, panelW, panelH, 10);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(249,198,35,0.4)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#f9c623';
+    ctx.font = 'bold 14px ' + FONT;
+    ctx.fillText(opts.title, panelX + pad, panelY + pad + titleH / 2);
+
+    for (const op of ops) {
+      if (op.t === 'div') {
+        ctx.strokeStyle = 'rgba(249,198,35,0.25)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(panelX + pad, op.y);
+        ctx.lineTo(panelX + panelW - pad, op.y);
+        ctx.stroke();
+      } else if (op.t === 'sec') {
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#f9c623';
+        ctx.font = 'bold 12px ' + FONT;
+        ctx.fillText(op.label.toUpperCase(), panelX + pad, op.y + secH / 2);
+      } else if (op.t === 'grp') {
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = 'rgba(240,232,218,0.72)';
+        ctx.font = 'italic 11px ' + FONT;
+        ctx.fillText(op.label, panelX + pad + 10, op.y + grpH / 2);
+      } else {
+        drawPaletteCell(ctx, op.c, op.cx, op.cy, cellW, cellH, rt, rects);
+      }
+    }
+    ctx.restore();
+    popups.push({ bounds: { x: panelX, y: panelY, w: panelW, h: panelH }, rects });
+  }
+
+  // the placeable objects, shown in the +Object palette grouped into Help / Harm
+  // (drawObjectPalette below). Burgers and the four directional gravity burgers
+  // look identical in play (a gravity burger SETS gravity up/down/left/right when
+  // grabbed — the editor badge's arrow tells them apart); the nut mound is the
+  // lethal hazard.
+  const OBJECT_KINDS = [
+    { id: 'burger', label: 'Burger', draw: (c, t) => drawBurger(c, 0, 0, t) },
+    { id: 'flipUp', label: 'Grav Up', draw: (c, t) => { drawBurger(c, 0, 0, t); drawFlipBadge(c, 0, 0, 'up'); } },
+    { id: 'flipDown', label: 'Grav Down', draw: (c, t) => { drawBurger(c, 0, 0, t); drawFlipBadge(c, 0, 0, 'down'); } },
+    { id: 'flipLeft', label: 'Grav Left', draw: (c, t) => { drawBurger(c, 0, 0, t); drawFlipBadge(c, 0, 0, 'left'); } },
+    { id: 'flipRight', label: 'Grav Right', draw: (c, t) => { drawBurger(c, 0, 0, t); drawFlipBadge(c, 0, 0, 'right'); } },
+    { id: 'nut', label: 'Nut Mound', draw: (c, t) => drawNutMound(c, 0, 0, t) },
   ];
 
-  function drawBurgerPalette(ctx, W, H, rt) {
+  // Help / Harm sections, with the four gravity burgers as a "Gravity" sub-group
+  // under Help (they're required and helpful, like a normal burger — you collect
+  // them — so they belong with Help, just set gravity instead of nudging it).
+  function drawObjectPalette(ctx, W, H, rt) {
+    const cell = id => {
+      const k = OBJECT_KINDS.find(o => o.id === id);
+      return { id: 'objectKind:' + k.id, label: k.label, on: k.id === objectKind,
+               w: 1.6, h: 1.6, centered: true, draw: k.draw };
+    };
     drawPalettePanel(ctx, W, H, rt, {
-      title: 'BURGERS',
-      cells: BURGER_KINDS.map(k => ({
-        id: 'burgerKind:' + k.id, label: k.label, on: k.id === burgerKind,
-        w: 1.5, h: 1.5, centered: true, draw: k.draw,
+      title: 'OBJECTS',
+      sections: [
+        { label: 'Help', groups: [
+          { cells: [cell('burger')] },
+          { label: 'Gravity', cells: ['flipUp', 'flipDown', 'flipLeft', 'flipRight'].map(cell) },
+        ] },
+        { label: 'Harm', groups: [
+          { cells: [cell('nut')] },
+        ] },
+      ],
+    });
+  }
+
+  // the +Edge tool's two brushes, with simple symbolic thumbnails: a glassy
+  // sheen edge, and a dashed "ghost" edge with an arrow riding through it.
+  const GLASS_MODES = [
+    { id: 'glass', label: 'Glass', draw: drawGlassChip },
+    { id: 'nocollide', label: 'No-Collision', draw: drawGhostChip },
+  ];
+
+  function drawGlassPalette(ctx, W, H, rt) {
+    drawPalettePanel(ctx, W, H, rt, {
+      title: 'EDGE',
+      cells: GLASS_MODES.map(m => ({
+        id: 'glassMode:' + m.id, label: m.label, on: m.id === glassMode,
+        w: 1.4, h: 1.4, centered: true, draw: m.draw,
       })),
     });
+  }
+
+  // the +Poly tool's two modes: a solid (filled) polygon, or an invisible one
+  // (a dashed outline only — solid collision, drawn nowhere in play).
+  const POLY_MODES = [
+    { id: 'solid', label: 'Polygon', draw: drawSolidPolyChip },
+    { id: 'invisible', label: 'Invisible', draw: drawInvisiblePolyChip },
+  ];
+
+  function drawPolyPalette(ctx, W, H, rt) {
+    drawPalettePanel(ctx, W, H, rt, {
+      title: 'POLYGON',
+      // a layer toggle like the doodad palette's: front polygons draw over the
+      // rider (defaults to back)
+      toggles: [
+        { id: 'polyLayer:back', label: 'Back', on: polyLayer === 'back' },
+        { id: 'polyLayer:front', label: 'Front', on: polyLayer === 'front' },
+      ],
+      cells: POLY_MODES.map(m => ({
+        id: 'polyMode:' + m.id, label: m.label, on: m.id === polyMode,
+        w: 1.4, h: 1.4, centered: true, draw: m.draw,
+      })),
+    });
+  }
+
+  // tiny symbolic thumbnails for the glass + poly palettes, drawn around the
+  // origin within ~[-0.55, 0.55] so they fit a centred palette cell
+  function drawGlassChip(c) {
+    c.save();
+    c.rotate(-0.16);
+    c.fillStyle = 'rgba(34,48,62,0.95)';        // glass body
+    roundRectPath(c, -0.55, -0.1, 1.1, 0.32, 0.06);
+    c.fill();
+    c.strokeStyle = 'rgba(190,225,242,0.95)';   // mirror seam on top
+    c.lineWidth = 0.07;
+    c.lineCap = 'round';
+    c.beginPath();
+    c.moveTo(-0.55, -0.1); c.lineTo(0.55, -0.1);
+    c.stroke();
+    c.strokeStyle = 'rgba(235,250,255,0.9)';    // glints
+    c.lineWidth = 0.05;
+    c.beginPath();
+    c.moveTo(-0.32, -0.1); c.lineTo(-0.12, -0.1);
+    c.moveTo(0.14, -0.1); c.lineTo(0.32, -0.1);
+    c.stroke();
+    c.restore();
+  }
+
+  function drawGhostChip(c) {
+    c.save();
+    c.lineCap = 'round';
+    c.strokeStyle = 'rgba(90,220,235,0.95)';    // the passable wall edge, dashed
+    c.lineWidth = 0.09;
+    c.setLineDash([0.15, 0.12]);
+    c.beginPath();
+    c.moveTo(0, -0.5); c.lineTo(0, 0.5);
+    c.stroke();
+    c.setLineDash([]);
+    c.strokeStyle = '#ffe27a';                  // an arrow riding straight through
+    c.lineWidth = 0.07;
+    c.beginPath();
+    c.moveTo(-0.5, 0.05); c.lineTo(0.5, 0.05);
+    c.moveTo(0.3, -0.12); c.lineTo(0.52, 0.05); c.lineTo(0.3, 0.22);
+    c.stroke();
+    c.restore();
+  }
+
+  function drawSolidPolyChip(c) {
+    c.beginPath();
+    c.moveTo(0, -0.5); c.lineTo(0.52, 0.42); c.lineTo(-0.52, 0.42); c.closePath();
+    c.fillStyle = 'rgba(120,150,90,0.92)';      // a grassy ground green
+    c.fill();
+    c.strokeStyle = 'rgba(255,255,255,0.7)';
+    c.lineWidth = 0.06;
+    c.lineJoin = 'round';
+    c.stroke();
+  }
+
+  function drawInvisiblePolyChip(c) {
+    c.save();
+    c.strokeStyle = 'rgba(206,128,236,0.95)';   // dashed outline only, no fill
+    c.lineWidth = 0.07;
+    c.lineJoin = 'round';
+    c.setLineDash([0.16, 0.12]);
+    c.beginPath();
+    c.moveTo(0, -0.5); c.lineTo(0.52, 0.42); c.lineTo(-0.52, 0.42); c.closePath();
+    c.stroke();
+    c.restore();
   }
 
   function drawDoodadPalette(ctx, W, H, rt) {
@@ -1978,14 +2400,14 @@ const EDITOR = (() => {
     const defs = [
       { id: 'select', label: 'Select', on: tool === 'select' },
       { id: 'poly', label: '+Poly', on: tool === 'poly' },
-      { id: 'burger', label: '+Burger', on: tool === 'burger' },
-      { id: 'glass', label: '+Glass', on: tool === 'glass' },
-      { id: 'nut', label: '+Nut', on: tool === 'nut' },
+      { id: 'object', label: '+Object', on: tool === 'object' },
+      { id: 'glass', label: '+Edge', on: tool === 'glass' },
       { id: 'doodad', label: '+Doodad', on: tool === 'doodad' },
     ];
-    // The +Burger and +Doodad tools reveal a palette panel (their kinds /
-    // sprites + layer); View and Theme are dropdown menus opened from their
-    // button. `menu` marks a button that toggles a dropdown instead of acting.
+    // The +Object (burger/flip/nut), +Edge (glass/no-collision), +Poly
+    // (solid/invisible) and +Doodad tools each reveal a palette panel of their
+    // options; View and Theme are dropdown menus opened from their button.
+    // `menu` marks a button that toggles a dropdown instead of acting.
     defs.push(
       { id: 'view', label: 'View ▾', menu: 'view', on: menu === 'view' },
       { id: 'theme', label: 'Theme: ' + map.theme + ' ▾', menu: 'theme', on: menu === 'theme' },
@@ -2041,10 +2463,9 @@ const EDITOR = (() => {
 
   const TOOL_HINTS = {
     select: 'drag vertices, edges, burgers, START, GOAL - Shift+drag moves a whole polygon (or Shift while dragging a lone vertex snaps it to the grid) - a whole polygon or a doodad shows a rotate handle above it (drag to spin, 15° detents unless Shift) - double-click an edge to add a vertex (a vertex to remove it) - Del removes (a glassed edge clears its glass; Shift+Del the whole polygon)',
-    poly: 'click to lay vertices - click the first one (or Enter) closes the polygon - Esc cancels',
-    burger: 'pick Burger or Flip Burger from the palette, then click to drop it - a flip burger reverses gravity when collected (identical to a normal one in play; badged only here)',
-    glass: 'click or drag along an edge to glass it (obsidian the tires barely grip) - paints the one edge nearest the cursor - clear it by selecting the edge and pressing Del',
-    nut: 'click to drop a nut mound - a lethal hazard (peanut-butter-soaked nuts) the rider dies on contact with',
+    poly: 'pick Polygon or Invisible + a Back/Front layer from the palette, then click to lay vertices - click the first point (or Enter) closes it - invisible keeps collision but draws nothing; a front polygon draws OVER the rider (collision unchanged) so he can hide behind it - Esc cancels',
+    object: 'pick Burger, one of the four Gravity burgers (Up/Down/Left/Right) or Nut Mound from the palette, then click to drop it - a gravity burger sets gravity that way when collected; a nut mound is a lethal hazard',
+    glass: 'Glass brush: click or drag an edge to glass it (the tires barely grip). No-Collision brush: click or drag an edge to let the rider ride straight through it (the wall still shows). Clear either by selecting the edge and pressing Del',
     doodad: 'pick a sprite + layer from the palette, then click to place an inert prop - "back" sits behind the rider, "front" in front of him (it never collides)',
   };
 
@@ -2073,6 +2494,9 @@ const EDITOR = (() => {
       '  |  ' + map.polygons.length + ' poly  ' + map.burgers.length + ' burgers' +
       (map.flipBurgers.length ? '  ' + map.flipBurgers.length + ' flip' : '') +
       (map.nuts.length ? '  ' + map.nuts.length + ' nuts' : '') +
+      (map.invisible.length ? '  ' + map.invisible.length + ' invis' : '') +
+      (map.frontPolys.length ? '  ' + map.frontPolys.length + ' front' : '') +
+      (map.noCollide.length ? '  ' + map.noCollide.length + ' ghost' : '') +
       (map.doodads.length ? '  ' + map.doodads.length + ' doodads' : '') +
       '  |  snap ' + SNAP, W - 10 - SAFE.right, ty);
     ctx.restore();
@@ -2081,11 +2505,11 @@ const EDITOR = (() => {
   const HELP = [
     ['1 / V', 'Select: drag vertices, edges (walls move whole), burgers, START, GOAL'],
     ['Shift+drag', 'move a whole polygon (Shift+grab a vertex/edge); or hold Shift while dragging a lone vertex to snap it to the grid'],
-    ['2 / P', 'Polygon: click out a new shape, close on the first point - inside the play area it is a solid island'],
-    ['3 / B', 'Burger: pick Burger or Flip Burger in the palette, then click to drop it (3/B arms normal, 6/F the flip kind)'],
-    ['4 / G', 'Glass: paint obsidian onto edges (near-zero tire grip) - click or drag the nearest edge; clear it by selecting the edge and pressing Del'],
-    ['5 / K', 'Nut: click to drop a nut mound - a lethal hazard the rider dies on contact with (Del removes a selected one)'],
-    ['6 / F', 'Flip Burger: same as the burger tool but arms the gravity-flip kind - collecting it reverses gravity'],
+    ['2 / P', 'Polygon: click out a new shape, close on the first point - inside the play area it is a solid island. The palette picks Invisible (keeps collision, draws nothing) and a Back/Front layer - a Front polygon draws OVER the rider so he can hide behind it (collision unchanged)'],
+    ['3 / B', 'Object: pick Burger, a Gravity burger (Up/Down/Left/Right) or Nut Mound in the palette, then click to drop it (3/B arms a burger, 5/K a nut mound, 6/F a gravity burger)'],
+    ['4 / G', 'Edge: the Glass brush paints obsidian onto edges (near-zero grip); the No-Collision brush paints an edge the rider rides straight through (the wall still shows). Both clear by selecting the edge + Del'],
+    ['5 / K', 'Nut Mound: arms the +Object tool with the lethal nut-mound hazard (Del removes a selected one)'],
+    ['6 / F', 'Gravity Burger: arms the +Object tool with a gravity burger; press 6/F again to cycle its direction (up/down/left/right) - collecting it sets gravity that way'],
     ['7 / D', 'Doodad: drop an inert decorative sprite - pick the sprite and its layer (behind or in front of the rider) from the palette panel; it never collides'],
     ['rotate handle', 'a whole-polygon or doodad selection floats a handle above it - drag it to spin the object (snaps to 15°; hold Shift to rotate freely)'],
     ['double-click', 'on an edge adds a vertex; on a vertex removes it'],
@@ -2190,7 +2614,10 @@ const EDITOR = (() => {
     get map() { return map; },
     get tool() { return tool; },
     get sel() { return sel; },
-    get burgerKind() { return burgerKind; },
+    get objectKind() { return objectKind; },
+    get glassMode() { return glassMode; },
+    get polyMode() { return polyMode; },
+    get polyLayer() { return polyLayer; },
     get doodadType() { return doodadType; },
     get doodadLayer() { return doodadLayer; },
     get menu() { return menu; },

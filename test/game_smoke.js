@@ -67,6 +67,8 @@ const clock = { t: 0 };
 // ---- DOM globals the scripts touch ----
 global.window = {
   innerWidth: 800, innerHeight: 600,
+  // the smoke test uses the skip cheat, which is gated behind ?skip=true
+  location: { search: '?skip=true' },
   AudioContext: function () { const ac = FakeAudioContext(); ac.__real = true; lastAC = ac; return ac; },
   addEventListener(type, fn) { (windowHandlers[type] = windowHandlers[type] || []).push(fn); },
 };

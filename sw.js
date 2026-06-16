@@ -1,8 +1,12 @@
 /* Burger Mania service worker — offline app shell + PWA installability.
  *
  * The deploy workflow stamps BUILD with the commit SHA (tools/stamp-version.js),
- * so every deploy ships a byte-different SW: the browser sees the change,
- * installs the new worker, and the activate step purges the previous cache.
+ * so every deploy ships a byte-different SW: the browser sees the change and
+ * installs the new worker. It then *waits* — we don't skipWaiting on install —
+ * so the running page keeps serving a consistent old build until index.html
+ * decides it's safe to swap (postMessage SKIP_WAITING at a non-disruptive
+ * moment), at which point activate purges the previous cache and claims the
+ * page, and index.html reloads once into the fresh build.
  * Opened from file:// during local dev the SW never registers (service workers
  * need http/https), so playing off disk is completely unaffected.
  */
@@ -28,10 +32,20 @@ const SHELL = [
 ];
 
 self.addEventListener('install', (e) => {
-  self.skipWaiting();
+  // Note: no skipWaiting() here — a freshly installed worker stays in "waiting"
+  // until the page asks for the swap (see the message handler), so we never cut
+  // a build out from under an in-progress ride.
   // Cache shell items one by one so a single missing asset can't fail the lot.
   e.waitUntil(caches.open(CACHE).then((c) =>
     Promise.all(SHELL.map((u) => c.add(u).catch(() => {})))));
+});
+
+// index.html sends this once it's safe to upgrade (on a menu/victory screen or
+// while backgrounded). skipWaiting() promotes this worker out of "waiting" →
+// activate fires (purging the old cache) → clients.claim() → the page sees a
+// controllerchange and reloads itself into the new build.
+self.addEventListener('message', (e) => {
+  if (e.data && e.data.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
 self.addEventListener('activate', (e) => {
@@ -56,6 +70,17 @@ self.addEventListener('fetch', (e) => {
         return res;
       })
       .catch(() => caches.match('./index.html').then((m) => m || caches.match('./'))));
+    return;
+  }
+
+  // Level maps (levels/*.bmm): network-first, so an edited or newly added map
+  // shows up on the next reload (in dev and after a deploy), falling back to the
+  // cached copy when offline.
+  if (new URL(req.url).pathname.includes('/levels/')) {
+    e.respondWith(caches.open(CACHE).then((c) =>
+      fetch(req)
+        .then((res) => { if (res && res.ok) c.put(req, res.clone()); return res; })
+        .catch(() => c.match(req))));
     return;
   }
 

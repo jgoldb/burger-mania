@@ -152,12 +152,12 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   if (EDITOR.tool !== 'select') bad('editor should open in the select tool');
   const w2s = EDITOR.worldToScreen;
 
-  // ---- burger placement (the +Burger tool, normal kind) + undo/redo ----
+  // ---- burger placement (the +Object tool, burger kind) + undo/redo ----
   const burgers0 = EDITOR.map.burgers.length;
   key('3');
-  if (EDITOR.tool !== 'burger') bad('key 3 should pick the burger tool');
-  if (EDITOR.burgerKind !== 'normal') bad('key 3 should arm the normal burger kind');
-  pumpFrames(1, 1 / 60);                      // draw the +Burger palette (must not throw)
+  if (EDITOR.tool !== 'object') bad('key 3 should pick the object tool');
+  if (EDITOR.objectKind !== 'burger') bad('key 3 should arm the burger kind');
+  pumpFrames(1, 1 / 60);                      // draw the +Object palette (must not throw)
   mouseDown(400, 300); mouseUp(400, 300);    // the view centre is mid-box
   if (EDITOR.map.burgers.length !== burgers0 + 1) bad('clicking should drop a burger');
   key('z', { ctrlKey: true });
@@ -165,10 +165,11 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   key('y', { ctrlKey: true });
   if (EDITOR.map.burgers.length !== burgers0 + 1) bad('Ctrl+Y should redo the burger');
 
-  // ---- nut mound placement (the lethal hazard) + undo/redo + draw ----
+  // ---- nut mound placement (the +Object tool, nut kind) + undo/redo + draw ----
   const nuts0 = EDITOR.map.nuts.length;
   key('5');
-  if (EDITOR.tool !== 'nut') bad('key 5 should pick the nut tool');
+  if (EDITOR.tool !== 'object') bad('key 5 should pick the object tool');
+  if (EDITOR.objectKind !== 'nut') bad('key 5 should arm the nut-mound kind');
   mouseDown(360, 280); mouseUp(360, 280);
   if (EDITOR.map.nuts.length !== nuts0 + 1) bad('clicking should drop a nut mound');
   pumpFrames(2, 1 / 60);                      // draw a frame with the mound (must not throw)
@@ -178,18 +179,19 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   if (EDITOR.map.nuts.length !== nuts0 + 1) bad('Ctrl+Y should redo the nut mound');
   key('1');
 
-  // ---- flip-burger placement: the +Burger tool's gravity-flip kind ----
+  // ---- gravity-burger placement: the +Object tool's directional gravity kinds ----
   const flip0 = EDITOR.map.flipBurgers.length;
   key('6');
-  if (EDITOR.tool !== 'burger') bad('key 6 should pick the burger tool');
-  if (EDITOR.burgerKind !== 'flip') bad('key 6 should arm the flip burger kind');
+  if (EDITOR.tool !== 'object') bad('key 6 should pick the object tool');
+  if (EDITOR.objectKind !== 'flipUp') bad('key 6 should arm the up gravity burger');
   // the palette's kind buttons emit these ids
-  EDITOR.action('burgerKind:normal');
-  if (EDITOR.burgerKind !== 'normal') bad('the burger palette should arm the normal kind');
-  EDITOR.action('burgerKind:flip');
-  if (EDITOR.burgerKind !== 'flip') bad('the burger palette should arm the flip kind');
+  EDITOR.action('objectKind:burger');
+  if (EDITOR.objectKind !== 'burger') bad('the object palette should arm the burger kind');
+  EDITOR.action('objectKind:flipDown');
+  if (EDITOR.objectKind !== 'flipDown') bad('the object palette should arm a gravity burger kind');
   mouseDown(440, 320); mouseUp(440, 320);
-  if (EDITOR.map.flipBurgers.length !== flip0 + 1) bad('clicking should drop an upside-down burger');
+  if (EDITOR.map.flipBurgers.length !== flip0 + 1) bad('clicking should drop a gravity burger');
+  if (EDITOR.map.flipBurgers[flip0][2] !== 'down') bad('the dropped gravity burger should carry its direction');
   pumpFrames(2, 1 / 60);                      // draw the palette + flip ghost (must not throw)
   key('z', { ctrlKey: true });
   if (EDITOR.map.flipBurgers.length !== flip0) bad('Ctrl+Z should undo the upside-down burger');
@@ -266,6 +268,103 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   if (EDITOR.map.glassEdges.length !== 0) bad('Delete on a glassed edge should clear the glass');
   key('z', { ctrlKey: true });                // undo: the glass returns
   if (EDITOR.map.glassEdges.length !== 1) bad('undo should restore the deleted glass');
+
+  // ---- no-collision brush: paint an edge the rider rides straight through ----
+  // works exactly like the glass brush, but marks the edge in map.noCollide
+  key('4');                                   // edge tool (id 'glass')
+  EDITOR.action('glassMode:nocollide');
+  if (EDITOR.glassMode !== 'nocollide') bad('the edge palette should arm the no-collision brush');
+  pumpFrames(1, 1 / 60);                       // draw the edge palette (must not throw)
+  const segs0 = prepareLevel(EDITOR.map).segments.length;   // the box: 4 edges
+  let nc = w2s(65, -8);                        // a point on the box's right wall (edge 1)
+  mouseDown(nc.x, nc.y); mouseUp(nc.x, nc.y);
+  if (EDITOR.map.noCollide.length !== 1 ||
+      EDITOR.map.noCollide[0][0] !== 0 || EDITOR.map.noCollide[0][1] !== 1) {
+    bad('painting should mark edge [0,1] no-collide, got ' + JSON.stringify(EDITOR.map.noCollide));
+  }
+  // that one edge drops out of the collision set (the wall still renders)
+  const segs1 = prepareLevel(EDITOR.map).segments.length;
+  if (segs1 !== segs0 - 1) bad('a no-collide edge should drop 1 segment, got ' + segs1 + ' vs ' + segs0);
+  // clear it the same way as glass: select the edge + Del
+  key('1');
+  nc = w2s(65, -8);
+  mouseDown(nc.x, nc.y); mouseUp(nc.x, nc.y);
+  if (!EDITOR.sel || EDITOR.sel.kind !== 'edge') bad('clicking the right wall should select its edge');
+  key('Delete');
+  if (EDITOR.map.noCollide.length !== 0) bad('Delete on a no-collide edge should restore its collision');
+  if (prepareLevel(EDITOR.map).segments.length !== segs0) bad('restoring the edge should bring its segment back');
+  key('z', { ctrlKey: true });                 // undo: the no-collide mark returns
+  if (EDITOR.map.noCollide.length !== 1) bad('undo should restore the deleted no-collide edge');
+  key('z', { ctrlKey: true });                 // undo the paint too -> clean
+  if (EDITOR.map.noCollide.length !== 0) bad('undo should clear the painted no-collide edge');
+  EDITOR.action('glassMode:glass');            // back to the glass brush
+  if (EDITOR.glassMode !== 'glass') bad('the edge palette should re-arm the glass brush');
+  key('1');
+
+  // ---- invisible polygon: full collision, but drawn nowhere in play ----
+  key('2');                                    // poly tool
+  EDITOR.action('polyMode:invisible');
+  if (EDITOR.polyMode !== 'invisible') bad('the poly palette should arm the invisible mode');
+  pumpFrames(1, 1 / 60);                        // draw the +Poly palette (must not throw)
+  for (const [px, py] of [[8, -4], [18, -4], [13, -1]]) {
+    let p = w2s(px, py);
+    mouseDown(p.x, p.y); mouseUp(p.x, p.y);
+  }
+  key('Enter');
+  if (EDITOR.map.polygons.length !== 2) bad('the invisible poly should be added');
+  if (EDITOR.map.invisible.length !== 1 || EDITOR.map.invisible[0] !== 1) {
+    bad('a new invisible polygon should flag its index, got ' + JSON.stringify(EDITOR.map.invisible));
+  }
+  // it keeps full collision: the box's 4 edges + the triangle's 3 = 7 segments
+  if (prepareLevel(EDITOR.map).segments.length !== 7) {
+    bad('an invisible polygon must keep its collision, got ' + prepareLevel(EDITOR.map).segments.length);
+  }
+  pumpFrames(1, 1 / 60);                         // draw with the invisible poly (must not throw)
+  const invTrip = EDITOR.parse(EDITOR.serialize());
+  if (!invTrip.invisible || invTrip.invisible.length !== 1 || invTrip.invisible[0] !== 1) {
+    bad('round trip should preserve the invisible flag, got ' + JSON.stringify(invTrip.invisible));
+  }
+  key('z', { ctrlKey: true });                  // undo removes the invisible polygon and its flag
+  if (EDITOR.map.polygons.length !== 1 || EDITOR.map.invisible.length !== 0) {
+    bad('undo should remove the invisible polygon and clear its flag');
+  }
+  EDITOR.action('polyMode:solid');              // restore the solid poly mode
+  if (EDITOR.polyMode !== 'solid') bad('the poly palette should re-arm the solid mode');
+  key('1');
+
+  // ---- front-layer polygon: normal collision, but drawn over the rider ----
+  key('2');                                    // poly tool
+  if (EDITOR.polyLayer !== 'back') bad('the poly tool should default to the back layer');
+  EDITOR.action('polyLayer:front');            // the palette's layer toggle
+  if (EDITOR.polyLayer !== 'front') bad('the poly palette should arm the front layer');
+  pumpFrames(1, 1 / 60);                        // draw the palette with the layer toggle (must not throw)
+  for (const [px, py] of [[40, -8], [50, -8], [45, -5]]) {
+    let p = w2s(px, py);
+    mouseDown(p.x, p.y); mouseUp(p.x, p.y);
+  }
+  key('Enter');
+  if (EDITOR.map.polygons.length !== 2) bad('the front polygon should be added');
+  if (EDITOR.map.frontPolys.length !== 1 || EDITOR.map.frontPolys[0] !== 1) {
+    bad('a new front polygon should flag its index, got ' + JSON.stringify(EDITOR.map.frontPolys));
+  }
+  // collision is normal (box 4 + triangle 3 = 7 segments)...
+  const fPrep = prepareLevel(EDITOR.map);
+  if (fPrep.segments.length !== 7) bad('a front polygon must keep its collision, got ' + fPrep.segments.length);
+  // ...but its grass is routed to the foreground pass, not the back terrain
+  if (!fPrep.frontGrass.length) bad('a front polygon should put its grass in frontGrass');
+  pumpFrames(1, 1 / 60);                         // draw with the foreground pass (must not throw)
+  const fTrip = EDITOR.parse(EDITOR.serialize());
+  if (!fTrip.frontPolys || fTrip.frontPolys.length !== 1 || fTrip.frontPolys[0] !== 1) {
+    bad('round trip should preserve the front-layer flag, got ' + JSON.stringify(fTrip.frontPolys));
+  }
+  key('z', { ctrlKey: true });                  // undo removes the front polygon and its flag
+  if (EDITOR.map.polygons.length !== 1 || EDITOR.map.frontPolys.length !== 0) {
+    bad('undo should remove the front polygon and clear its flag');
+  }
+  if (prepareLevel(EDITOR.map).frontGrass.length !== 0) bad('removing the front polygon should empty frontGrass');
+  EDITOR.action('polyLayer:back');              // restore the back layer
+  if (EDITOR.polyLayer !== 'back') bad('the poly palette should re-arm the back layer');
+  key('1');
 
   // ---- vertex drag: pull the floor-right corner (the map bounds) ----
   key('1');
@@ -508,7 +607,7 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   if (playedNow !== 'volcano') bad('test ride should keep the map song, got ' + playedNow);
   key('Escape');                             // back to the editor
   key('b');
-  if (EDITOR.tool !== 'burger') bad('Esc should return to the editor');
+  if (EDITOR.tool !== 'object') bad('Esc should return to the editor');
   key('1');
 
   // ---- New / Load: discard-changes dialog, and confirming wipes the undo history ----
