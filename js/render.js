@@ -5377,6 +5377,82 @@ function drawContinue(ctx, W, H, alpha, t, continuesLeft, sel, hover) {
   drawButtons(ctx, menuRects(W, H, 2, H * 0.62), items, sel, hover, alpha);
 }
 
+// the failure twin of the loading overlay (drawLevelLoading in game.js): a map
+// couldn't be fetched or parsed, so rather than silently dropping the player to
+// the title we stop here and offer Retry / Back to Menu. Same dark backdrop as
+// the spinner so it reads as "the load screen, but it gave up."
+function drawLevelLoadError(ctx, W, H, sel, hover) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = '#1a0f06';
+  ctx.fillRect(0, 0, W, H);
+
+  const cx = W / 2;
+  const bandW = Math.min(W * 0.84, 420);
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  // a dropped burger as the glum emblem
+  drawDroppedBurger(ctx, cx, H * 0.26, Math.min(W, H) * 0.07);
+
+  fitFont(ctx, "COURSE WON'T LOAD", bandW, Math.min(40, H * 0.075), 'bold', 18);
+  ctx.fillStyle = 'rgba(40,16,4,0.85)';
+  ctx.fillText("COURSE WON'T LOAD", cx + 2, H * 0.42 + 2);
+  ctx.fillStyle = '#f9c623';
+  ctx.fillText("COURSE WON'T LOAD", cx, H * 0.42);
+
+  ctx.fillStyle = '#f0e8da';
+  const line = Math.max(18, H * 0.045);
+  fitFont(ctx, 'This map could not be loaded.', bandW, Math.min(17, H * 0.034), '', 11);
+  ctx.fillText('This map could not be loaded.', cx, H * 0.42 + line);
+  fitFont(ctx, 'Check your connection and try again.', bandW, Math.min(17, H * 0.034), '', 11);
+  ctx.fillText('Check your connection and try again.', cx, H * 0.42 + line * 1.7);
+  ctx.restore();
+
+  const items = [{ label: 'Retry' }, { label: 'Back to Menu' }];
+  drawButtons(ctx, menuRects(W, H, 2, H * 0.62), items, sel, hover, 1);
+}
+
+// a sad little burger lying on its side with a few crumbs — the load-failure
+// mascot. Local to this screen; kept tiny and self-contained.
+function drawDroppedBurger(ctx, x, y, r) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(0.18);
+  ctx.lineJoin = 'round';
+  // bottom bun
+  ctx.fillStyle = '#c98a3c';
+  roundRectPath(ctx, -r, r * 0.25, r * 2, r * 0.6, r * 0.3);
+  ctx.fill();
+  // patty
+  ctx.fillStyle = '#5a3320';
+  roundRectPath(ctx, -r * 0.95, r * 0.05, r * 1.9, r * 0.4, r * 0.18);
+  ctx.fill();
+  // top bun (dome)
+  ctx.fillStyle = '#e0a64e';
+  ctx.beginPath();
+  ctx.moveTo(-r, r * 0.1);
+  ctx.quadraticCurveTo(0, -r * 0.95, r, r * 0.1);
+  ctx.closePath();
+  ctx.fill();
+  // sesame seeds
+  ctx.fillStyle = '#f4e6c4';
+  for (const [sx, sy] of [[-0.4, -0.32], [0.05, -0.5], [0.45, -0.28]]) {
+    ctx.save();
+    ctx.translate(sx * r, sy * r);
+    ctx.rotate(sx);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, r * 0.1, r * 0.05, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+  // a couple of scattered crumbs on the ground
+  ctx.fillStyle = 'rgba(201,138,60,0.7)';
+  ctx.beginPath(); ctx.arc(r * 1.35, r * 0.7, r * 0.09, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(-r * 1.25, r * 0.78, r * 0.07, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+
 // ---------- victory screen ----------
 
 // the trusty bike parked beside the feast, leaning on its stand — wearing the

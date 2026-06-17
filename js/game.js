@@ -156,7 +156,8 @@
   let introT = 0, menuT = 0, diffT = 0, contT = 0;
   let introLaunched = 0, introLanded = 0, fanfared = false;
   const menuItems = ['Play', 'Map Editor', 'Replays', 'Records', 'Audio'];
-  let menuSel = 0, diffSel = 0, contSel = 0;
+  let menuSel = 0, diffSel = 0, contSel = 0, errSel = 0;
+  let loadErrorIndex = 0; // which map index the 'levelLoadError' screen will retry
   const pauseItems = ['Continue', 'Audio', 'Return to Menu'];
   let pauseSel = 0, pausedFrom = 'playing';
   let hoverIdx = -1;
@@ -678,11 +679,30 @@
       loadingWhat = 'level';
       state = 'levelLoading';
       const raw = await ensureLevel(currentTrack, i);
-      if (!raw) { goMenu(); return; } // couldn't load — bail rather than hang
+      // couldn't load — show a recoverable error rather than hang or silently
+      // drop to the menu. (A failed *prefetch* of the next map below never gets
+      // here: it isn't awaited, so it stays silent until the player actually
+      // crosses into that map and this awaited path re-fetches it.)
+      if (!raw) { goLevelLoadError(i); return; }
     }
     loadLevel(currentTrack.levels[i]);
     state = 'ready';
     if (i + 1 < currentTrack.files.length) ensureLevel(currentTrack, i + 1);
+  }
+
+  // a map fetch/parse failed on entry: stop on a screen offering Retry / Back
+  // to Menu instead of bouncing the player to the title with no explanation.
+  function goLevelLoadError(i) {
+    loadErrorIndex = i;
+    errSel = 0;
+    hoverIdx = -1;
+    state = 'levelLoadError';
+    blip(330, 0.16); // a low, flat "nope"
+  }
+
+  function activateLoadError(sel) {
+    if (sel === 0) { blip(660, 0.08); enterLevel(loadErrorIndex); } // Retry
+    else { blip(880, 0.08); goMenu(); }                             // Back to Menu
   }
 
   function startGame(track) {
@@ -1325,6 +1345,9 @@
     if (state === 'continue' && contT > 0.15) {
       return menuRects(W, H, 2, H * 0.62);
     }
+    if (state === 'levelLoadError') {
+      return menuRects(W, H, 2, H * 0.62);
+    }
     if (state === 'replays' && repT > 0.15) {
       const n = Math.min(REPLAY_VIS, repItems.length - repScroll);
       if (n > 0) return replayRects(W, H, n, H * 0.22);
@@ -1551,6 +1574,15 @@
           activateContinue(contSel);
         }
         return;
+      case 'levelLoadError':
+        if (e.key === 'Escape') { goMenu(); return; }
+        if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+          errSel = 1 - errSel;
+          blip(520, 0.05);
+        } else if (e.key === 'Enter' || e.key === ' ') {
+          activateLoadError(errSel);
+        }
+        return;
       case 'ready':
         if (e.key === 'Escape') { goMenu(); return; }
         state = 'playing'; // any other key starts riding, and still applies below
@@ -1609,6 +1641,9 @@
     } else if (state === 'continue') {
       contSel = hoverIdx;
       activateContinue(hoverIdx);
+    } else if (state === 'levelLoadError') {
+      errSel = hoverIdx;
+      activateLoadError(hoverIdx);
     } else if (state === 'replays') {
       repSel = repScroll + hoverIdx;
       activateReplays(repSel);
@@ -1716,6 +1751,7 @@
         return;
       case 'menu':
       case 'continue':
+      case 'levelLoadError':
       case 'paused':
         activateHover();
         return;
@@ -2435,6 +2471,10 @@
     }
     if (state === 'levelLoading') {
       drawLevelLoading(rt);
+      return;
+    }
+    if (state === 'levelLoadError') {
+      drawLevelLoadError(ctx, W, H, errSel, hoverIdx);
       return;
     }
     if (state === 'intro' || state === 'menu') {

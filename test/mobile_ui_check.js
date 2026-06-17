@@ -88,7 +88,7 @@ global.makeCtx = makeCtx;
 const code = ['js/assets.js', 'js/physics.js', 'js/render.js', 'js/touch.js']
   .map(f => fs.readFileSync(path.join(root, f), 'utf8')).join('\n')
   + '\nglobal.__R = { drawLoading, drawMenu, drawDifficulty, drawReady, drawPause,'
-  + ' drawAudio, drawContinue, drawReplays, drawLevelSelect, drawVictory, drawHUD,'
+  + ' drawAudio, drawContinue, drawLevelLoadError, drawReplays, drawLevelSelect, drawVictory, drawHUD,'
   + ' drawRecords, drawTitleLetters, makePatterns, TOUCH, setSafeInsets, saveButtonRect,'
   + ' menuRects, audioRects, replayRects, recordsRects, minimapRect,'
   + ' victoryRects, victoryCardBox, victoryLandscape };';
@@ -125,6 +125,7 @@ const SCENES = {
     sel: 0, hover: -1, dim: true, muted: true, touch: true }),
   continue: (c, W, H) => R.drawContinue(c, W, H, 1, 0, 2, 0, -1),
   'continue-lose': (c, W, H) => R.drawContinue(c, W, H, 1, 0, 0, 0, -1),
+  loaderror: (c, W, H) => R.drawLevelLoadError(c, W, H, 0, -1),
   replays: (c, W, H) => R.drawReplays(c, W, H, 1,
     [{ label: 'Scoville Switchback', sub: 'style 1234 - 01:23,45' },
      { label: 'Choose a Different Folder...' }], 0, 0, -1,
