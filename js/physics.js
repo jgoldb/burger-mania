@@ -284,7 +284,7 @@ const PHYS = {
                    // with speed and would sap acceleration up top, the opposite of wanted.
                    // The top is set purely by the maxSpin cap (= 60 mph) now. (~0 at low
                    // spin anyway, so it never touched the launch.)
-  coastC: 0.7,  // OFF-THROTTLE constant brake (m/s^2) — the "actually comes to a STOP"
+  coastC: 0.3,  // OFF-THROTTLE constant brake (m/s^2) — the "actually comes to a STOP"
                    // term. The speed brake (coastV) alone fades as the bike slows, so it
                    // would crawl toward zero forever; this constant floor doesn't fade,
                    // so it kills the final crawl and parks the bike in finite distance.
