@@ -15,7 +15,30 @@
 // an older version" failure instead of a silent, wrong-looking playback.
 const REPLAY = (() => {
   const FORMAT = 'burger-mania-replay';
-  const VERSION = 9; // bumped 2026-06-16: alovolt now obeys the volt cadence — it can
+  const VERSION = 10; // bumped 2026-06-16: physics feel pass (emergent cleanup).
+                     // Rolling resistance: the constant at-rest term was the "sticky
+                     // at rest" culprit (a rigid wheel has no true rolling resistance)
+                     // — removed (rollRes 9->0->gone), leaving only a gentle speed-
+                     // proportional bleed; the bike now rolls free / carries momentum
+                     // like Elma. That constant drag was also quietly propping up the
+                     // brakes, so brakeRate was raised 30->60 to put the stopping
+                     // power at its real source — the spin-bleed (brakeGrip is a
+                     // non-binding Coulomb ceiling, no effect). The artificial angular
+                     // damper avelDamp was likewise removed: rotation now conserves
+                     // angular momentum, and the alovolt's air-spin ceiling is bounded
+                     // emergently by air drag, not the damper. Air drag eased
+                     // 0.03->0.022 (higher ceiling / more carried speed) with gravity
+                     // nudged 2.5->2.7 to keep jumps and bounces planted. The spin-
+                     // fling sling was turned off (spinExtMax 0.28->0) so a standstill
+                     // alovolt no longer pogo-somersaults on flat ground — it plants
+                     // the head and dies, as it should. The normal volt pump was also
+                     // softened (voltAcc 21->14.5) and slowed (voltCadence 0.66->0.8,
+                     // voltBurstDur 0.125->0.152 to hold the average), and the alovolt
+                     // eased (alovoltAcc 7->4). The tuned maps top out below dragV0 so
+                     // their ballistics are untouched,
+                     // but the new gravity/spin/brake forces desync the integration,
+                     // so pre-v10 tapes drift.
+                     // v9 (2026-06-16): alovolt now obeys the volt cadence — it can
                      // only ENGAGE when ready and RELEASING it spends a cooldown (no
                      // more sneaking a supervolt in mid-cooldown); alovoltAcc 8.0->7.0.
                      // so the both-keys spin tops out a touch lower. A different
@@ -77,6 +100,11 @@ const REPLAY = (() => {
       outcome: meta.outcome,
       time: meta.time,
       style: Number.isFinite(meta.style) ? meta.style : null,
+      // the bike skin (cosmetic upgrade tier) worn during the run, so playback
+      // reproduces the look the run was recorded with rather than the viewer's
+      // own earned skin. Purely cosmetic — it never feeds the sim, so it rides
+      // along without a VERSION bump and pre-skin tapes simply omit it.
+      skin: Number.isFinite(meta.skin) ? meta.skin : null,
       trackId: meta.trackId || null,
       levelIndex: meta.levelIndex,
       level,
@@ -136,6 +164,10 @@ const REPLAY = (() => {
     // style points arrived after the format shipped: older files (and
     // hand-damaged values) read as null, which the UI shows as N/A
     if (!Number.isFinite(d.style)) d.style = null;
+    // the bike skin tier likewise post-dates the format: pre-skin tapes (and
+    // damaged values) read as null, which playback treats as "use the viewer's
+    // own earned skin" (the old behaviour); a recorded tier overrides it
+    if (!Number.isFinite(d.skin)) d.skin = null;
     return d;
   }
 

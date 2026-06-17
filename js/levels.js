@@ -39,7 +39,20 @@ const TRACKS = [
     ] },
   { id: 'advanced', label: 'Advanced', color: '#f9c623', length: 20, levels: [], files: [] },
   { id: 'expert',   label: 'Expert',   color: '#ff6038', length: 30, levels: [], files: [] },
+  // Master is a SECRET track: `hidden` keeps it out of the difficulty / records
+  // pickers (see visibleTracks) until it's unlocked, but it still counts as a
+  // difficulty RANK — clearing it (localStorage 'burger-mania-cleared-master')
+  // grants bike-skin tier 4 via bikeSkinTier's full-TRACKS loop. No maps yet, so
+  // it would read as disabled anyway; it'll get its files + an unlock later.
+  { id: 'master',   label: 'Master',   color: '#ffce4a', length: 10, levels: [], files: [], hidden: true },
 ];
+
+// the tracks shown in the difficulty / records pickers. `hidden` is a
+// data-driven flag (sitting alongside a track's empty-files "disabled" state)
+// that keeps a track out of the menus while it still participates in skin tiers
+// and level loading. Computed on demand so a future runtime unlock (flipping a
+// track's `hidden`) takes effect with no other wiring.
+function visibleTracks() { return TRACKS.filter(t => !t.hidden); }
 
 // LEVELS is the flat list of every track's maps. In the browser it's filled by
 // game.js once the fetch lands; here it starts empty. In Node (the headless

@@ -155,7 +155,20 @@
   let menuClock0 = -1;
   let introT = 0, menuT = 0, diffT = 0, contT = 0;
   let introLaunched = 0, introLanded = 0, fanfared = false;
+  // dev-only cheats (the level-skip picker) unlock on a local dev host —
+  // localhost / 127.0.0.1 / ::1 — so a player on the live site can't reach
+  // them. Mirrors the dev-host list index.html uses to disable the SW.
+  const cheatsEnabled = (function () {
+    try {
+      const h = (window.location && window.location.hostname) || '';
+      return h === 'localhost' || h === '127.0.0.1' || h === '[::1]' ||
+             h === '::1' || h === '0.0.0.0';
+    } catch (e) { return false; }
+  })();
   const menuItems = ['Play', 'Map Editor', 'Replays', 'Records', 'Audio'];
+  // the level-skip cheat appears as a menu item only on a dev host; it slots
+  // in just before Audio so Audio stays last (menu-order tests rely on that)
+  if (cheatsEnabled) menuItems.splice(menuItems.length - 1, 0, 'Skip');
   let menuSel = 0, diffSel = 0, contSel = 0, errSel = 0;
   let loadErrorIndex = 0; // which map index the 'levelLoadError' screen will retry
   const pauseItems = ['Continue', 'Audio', 'Return to Menu'];
@@ -767,12 +780,12 @@
     state = 'recordsDiff';
     recDiffT = 0;
     // land on the first track that actually has maps (Beginner, today)
-    recDiffSel = Math.max(0, TRACKS.findIndex(t => t.files.length));
+    recDiffSel = Math.max(0, visibleTracks().findIndex(t => t.files.length));
     hoverIdx = -1;
   }
 
   function activateRecordsDiff(i) {
-    const track = TRACKS[i];
+    const track = visibleTracks()[i];
     if (!track.files.length) {
       blip(180, 0.12); // no maps yet, so no records to show
       return;
@@ -1032,12 +1045,17 @@
     replayOutcome = null;
     state = 'replay'; // before loadLevel, so reset() leaves the tape alone
     loadLevel(data.level);
+    // loadLevel just dressed the bike in the VIEWER's earned skin; wear the
+    // skin the run was actually recorded with instead. Pre-skin tapes carry
+    // null (no recorded tier), so they keep the viewer's skin as before.
+    if (Number.isFinite(data.skin)) setBikeSkin(data.skin);
     blip(880, 0.08);
   }
 
   function endReplayView() {
     replayData = null;
     replayCursor = null;
+    refreshBikeSkin(); // drop the replay's skin, restore the viewer's earned one
     goReplays();
   }
 
@@ -1062,6 +1080,7 @@
         outcome,
         time,
         style: stylePts,
+        skin: BIKE_SKIN, // the cosmetic tier worn for this run
         trackId: currentTrack ? currentTrack.id : null,
         levelIndex,
       });
@@ -1083,27 +1102,11 @@
     saveBusy = false;
   }
 
-  // dev cheat: typing "skip" raises a level-select overlay over whatever
-  // screen summoned it, letting any map in the track be jumped to. It's gated
-  // behind ?skip=true in the page URL so a normal player can't stumble into it
-  // by chance — without the param the key sequence does nothing.
-  const CHEAT_SKIP = 'skip';
-  let cheatBuffer = '';
+  // dev cheat: a level-select overlay that jumps to any map in the track.
+  // It's opened from the dev-only "Skip" main-menu item (added to menuItems
+  // when cheatsEnabled), so only a local dev host can ever reach it.
   let skipTrack = null, skipItems = [];
   let skipSel = 0, skipScroll = 0, skipT = 0, skipFrom = 'menu';
-  let cheatsEnabled = false;
-  try {
-    const qs = (window.location && window.location.search) || '';
-    cheatsEnabled = new URLSearchParams(qs).get('skip') === 'true';
-  } catch (e) { /* no URL context (headless) — cheat stays off unless enabled */ }
-
-  function checkCheat(key) {
-    if (key.length !== 1) return false;
-    cheatBuffer = (cheatBuffer + key.toLowerCase()).slice(-CHEAT_SKIP.length);
-    if (cheatBuffer !== CHEAT_SKIP) return false;
-    cheatBuffer = '';
-    return openSkip();
-  }
 
   // the overlay floats over a frozen level when summoned mid-game, or over
   // a menu backdrop otherwise — draw() branches on this
@@ -1293,6 +1296,8 @@
     } else if (menuItems[i] === 'Records') {
       blip(880, 0.08);
       goRecordsDiff();
+    } else if (menuItems[i] === 'Skip') {
+      openSkip(); // dev-only level-skip picker (blips on its own)
     } else if (menuItems[i] === 'Audio') {
       blip(880, 0.08);
       goAudio();
@@ -1300,7 +1305,7 @@
   }
 
   function activateDifficulty(i) {
-    const track = TRACKS[i];
+    const track = visibleTracks()[i];
     if (!track.files.length) {
       blip(180, 0.12); // not available yet
       return;
@@ -1334,10 +1339,10 @@
       return menuRects(W, H, menuItems.length, H * 0.58);
     }
     if (state === 'difficulty' && diffT > 0.15) {
-      return menuRects(W, H, TRACKS.length, H * 0.34);
+      return menuRects(W, H, visibleTracks().length, H * 0.34);
     }
     if (state === 'recordsDiff' && recDiffT > 0.15) {
-      return menuRects(W, H, TRACKS.length, H * 0.34);
+      return menuRects(W, H, visibleTracks().length, H * 0.34);
     }
     if (state === 'records') {
       return recordsRects(W, H);
@@ -1405,14 +1410,6 @@
       MUSIC.setMuted(muted);
       return;
     }
-    // the cheat would clobber the replay tape mid-watch via reset(); while
-    // the picker is already open, typing must not re-summon it. A test
-    // ride stays out too: jumping tracks would abandon the editor's level
-    if (cheatsEnabled &&
-        state !== 'loading' && state !== 'replay' && state !== 'replayEnd' &&
-        state !== 'skip' && state !== 'editorTest' && state !== 'editorTestEnd' &&
-        checkCheat(e.key)) return;
-
     switch (state) {
       case 'loading':
         leaveLoading();
@@ -1435,10 +1432,11 @@
           const d = e.key === 'ArrowUp' ? -1 : 1;
           // step to the next enabled track, skipping any that are disabled;
           // if Beginner is the only one unlocked, this stays put on it
+          const vt = visibleTracks();
           let next = diffSel;
-          for (let k = 0; k < TRACKS.length; k++) {
-            next = (next + d + TRACKS.length) % TRACKS.length;
-            if (TRACKS[next].files.length) break;
+          for (let k = 0; k < vt.length; k++) {
+            next = (next + d + vt.length) % vt.length;
+            if (vt[next].files.length) break;
           }
           if (next !== diffSel) { diffSel = next; blip(520, 0.05); }
         } else if (e.key === 'Enter' || e.key === ' ') {
@@ -1451,10 +1449,11 @@
           const d = e.key === 'ArrowUp' ? -1 : 1;
           // step to the next enabled track, skipping disabled ones (same as
           // the Play selector)
+          const vt = visibleTracks();
           let next = recDiffSel;
-          for (let k = 0; k < TRACKS.length; k++) {
-            next = (next + d + TRACKS.length) % TRACKS.length;
-            if (TRACKS[next].files.length) break;
+          for (let k = 0; k < vt.length; k++) {
+            next = (next + d + vt.length) % vt.length;
+            if (vt[next].files.length) break;
           }
           if (next !== recDiffSel) { recDiffSel = next; blip(520, 0.05); }
         } else if (e.key === 'Enter' || e.key === ' ') {
@@ -1630,10 +1629,10 @@
       menuSel = hoverIdx;
       activateMenu(hoverIdx);
     } else if (state === 'difficulty') {
-      if (TRACKS[hoverIdx].files.length) diffSel = hoverIdx;
+      if (visibleTracks()[hoverIdx].files.length) diffSel = hoverIdx;
       activateDifficulty(hoverIdx);
     } else if (state === 'recordsDiff') {
-      if (TRACKS[hoverIdx].files.length) recDiffSel = hoverIdx;
+      if (visibleTracks()[hoverIdx].files.length) recDiffSel = hoverIdx;
       activateRecordsDiff(hoverIdx);
     } else if (state === 'records') {
       blip(440, 0.08);
@@ -2008,8 +2007,10 @@
     let dx = tip.x - vent.x, dy = tip.y - vent.y;
     const dl = Math.hypot(dx, dy) || 1; dx /= dl; dy /= dl;
     // what the pipe puts out scales with the cosmetic skin: grey smoke (0/1),
-    // actual flames (RED HOT) or a plasma heat-haze trail (AFTERBURNER)
-    const mode = bikePalette(BIKE_SKIN).exhaust;
+    // actual flames (RED HOT) or a plasma heat-haze trail (AFTERBURNER/MASTER —
+    // master tints the haze gold and spits bright embers through it)
+    const sk = bikePalette(BIKE_SKIN);
+    const mode = sk.exhaust;
     // mirage ripples are big and costly (canvas self-sampling), so spawn fewer
     const rate = mode === 'flame' ? SMOKE_RATE * 1.4
                : mode === 'mirage' ? SMOKE_RATE * 0.8 : SMOKE_RATE;
@@ -2047,8 +2048,22 @@
           x: tip.x + rnd(-0.05, 0.05), y: tip.y + rnd(-0.05, 0.05),
           vx: cvx + dx * out + rnd(-0.4, 0.4), vy: cvy + dy * out - rnd(0.3, 0.8),
           age: 0, life: rnd(0.6, 1.0), r0: rnd(0.18, 0.30), r1: rnd(0.8, 1.35),
-          alpha: 1, mirage: true, seed: Math.random() * 6.28, tint: '150,200,255',
+          alpha: 1, mirage: true, seed: Math.random() * 6.28,
+          tint: sk.mirageTint || '150,200,255',
         });
+        // MASTER: bright gold embers flickering out through the heat-haze (the
+        // additive flame-puff path renders them; doesn't count toward the cap
+        // beyond the loop's own length guard)
+        if (sk.master && Math.random() < 0.6) {
+          const eout = rnd(1.0, 2.2) * (0.5 + load);
+          exhaust.push({
+            x: tip.x + rnd(-0.05, 0.05), y: tip.y + rnd(-0.05, 0.05),
+            vx: cvx + dx * eout + rnd(-0.5, 0.5), vy: cvy + dy * eout - rnd(0.2, 0.7),
+            age: 0, life: rnd(0.3, 0.6), r0: rnd(0.03, 0.06), r1: rnd(0.10, 0.18),
+            alpha: rnd(0.7, 1), flame: true,
+            tint: Math.random() < 0.5 ? '255,240,180' : '255,205,90', // white-gold / amber
+          });
+        }
       } else { // smoke (tiers 0/1)
         const out = rnd(0.6, 1.6) * (0.5 + load);
         const tint = Math.round(150 - 70 * load); // richer/darker under load
@@ -2458,12 +2473,12 @@
     // The title screen and every sub-screen reached from it (difficulty,
     // records, replays, menu audio) are one continuous scene, so they share
     // the same furniture: the drifting meadow world, the rising-astronaut gag,
-    // and the physics build stamp all persist. Only the "BURGER MANIA" title
+    // and the engine build stamp all persist. Only the "BURGER MANIA" title
     // is exclusive to the top menu — stepping into a sub-screen never blanks
     // the rest of the scene out from under the player mid-animation.
     function menuScene() {
       drawMenuBackdrop(ctx, W, H, mt, patterns.meadow, true);
-      drawCornerTag(ctx, W, H, 'physics v' + REPLAY.VERSION);
+      drawCornerTag(ctx, W, H, 'engine v' + REPLAY.VERSION);
     }
     if (state === 'loading') {
       drawLoading(ctx, W, H, loadFrac, rt, loadDone, TOUCH.active);
@@ -2487,13 +2502,13 @@
     }
     if (state === 'difficulty') {
       menuScene();
-      drawDifficulty(ctx, W, H, Math.min(1, diffT / 0.4), TRACKS, diffSel, hoverIdx,
+      drawDifficulty(ctx, W, H, Math.min(1, diffT / 0.4), visibleTracks(), diffSel, hoverIdx,
         TOUCH.active);
       return;
     }
     if (state === 'recordsDiff') {
       menuScene();
-      drawDifficulty(ctx, W, H, Math.min(1, recDiffT / 0.4), TRACKS, recDiffSel,
+      drawDifficulty(ctx, W, H, Math.min(1, recDiffT / 0.4), visibleTracks(), recDiffSel,
         hoverIdx, TOUCH.active, 'BEST RECORDS');
       return;
     }

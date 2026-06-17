@@ -71,7 +71,11 @@ for (let i = 0; i < 480 * 1.5 && !b.dead; i++) {
 console.log('WHEELIE minAngle=%s frontLift=%s dead=%s',
   minAngle.toFixed(3), maxLift.toFixed(3), b.dead);
 
-// 6. coast test: a slow-rolling bike on flat ground must come to a full stop
+// 6. coast test: with rigid-wheel physics (rollRes 0) a rolling bike on flat
+//    ground KEEPS its momentum and only winds down gently via the speed term
+//    (rollResV) + air drag — it does NOT hard-stop, by design (Elasto-style, no
+//    bolted-on dry friction). So "stoppedAt=never" within 6 s is EXPECTED here;
+//    we just watch the residual speed bleed off slowly.
 //    (uses a dedicated long flat floor; the level's start flat is short)
 const flat = [{ ax: -100, ay: 8, bx: 200, by: 8 }];
 b = new Bike(level.start.x, level.start.y);

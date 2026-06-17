@@ -39,8 +39,8 @@
   const ui = params.get('ui') || 'menu';
   // optional ?theme= to preview menu screens in another world
   const menuPat = patterns[params.get('theme')] || patterns.meadow;
-  // optional ?skin=0..3 to preview the cosmetic bike upgrade tiers (stock /
-  // warmed up / red hot / afterburner) on any screen with a bike
+  // optional ?skin=0..4 to preview the cosmetic bike upgrade tiers (stock /
+  // warmed up / red hot / afterburner / master) on any screen with a bike
   if (params.get('skin')) setBikeSkin(parseInt(params.get('skin'), 10) || 0);
 
   // manifest paths are relative to the page; this page lives in test/
@@ -239,8 +239,12 @@
           puffs.push({ ...base, r0: 0.09, r1: 0.24, alpha: 0.8, flame: true,
             tint: i % 2 ? '255,232,150' : '255,138,40' });
         } else if (mode === 'mirage') {
+          const sk = bikePalette(BIKE_SKIN);
           puffs.push({ ...base, r0: 0.16, r1: 0.7, alpha: 1, mirage: true,
-            seed: i * 1.7, tint: '150,200,255' });
+            seed: i * 1.7, tint: sk.mirageTint || '150,200,255' });
+          // master: gold embers riding through the haze
+          if (sk.master && i % 2) puffs.push({ ...base, r0: 0.04, r1: 0.14,
+            alpha: 0.9, flame: true, tint: i % 4 ? '255,240,180' : '255,205,90' });
         } else {
           puffs.push({ ...base, r0: 0.1, r1: 0.4 + load * 0.25, alpha: 0.45,
             tint: `${tint},${tint},${tint + 6}` });
@@ -249,13 +253,14 @@
       return puffs;
     };
     const tNow = params.get('t') ? parseFloat(params.get('t')) : performance.now() / 1000;
-    // ?skin=all lines up all four upgrade tiers (stock → afterburner) for
+    // ?skin=all lines up all five upgrade tiers (stock → master) for
     // comparison; otherwise the global ?skin tier is shown at a few tilts/loads
     const cells = params.get('skin') === 'all'
-      ? [{ lx: -9, angle: 0, facing: 1, load: 0.6, skin: 0 },
-         { lx: -3, angle: 0, facing: 1, load: 0.6, skin: 1 },
-         { lx: 3, angle: 0, facing: 1, load: 0.6, skin: 2 },
-         { lx: 9, angle: 0, facing: 1, load: 0.6, skin: 3 }]
+      ? [{ lx: -12, angle: 0, facing: 1, load: 0.6, skin: 0 },
+         { lx: -6, angle: 0, facing: 1, load: 0.6, skin: 1 },
+         { lx: 0, angle: 0, facing: 1, load: 0.6, skin: 2 },
+         { lx: 6, angle: 0, facing: 1, load: 0.6, skin: 3 },
+         { lx: 12, angle: 0, facing: 1, load: 0.6, skin: 4 }]
       : [{ lx: -7, angle: 0, facing: 1, load: 0 },
          { lx: 0, angle: -0.35, facing: 1, load: 0.55 },
          { lx: 7, angle: 0, facing: -1, load: 1 }];

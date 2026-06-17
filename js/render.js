@@ -4097,12 +4097,18 @@ const RIDER = { rim: '244,236,217', rimSolid: '#f4ecd9' };
 // from the cleared-track flags in localStorage. Every drawBike / screen pose
 // pulls its colours and flags from bikePalette(BIKE_SKIN), so the whole machine
 // AND the rider upgrade together and stay consistent across screens.
+// Tier 4 (MASTER) is a SECRET apex skin — there is no master track yet, so
+// nothing in the game grants it; it only shows when the tier is set to 4
+// (setBikeSkin(4) from the console, or a future master track). The clamp allows
+// 4 so it renders and round-trips when set.
 let BIKE_SKIN = 0;
-function setBikeSkin(n) { BIKE_SKIN = Math.max(0, Math.min(3, n | 0)); }
+function setBikeSkin(n) { BIKE_SKIN = Math.max(0, Math.min(4, n | 0)); }
 
 // stock blue → WARMED UP (orange stripe, twin pipe) → RED HOT (crimson frame,
 // glowing pipe, flame decals) → AFTERBURNER (black frame, blue flames, glowing
-// rims, a flame exhaust trail). Higher tiers layer on top of the lower ones.
+// rims, a flame exhaust trail) → MASTER (secret: molten-gold champion machine
+// with a prismatic shimmer, full-bike aura, gold heat-haze + embers). Higher
+// tiers layer on top of the lower ones.
 function bikePalette(tier) {
   const p = {
     frame: '#2f6cae', frameDark: '#23507f', engine: '#41414a',
@@ -4122,6 +4128,13 @@ function bikePalette(tier) {
     sparkle: null,       // rgb → twinkles drifting around the bike
     tread: 'slick',      // tyre tread: 'slick' | 'grip' | 'knob'
     rimColor: '#d8d8de', // wheel rim ring
+    aura: null,          // rgb → a radiant halo around the WHOLE machine (tier 4)
+    prism: false,        // iridescent rainbow sheen cycling over frame + rims (tier 4)
+    mirageTint: '150,200,255', // heat-haze colour for the mirage exhaust
+    master: false,       // apex crest + armor + chrome detailing (tier 4 only)
+    gold: null,          // master accent gold (armor trim, rim, studs, helmet)
+    goldDark: null,      // shaded gold for armor/rim depth
+    helmet: false,       // a sleek black+gold helmet over the rider's head (tier 4)
   };
   if (tier >= 1) {                                   // WARMED UP
     p.twinExhaust = true;
@@ -4153,6 +4166,33 @@ function bikePalette(tier) {
     p.rimGlow = '90,170,255'; p.sparkle = '150,200,255';
     p.rimColor = '#7ac8ff';     // bright blue plasma rims
   }
+  if (tier >= 4) {                                   // MASTER (secret apex)
+    // an OBSIDIAN-and-gold champion machine: the body goes near-black so the
+    // gold (rims, aura, trim, armor edges, flames, helmet) BLAZES against it
+    // for maximum contrast. Master-only flair adds the aura, prismatic sheen,
+    // armor plating, champion detailing, and the helmet.
+    p.frame = '#17171d'; p.frameDark = '#0a0a0e'; p.engine = '#101015';
+    p.tank = '#1b1b22'; p.tankHi = '#e9c24a';    // obsidian tank, single gold glint
+    p.seat = '#0b0b0f';
+    p.jacket = '#141118'; p.shade = '#07070a'; p.hi = '#ffd86b'; // black leathers, gold sheen
+    p.pants = '#101014'; p.pad = '#ffd05a'; p.knuckle = '#fff0b0'; p.glove = '#1a1a20';
+    p.boot = '#1a1712'; p.sole = '#caa040';
+    p.flame = '#ffd86b'; p.stripe = '#ffe492';   // gold flame licks + trim
+    p.exhaust = 'mirage';        // gold plasma glow + a heat-haze trail (+embers)
+    p.tipGlow = '255,210,100'; p.plasma = true;
+    p.muffler = '#1d1a10'; p.mufflerHi = '#ffe9a6';
+    p.pipeScale = 1.5;           // the fattest pipe of all
+    p.rimGlow = '255,200,80'; p.sparkle = '255,234,150';
+    p.rimColor = '#ffce4a';      // brilliant gold rims (pops off the dark body)
+    p.tread = 'armor';           // beefiest armored knobby (punches past the hitbox)
+    p.aura = '255,196,70';       // a grand radiant gold halo around the machine
+    p.prism = true;              // iridescent rainbow sheen over frame + rims
+    p.mirageTint = '255,210,100';// the heat-haze runs gold, not blue
+    p.master = true;             // armor + champion detailing (pinstripe, gem, chrome)
+    p.gold = '#ffce4a';          // the master accent gold (armor trim, studs)
+    p.goldDark = '#9c7414';      // shaded gold for armor depth + bezels
+    p.helmet = true;             // sleek black helmet, gold trim, smoked visor
+  }
   return p;
 }
 
@@ -4177,19 +4217,42 @@ function riderDisc(ctx, pt, r, col) {
 
 function drawWheel(ctx, w) {
   // tyre tread + rim are skin-tier dependent: stock = bald slick, WARMED UP =
-  // light grip texture, RED HOT/AFTERBURNER = chunky off-road knobs; rims go
-  // silver → gold (tier 2) → glowing blue plasma (tier 3)
+  // light grip texture, RED HOT/AFTERBURNER = chunky off-road knobs, MASTER =
+  // a monstrous armored knobby; rims go silver → gold (tier 2) → blue plasma
+  // (tier 3) → gold armored (tier 4)
   const sk = bikePalette(BIKE_SKIN);
+  const armored = sk.tread === 'armor';
   ctx.save();
   ctx.translate(w.pos.x, w.pos.y);
   ctx.rotate(w.rot); // spin the whole wheel so the tread and spokes show speed
-  // fat tire — its outer stroke edge reaches ~wheelR (the collider)
-  ctx.strokeStyle = '#15151a';
-  ctx.lineWidth = 0.17;
+  // fat tire — normally its outer stroke edge reaches ~wheelR (the collider);
+  // the MASTER 'armor' tire runs FATTER and punches a little past the hitbox on
+  // purpose (purely cosmetic — the collider is unchanged)
+  ctx.strokeStyle = armored ? '#0e0e13' : '#15151a';
+  ctx.lineWidth = armored ? 0.24 : 0.17;
   ctx.beginPath();
-  ctx.arc(0, 0, 0.315, 0, Math.PI * 2);
+  ctx.arc(0, 0, armored ? 0.34 : 0.315, 0, Math.PI * 2);
   ctx.stroke();
-  if (sk.tread === 'knob') {
+  if (armored) {
+    // monstrous lugs: a dozen chunky blocks punching well past the carcass, a
+    // gold stud capping every other one
+    ctx.strokeStyle = '#08080c';
+    ctx.lineWidth = 0.10;
+    ctx.lineCap = 'butt';
+    ctx.beginPath();
+    for (let k = 0; k < 12; k++) {
+      const a = k * Math.PI * 2 / 12, c = Math.cos(a), s = Math.sin(a);
+      ctx.moveTo(c * 0.31, s * 0.31);
+      ctx.lineTo(c * 0.50, s * 0.50);
+    }
+    ctx.stroke();
+    ctx.fillStyle = sk.gold || '#ffce4a';
+    for (let k = 0; k < 12; k += 2) {
+      const a = k * Math.PI * 2 / 12;
+      ctx.beginPath(); ctx.arc(Math.cos(a) * 0.485, Math.sin(a) * 0.485, 0.035, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.lineCap = 'round';
+  } else if (sk.tread === 'knob') {
     // chunky knobs poking out around the carcass
     ctx.strokeStyle = '#0b0b0f';
     ctx.lineWidth = 0.055;
@@ -4225,58 +4288,209 @@ function drawWheel(ctx, w) {
     ctx.lineWidth = 0.12;
     ctx.beginPath(); ctx.arc(0, 0, 0.245, 0, Math.PI * 2); ctx.stroke();
   }
-  // rim ring (tier colour)
+  // rim ring (tier colour); MASTER runs a fat double gold ring with bolt heads
   ctx.strokeStyle = sk.rimColor;
-  ctx.lineWidth = 0.05;
+  ctx.lineWidth = armored ? 0.07 : 0.05;
   ctx.beginPath();
   ctx.arc(0, 0, 0.245, 0, Math.PI * 2);
   ctx.stroke();
+  if (sk.master) {
+    // an inner gold ring + bolt heads around the rim for an armored hoop
+    ctx.strokeStyle = sk.goldDark || '#9c7414';
+    ctx.lineWidth = 0.022;
+    ctx.beginPath(); ctx.arc(0, 0, 0.205, 0, Math.PI * 2); ctx.stroke();
+    for (let k = 0; k < 6; k++) {
+      const a = k * Math.PI * 2 / 6, bx = Math.cos(a) * 0.245, by = Math.sin(a) * 0.245;
+      ctx.fillStyle = sk.goldDark || '#9c7414';
+      ctx.beginPath(); ctx.arc(bx, by, 0.028, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = sk.gold || '#ffce4a';
+      ctx.beginPath(); ctx.arc(bx, by, 0.015, 0, Math.PI * 2); ctx.fill();
+    }
+  }
   // brake disc (inner ring)
   ctx.strokeStyle = '#8a8a92';
   ctx.lineWidth = 0.025;
   ctx.beginPath();
   ctx.arc(0, 0, 0.135, 0, Math.PI * 2);
   ctx.stroke();
-  // beefier 5-spoke set
-  ctx.strokeStyle = '#b7b7be';
-  ctx.lineWidth = 0.05;
+  // spoke set — beefier and gold on MASTER (six fat spokes vs the usual five)
+  ctx.strokeStyle = sk.master ? (sk.goldDark || '#9c7414') : '#b7b7be';
+  ctx.lineWidth = sk.master ? 0.065 : 0.05;
   ctx.beginPath();
-  for (let k = 0; k < 5; k++) {
-    const a = k * Math.PI * 2 / 5;
+  const spokes = sk.master ? 6 : 5;
+  for (let k = 0; k < spokes; k++) {
+    const a = k * Math.PI * 2 / spokes;
     ctx.moveTo(0, 0);
     ctx.lineTo(Math.cos(a) * 0.235, Math.sin(a) * 0.235);
   }
   ctx.stroke();
-  // hub
-  ctx.fillStyle = '#6f6f78';
+  if (sk.master) {  // a bright gold core line down each spoke
+    ctx.strokeStyle = sk.gold || '#ffce4a';
+    ctx.lineWidth = 0.022;
+    ctx.beginPath();
+    for (let k = 0; k < spokes; k++) {
+      const a = k * Math.PI * 2 / spokes;
+      ctx.moveTo(0, 0);
+      ctx.lineTo(Math.cos(a) * 0.225, Math.sin(a) * 0.225);
+    }
+    ctx.stroke();
+  }
+  // hub — gold-capped on MASTER
+  ctx.fillStyle = sk.master ? (sk.gold || '#ffce4a') : '#6f6f78';
   ctx.beginPath();
   ctx.arc(0, 0, 0.095, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = '#3a3a40';
+  ctx.fillStyle = sk.master ? (sk.goldDark || '#9c7414') : '#3a3a40';
   ctx.beginPath();
   ctx.arc(0, 0, 0.04, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 }
 
+// A sleek black + gold full-face helmet, drawn as a STANDALONE component
+// centred at origin in its own local space (face pointing +x, +y down, sized to
+// a ~0.72-tall head). The caller owns the transform — translate/rotate/scale and
+// any facing flip — so the same model serves both ON the head (drawHead overlays
+// it over the face) and OFF it (the victory screen sets it on the ground).
+//   opts.faceBehind — true when a face photo is already drawn under it, so the
+//     visor stays a light SMOKED tint and the face shows partially through; false
+//     for a detached/empty helmet, which gets a dark hollow interior first.
+//   opts.visor — draw the visor window (default true); pass false for a
+//     back-of-head view (the gym-mirror reflection), which is a solid shell.
+function drawHelmet(ctx, sk, opts) {
+  opts = opts || {};
+  const gold = sk.gold || '#ffce4a';
+  const goldDark = sk.goldDark || '#9c7414';
+  // sub-path builders (no beginPath, so they can be combined into one path for
+  // an even-odd hole); the shell()/visor() wrappers add the beginPath
+  const shellSub = () => {               // the sleek full-face silhouette
+    ctx.moveTo(0.12, -0.40);
+    ctx.quadraticCurveTo(-0.12, -0.50, -0.34, -0.30); // over the dome to back-top
+    ctx.quadraticCurveTo(-0.46, -0.10, -0.40, 0.12);  // down the rounded back
+    ctx.quadraticCurveTo(-0.34, 0.30, -0.12, 0.34);   // back-bottom to under jaw
+    ctx.quadraticCurveTo(0.10, 0.40, 0.30, 0.34);     // under the jaw to the chin
+    ctx.quadraticCurveTo(0.46, 0.26, 0.46, 0.06);     // up the chin-bar front
+    ctx.quadraticCurveTo(0.47, -0.12, 0.40, -0.26);   // the forward face shell
+    ctx.quadraticCurveTo(0.32, -0.38, 0.12, -0.40);   // back up to the brow
+    ctx.closePath();
+  };
+  const visorSub = () => {               // a wide, angular faceted eye-slot
+    ctx.moveTo(-0.13, -0.04);   // back point
+    ctx.lineTo(-0.03, -0.18);   // up to the back-top corner
+    ctx.lineTo(0.26, -0.21);    // straight across the brow
+    ctx.lineTo(0.42, -0.13);    // front-top corner (kept inside the shell lip)
+    ctx.lineTo(0.43, 0.01);     // raked front edge
+    ctx.lineTo(0.27, 0.09);     // bottom-front corner
+    ctx.lineTo(-0.04, 0.08);    // straight across the bottom
+    ctx.closePath();            // back up to the back point
+  };
+  const shell = () => { ctx.beginPath(); shellSub(); };
+  const visor = () => { ctx.beginPath(); visorSub(); };
+  const withVisor = opts.visor !== false;
+  // when there's a face behind, the visor is carved out of the shell as a true
+  // HOLE so the photo shows through (otherwise the opaque shell hides the face)
+  const seeThrough = !!opts.faceBehind && withVisor;
+
+  // 1) the shell — sleek near-black; carve the visor window when see-through, so
+  // the face behind it stays visible. Glossy top highlight + a thin edge.
+  ctx.beginPath(); shellSub();
+  if (seeThrough) visorSub();
+  ctx.fillStyle = '#0c0c11'; ctx.fill(seeThrough ? 'evenodd' : 'nonzero');
+  ctx.save();
+  ctx.beginPath(); shellSub(); if (seeThrough) visorSub();
+  ctx.clip(seeThrough ? 'evenodd' : 'nonzero');   // don't gloss over the window
+  const hg = ctx.createLinearGradient(0, -0.52, 0, 0.16);
+  hg.addColorStop(0, 'rgba(96,96,112,0.55)');
+  hg.addColorStop(0.45, 'rgba(40,40,50,0)');
+  ctx.fillStyle = hg; ctx.fillRect(-0.5, -0.52, 1.05, 0.74);
+  ctx.restore();
+  shell(); ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = 0.02; ctx.stroke();
+
+  // 2) a gold crest ridge sweeping over the dome (dark base + bright cap)
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(0.30, -0.34); ctx.quadraticCurveTo(0.02, -0.50, -0.30, -0.30);
+  ctx.strokeStyle = goldDark; ctx.lineWidth = 0.08; ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(0.30, -0.34); ctx.quadraticCurveTo(0.02, -0.50, -0.30, -0.30);
+  ctx.strokeStyle = gold; ctx.lineWidth = 0.035; ctx.stroke();
+
+  // 3) the visor glass
+  if (withVisor) {
+    // empty helmet: a dark hollow interior fills the window first; see-through
+    // helmet: nothing behind to hide, so the carved hole already shows the face
+    if (!seeThrough) { visor(); ctx.fillStyle = '#08080c'; ctx.fill(); }
+    // smoked glass — only a LIGHT tint over a face so it stays clearly visible;
+    // darker when the helmet is empty
+    visor();
+    ctx.fillStyle = seeThrough ? 'rgba(20,20,34,0.22)' : 'rgba(18,16,28,0.62)';
+    ctx.fill();
+    // a raked sheen streak across the top of the lens + a faint gold tint
+    ctx.save(); visor(); ctx.clip();
+    const vg = ctx.createLinearGradient(0.0, -0.21, 0.2, 0.08);
+    vg.addColorStop(0, 'rgba(255,228,150,0.22)');
+    vg.addColorStop(0.5, 'rgba(255,206,90,0.05)');
+    vg.addColorStop(1, 'rgba(120,150,200,0.08)');
+    ctx.fillStyle = vg; ctx.fillRect(-0.16, -0.24, 0.66, 0.38);
+    ctx.restore();
+    // gold visor trim (bright outer + dark inner line for depth)
+    visor(); ctx.strokeStyle = gold; ctx.lineWidth = 0.03; ctx.stroke();
+    visor(); ctx.strokeStyle = goldDark; ctx.lineWidth = 0.012; ctx.stroke();
+  }
+
+  // 4) chin-bar: a gold lower trim + three dark vent slits
+  ctx.beginPath();
+  ctx.moveTo(0.30, 0.31); ctx.quadraticCurveTo(0.45, 0.25, 0.455, 0.07);
+  ctx.strokeStyle = gold; ctx.lineWidth = 0.022; ctx.stroke();
+  ctx.strokeStyle = 'rgba(0,0,0,0.7)'; ctx.lineWidth = 0.02; ctx.lineCap = 'round';
+  for (let i = 0; i < 3; i++) {
+    const vy = 0.13 + i * 0.055;
+    ctx.beginPath(); ctx.moveTo(0.40, vy); ctx.lineTo(0.30, vy + 0.01); ctx.stroke();
+  }
+
+  // 5) a soft translucent glare raked across the visor glass, so it reads as a
+  // light reflection rather than a solid boss (clipped to the lens, with a
+  // gradient falloff so it fades like a real glint)
+  if (withVisor) {
+    ctx.save();
+    visor(); ctx.clip();
+    ctx.translate(-0.04, -0.05);
+    ctx.rotate(-0.5);
+    ctx.scale(0.55, 1);             // a slim raked streak
+    const gl = ctx.createRadialGradient(0, 0, 0, 0, 0, 0.14);
+    gl.addColorStop(0, 'rgba(255,248,222,0.50)');
+    gl.addColorStop(0.55, 'rgba(255,236,188,0.18)');
+    gl.addColorStop(1, 'rgba(255,236,188,0)');
+    ctx.fillStyle = gl;
+    ctx.beginPath(); ctx.arc(0, 0, 0.14, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+}
+
 // `back` draws the back of the head (for the gym-mirror reflection, where the
 // rider faces away from the glass) — falls back to the front photo if the
-// back image hasn't loaded.
-function drawHead(ctx, x, y, facing, angle, back) {
+// back image hasn't loaded. `noHelmet` suppresses the master helmet overlay
+// (the victory screen draws his head bare and sets the helmet on the ground).
+function drawHead(ctx, x, y, facing, angle, back, noHelmet) {
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(angle || 0);
-  // the rider's head photo; the drawn helmet is the fallback if it failed
+  const sk = bikePalette(BIKE_SKIN);
+  // facing is continuous during the turn animation, so the face squashes
+  // through edge-on as the rider swings around; never let it hit zero scale
+  const fscale = Math.abs(facing) < 0.04 ? 0.04 : facing;
+  // the rider's head photo; a drawn sphere is the fallback if it failed to load
   const backImg = IMAGES.bikerBack;
   const headImg = (back && backImg && backImg.complete && backImg.naturalWidth > 0)
     ? backImg : IMAGES.biker;
-  if (headImg && headImg.complete && headImg.naturalWidth > 0) {
-    // facing is continuous during the turn animation, so the face
-    // squashes through edge-on as the rider swings around
-    ctx.scale(Math.abs(facing) < 0.04 ? 0.04 : facing, 1);
+  const hasPhoto = headImg && headImg.complete && headImg.naturalWidth > 0;
+  if (hasPhoto) {
+    ctx.save();
+    ctx.scale(fscale, 1);
     const h = 0.72;
     const w = h * headImg.naturalWidth / headImg.naturalHeight;
     ctx.drawImage(headImg, -w / 2, -h / 2, w, h);
+    ctx.restore();
   } else {
     ctx.beginPath();
     ctx.arc(0, 0, PHYS.headR, 0, Math.PI * 2);
@@ -4290,6 +4504,24 @@ function drawHead(ctx, x, y, facing, angle, back) {
     ctx.arc(0.13 * facing, -0.02, 0.075, 0, Math.PI * 2);
     ctx.fillStyle = '#23232a';
     ctx.fill();
+  }
+  // MASTER: a sleek black + gold helmet over the head, in the head's local
+  // (facing-scaled) space so it tracks the turn. The visor is smoked over the
+  // face so it stays partly visible; the back-of-head reflection is a plain
+  // shell (no visor). Suppressed entirely when noHelmet. The helmet model is a
+  // touch larger than the head photo, so it's scaled to sit snugly over the
+  // face — tweak HELMET_FIT to resize, HELMET_DX/DY to nudge (head-local space,
+  // +x forward/+y down). HELMET_DX is applied INSIDE the facing flip, so a
+  // negative (toward the back of the head) shifts the helmet left when the rider
+  // faces right and right when he faces left — automatically, no per-facing case.
+  if (sk.helmet && !noHelmet) {
+    const HELMET_FIT = 0.85, HELMET_DX = -0.05, HELMET_DY = 0;
+    ctx.save();
+    ctx.scale(fscale, 1);
+    ctx.translate(HELMET_DX, HELMET_DY);
+    ctx.scale(HELMET_FIT, HELMET_FIT);
+    drawHelmet(ctx, sk, { faceBehind: hasPhoto && !back, visor: !back });
+    ctx.restore();
   }
   ctx.restore();
 }
@@ -4327,6 +4559,19 @@ function drawBike(ctx, bike, headless, back, lamps, t) {
   const sk = bikePalette(BIKE_SKIN);   // cosmetic upgrade tier
   const T = t || 0;                    // render clock for the animated flair
 
+  // MASTER: a grand radiant halo breathing around the whole machine, laid down
+  // first so the bike sits inside the glow
+  if (sk.aura) {
+    const c = L(-0.05, -0.30);                 // visual centre of the machine
+    const pr = 1.5 + 0.14 * Math.sin(T * 2.6); // a slow, stately pulse
+    const ag = ctx.createRadialGradient(c.x, c.y, 0.4, c.x, c.y, pr);
+    ag.addColorStop(0, `rgba(${sk.aura},0.30)`);
+    ag.addColorStop(0.5, `rgba(${sk.aura},0.13)`);
+    ag.addColorStop(1, `rgba(${sk.aura},0)`);
+    ctx.fillStyle = ag;
+    ctx.beginPath(); ctx.arc(c.x, c.y, pr, 0, Math.PI * 2); ctx.fill();
+  }
+
   // wheels first; the chassis, bodywork and rider all layer over them
   for (const w of bike.wheels) drawWheel(ctx, w);
   // glowing wheel rims (Afterburner) — a soft pulsing halo hugging each tire
@@ -4340,6 +4585,19 @@ function drawBike(ctx, bike, headless, back, lamps, t) {
       ctx.fillStyle = rg;
       ctx.beginPath(); ctx.arc(w.pos.x, w.pos.y, 0.52, 0, Math.PI * 2); ctx.fill();
     }
+  }
+  // MASTER: an iridescent rim ring cycling through the spectrum as the wheel
+  // spins — drawn additively over the gold halo so it reads as a prism gleam
+  if (sk.prism) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (const w of bike.wheels) {
+      const hue = (T * 100 + w.rot * 57.3) % 360; // spin the hue with the wheel
+      ctx.strokeStyle = `hsla(${hue},95%,62%,0.7)`;
+      ctx.lineWidth = 0.05;
+      ctx.beginPath(); ctx.arc(w.pos.x, w.pos.y, 0.275, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.restore();
   }
 
   ctx.lineCap = 'round';
@@ -4430,6 +4688,21 @@ function drawBike(ctx, bike, headless, back, lamps, t) {
   strokeSeg(ctx, seatF, swPivot, 0.12, FR);  // seat post to pivot
   strokeSeg(ctx, engine, peg, 0.11, FRD);    // engine cradle
   strokeSeg(ctx, seatF, seatB, 0.11, FR);    // subframe
+  // MASTER: a rainbow sheen running along the main tubes, each phase-offset so
+  // the colour sweeps down the frame; additive so it gleams over the gold
+  if (sk.prism) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    const sheen = (a, b, off) => {
+      const hue = (T * 80 + off) % 360;
+      strokeSeg(ctx, a, b, 0.05, `hsla(${hue},95%,66%,0.55)`);
+    };
+    sheen(steer, seatF, 0);     // backbone
+    sheen(steer, engine, 110);  // down tube
+    sheen(seatF, swPivot, 200); // seat post
+    sheen(seatF, seatB, 300);   // subframe
+    ctx.restore();
+  }
 
   // skid plate under the engine
   poly([L(-0.10, 0.20), L(0.30, 0.18), L(0.30, 0.28), L(-0.08, 0.30)], '#5a5a63');
@@ -4472,6 +4745,72 @@ function drawBike(ctx, bike, headless, back, lamps, t) {
 
   // front number plate / headlight cowl
   poly([L(0.46, -0.34), L(0.62, -0.40), L(0.60, -0.16), L(0.46, -0.12)], FRD);
+
+  // MASTER: bolt-on ARMOR plating — angular gold-edged panels with rivets that
+  // turn the obsidian machine into a champion's war-bike. Drawn over the
+  // bodywork, under the detailing + rider. All in L() coords so the plates ride
+  // the bike's tilt and mirror with facing.
+  if (sk.master) {
+    const GP = '#23232d', GT = sk.gold || '#ffce4a', GD = sk.goldDark || '#9c7414';
+    const plate = (pts, fill) => {       // filled panel + gold edge trim
+      poly(pts, fill || GP);
+      ctx.strokeStyle = GT; ctx.lineWidth = 0.022; ctx.lineJoin = 'round';
+      ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.closePath(); ctx.stroke();
+    };
+    const rivet = (lx, ly) => {           // a gold bolt head
+      const p = L(lx, ly);
+      ctx.fillStyle = GD; ctx.beginPath(); ctx.arc(p.x, p.y, 0.022, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = GT; ctx.beginPath(); ctx.arc(p.x, p.y, 0.011, 0, Math.PI * 2); ctx.fill();
+    };
+    // heavy gold-edged bash plate under the engine
+    plate([L(-0.12, 0.20), L(0.32, 0.18), L(0.32, 0.30), L(-0.10, 0.32)], '#191920');
+    // engine / radiator side guard with cooling slats
+    plate([L(0.16, -0.12), L(0.34, -0.10), L(0.36, 0.12), L(0.18, 0.14)]);
+    ctx.strokeStyle = GD; ctx.lineWidth = 0.016;
+    for (let i = 0; i < 3; i++) {
+      const a = L(0.21, -0.04 + i * 0.06), b = L(0.34, -0.04 + i * 0.06);
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    }
+    // angular tank-shroud flank plate + rivets
+    plate([L(0.02, -0.45), L(0.06, -0.585), L(0.30, -0.585), L(0.34, -0.47), L(0.20, -0.42)]);
+    rivet(0.08, -0.46); rivet(0.285, -0.55);
+    // tail armor over the seat cowl + rivet
+    plate([L(-0.58, -0.42), L(-0.80, -0.47), L(-0.785, -0.30), L(-0.58, -0.34)]);
+    rivet(-0.66, -0.40);
+    // forward fairing winglet (an aero blade jutting off the cowl) + splitter
+    plate([L(0.56, -0.36), L(0.83, -0.31), L(0.81, -0.225), L(0.56, -0.225)]);
+    strokeSeg(ctx, L(0.57, -0.205), L(0.80, -0.235), 0.02, GT);
+    // fork guard on the front leg
+    plate([L(0.40, -0.30), L(0.50, -0.31), L(0.49, -0.08), L(0.41, -0.07)]);
+  }
+
+  // MASTER: champion detailing — a faceted gem set in the number plate and
+  // twinkling chrome glints on the metalwork (the tank's gold edge is now the
+  // shroud plate's trim, so the old pinstripe is gone).
+  if (sk.master) {
+    const trace = (pts, w, col) => {  // stroke a closed path of L() points
+      ctx.strokeStyle = col; ctx.lineWidth = w; ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.closePath(); ctx.stroke();
+    };
+    // a faceted diamond gem on the number plate, with a dark setting + glint
+    const gem = [L(0.55, -0.345), L(0.605, -0.27), L(0.55, -0.195), L(0.495, -0.27)];
+    trace(gem, 0.05, '#3a2c08');     // dark bezel
+    poly(gem, '#ffe78a');            // gold facet
+    poly([L(0.55, -0.345), L(0.605, -0.27), L(0.55, -0.27)], '#fff7d2'); // bright half
+    const gc = L(0.535, -0.30);
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.beginPath(); ctx.arc(gc.x, gc.y, 0.018, 0, Math.PI * 2); ctx.fill();
+    // chrome specular glints twinkling on tank-shroud + engine
+    const tw = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(T * 6));
+    ctx.fillStyle = `rgba(255,255,255,${tw})`;
+    for (const g of [L(0.17, -0.55), L(0.10, -0.03)]) {
+      ctx.beginPath(); ctx.arc(g.x, g.y, 0.022, 0, Math.PI * 2); ctx.fill();
+    }
+  }
 
   // seat (black pad) + tail cowl
   strokeSeg(ctx, seatF, seatB, 0.14, sk.seat);
@@ -4535,6 +4874,24 @@ function drawBike(ctx, bike, headless, back, lamps, t) {
   poly([L(-0.08, -0.56), L(0.07, -0.70), L(0.00, -0.80), L(-0.16, -0.66)], sk.hi);      // chest highlight
   if (sk.stripe) strokeSeg(ctx, L(-0.30, -0.50), L(-0.04, -0.80), 0.04, sk.stripe);     // chest stripe
   disc(shoulder, 0.14, sk.pad);                                  // shoulder pad
+  // MASTER: the rider's plate armor — a gold-edged chest plate (with a sternum
+  // ridge) and a shoulder pauldron, matching the bike's panels + the helmet.
+  // Drawn over the jacket, under the arm + collar + head.
+  if (sk.master) {
+    const GT = sk.gold || '#ffce4a', GD = sk.goldDark || '#9c7414';
+    const aplate = (pts, fill) => {
+      poly(pts, fill);
+      ctx.strokeStyle = GT; ctx.lineWidth = 0.02; ctx.lineJoin = 'round';
+      ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.closePath(); ctx.stroke();
+    };
+    aplate([L(-0.34, -0.54), L(-0.20, -0.74), L(0.02, -0.70), L(-0.02, -0.52)], '#1a1820'); // chest plate
+    strokeSeg(ctx, L(-0.17, -0.70), L(-0.19, -0.54), 0.024, GD);    // sternum ridge (base)
+    strokeSeg(ctx, L(-0.17, -0.70), L(-0.19, -0.54), 0.01, GT);     // sternum ridge (gold)
+    aplate([L(-0.26, -0.82), L(-0.04, -0.84), L(0.00, -0.72), L(-0.22, -0.70)], '#1a1820'); // pauldron
+    strokeSeg(ctx, L(-0.24, -0.74), L(-0.02, -0.76), 0.016, GD);    // pauldron ridge
+  }
   // collar (under the head photo, which overlaps it) — skipped when the head
   // has popped off on death, so there's no floating neck stub
   if (!headless) {
@@ -5232,7 +5589,7 @@ function drawMenu(ctx, W, H, alpha, items, sel, hover) {
 }
 
 // small build stamp tucked into the bottom-left corner of the menu so the
-// running physics version is always visible (records and replays are only
+// running engine version is always visible (records and replays are only
 // comparable within one sim build). Insets by the safe area so a phone
 // cutout never hides it.
 function drawCornerTag(ctx, W, H, text) {
@@ -5597,7 +5954,7 @@ function drawVictoryBiker(ctx, x, y, scale, t) {
   // the head goes down before the feeding arm, so the arm, the glove and
   // the fistful it carries all pass in FRONT of the face to the mouth
   const chew = f > 0.7 ? Math.sin(t * 26) * 0.05 : 0;
-  drawHead(ctx, -0.15, -0.74 + breathe, 1, -0.14 + chew);
+  drawHead(ctx, -0.15, -0.74 + breathe, 1, -0.14 + chew, false, true); // bare: helmet's on the ground
 
   riderLimb(ctx, shoulder, elbow, 0.10, sk.jacket); // upper arm (sleeve)
   riderLimb(ctx, elbow, hand, 0.085, sk.jacket);    // forearm (sleeve)
@@ -5617,6 +5974,21 @@ function drawVictoryBiker(ctx, x, y, scale, t) {
   if (p >= 0.42 && p < 0.92) {
     const q = (p - 0.42) / 0.5;
     drawKernel(ctx, mouth.x + 0.10 + q * 0.12, mouth.y + q * q * 0.85, 0.035, 9.3);
+  }
+
+  // MASTER: he's taken his helmet off to feast — it sits on the ground beside
+  // the arm propping him up. Drawn LAST so it reads in FRONT of him on the z
+  // axis; detached and empty (dark hollow visor). drawHead above was told
+  // noHelmet so his head shows bare.
+  if (sk.helmet) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(40,20,8,0.22)';            // a soft shadow puddle
+    ctx.beginPath(); ctx.ellipse(-0.78, 0.06, 0.34, 0.07, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.translate(-0.80, -0.10);
+    ctx.rotate(0.52);                                 // tipped over, set down
+    ctx.scale(0.9, 0.9);
+    drawHelmet(ctx, sk, { faceBehind: false, visor: true });
+    ctx.restore();
   }
 
   ctx.restore();

@@ -211,6 +211,13 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
   }));
   if (styled.style !== 350) bad('style total did not round trip: ' + styled.style);
   if (rt.style !== null) bad('absent style should parse as null, got ' + rt.style);
+  // bike skin (cosmetic tier) metadata: round-trips when present, null when not
+  const skinned = REPLAY.parse(REPLAY.serialize({
+    level: LEVELS[0], label: 'sk', outcome: 'finished', time: 2,
+    trackId: 'beginner', levelIndex: 0, skin: 2,
+  }));
+  if (skinned.skin !== 2) bad('bike skin tier did not round trip: ' + skinned.skin);
+  if (rt.skin !== null) bad('absent skin should parse as null, got ' + rt.skin);
 
   // ---- whole-stack: record a doomed run, save it, watch it back ----
   await new Promise(r => setImmediate(r));   // let loadAssets settle
@@ -250,6 +257,9 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
     if (!Number.isFinite(d.style) || d.style < 0) {
       bad('saved replay is missing its style total: ' + d.style);
     }
+    // the run was ridden on the stock skin (localStorage stub clears nothing),
+    // so the tape must record tier 0 — not merely omit the field
+    if (d.skin !== 0) bad('saved replay did not record the worn bike skin: ' + d.skin);
   }
   if (!lastFrameTexts().some(t => t.startsWith('Saved '))) {
     bad('save confirmation not shown on the crash screen');
@@ -320,10 +330,10 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
   }
   // ---- a synthetic instant-win replay covers the finished path ----
   savedFiles['synthetic-win.bmr'] = JSON.stringify({
-    format: 'burger-mania-replay', version: 9,
+    format: 'burger-mania-replay', version: 10,
     savedAt: '2026-06-11T00:00:00.000Z',
     label: 'Synthetic Win', outcome: 'finished', time: 0.02,
-    trackId: null, levelIndex: 0,
+    trackId: null, levelIndex: 0, skin: 3, // recorded on the top-tier skin
     level: {
       name: 'Win Box', theme: 'meadow',
       polygons: [[[-5, -8], [20, -8], [20, 8], [-5, 8]]],
@@ -346,9 +356,14 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
     bad('replay without style data should list style N/A');
   }
   storageWrites.count = 0;
+  setBikeSkin(1);                            // viewer is wearing a DIFFERENT skin
   key('Enter');                              // newest first: play Win Box
   if (!pumpUntilText(180, 'Course completed!')) {
     bad('synthetic win replay never finished');
+  }
+  // the tape recorded tier 3, so playback must wear 3 — not the viewer's tier 1
+  if (BIKE_SKIN !== 3) {
+    bad('replay did not wear its recorded bike skin: ' + BIKE_SKIN);
   }
   if (storageWrites.count !== 0) {
     bad('watching a replay wrote a best time (' + storageWrites.count + ' writes)');
@@ -357,6 +372,11 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
   await settle();
   if (!lastFrameTexts().some(t => t.includes('REPLAYS'))) {
     bad('Escape after a finished replay should land on the replays screen');
+  }
+  // leaving the replay restores the viewer's own earned skin (stub clears
+  // nothing, so tier 0) rather than stranding them on the tape's skin
+  if (BIKE_SKIN !== 0) {
+    bad('leaving a replay did not restore the viewer skin: ' + BIKE_SKIN);
   }
 
   console.log(fail ? 'FAILED (' + fail + ')' : 'OK');

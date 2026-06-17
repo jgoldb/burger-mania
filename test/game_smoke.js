@@ -67,8 +67,8 @@ const clock = { t: 0 };
 // ---- DOM globals the scripts touch ----
 global.window = {
   innerWidth: 800, innerHeight: 600,
-  // the smoke test uses the skip cheat, which is gated behind ?skip=true
-  location: { search: '?skip=true' },
+  // the smoke test uses the dev-only skip cheat, gated to a local dev host
+  location: { hostname: 'localhost', search: '' },
   AudioContext: function () { const ac = FakeAudioContext(); ac.__real = true; lastAC = ac; return ac; },
   addEventListener(type, fn) { (windowHandlers[type] = windowHandlers[type] || []).push(fn); },
 };
@@ -157,7 +157,10 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   key('Enter');                              // spend a continue -> ready (meadow)
   pumpFrames(3, 1 / 60);
   if (playedNow !== 'meadow') bad('after using a continue should be meadow, got ' + playedNow);
-  key('s'); key('k'); key('i'); key('p');    // open the skip-cheat level picker
+  key('Escape');                             // ready -> back to the menu
+  pumpFrames(3, 1 / 60);
+  key('ArrowUp'); key('ArrowUp');            // wrap up to the dev-only "Skip" item
+  key('Enter');                              // open the skip-cheat level picker
   pumpFrames(3, 1 / 60);
   key('ArrowUp');                            // wrap up to the last Beginner map (volcano)
   key('Enter');                              // jump to the picked map

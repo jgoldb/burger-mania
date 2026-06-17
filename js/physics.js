@@ -2,11 +2,14 @@
 
 // Tuning constants for the bike. Units: meters, seconds, radians.
 const PHYS = {
-  g: 2.5,          // ONE uniform gravity, air and ground alike (Elasto Mania — no
-                   // air/ground split). Lowered 2.8->2.5 for a floatier, more
-                   // Elasto-like arc (gentler falls, hangier air). NOTE: a lighter
-                   // bike recoils off the suspension more readily — to stop the
-                   // extra hop, springC was raised in step (see below).
+  g: 2.7,          // ONE uniform gravity, air and ground alike (Elasto Mania — no
+                   // air/ground split). Was 2.8, lowered to 2.5 for a floatier
+                   // Elasto-like arc, then nudged back to 2.7 to compensate for the
+                   // reduced air drag (drag 0.03->0.022): less drag lets jumps and
+                   // bounces carry more energy, so a touch more gravity keeps them
+                   // planted and controlled. NOTE: a lighter bike recoils off the
+                   // suspension more readily — to stop the extra hop, springC was
+                   // raised in step (see below).
                    // The ground feeling too light at this value
                    // was NOT a gravity problem: it was the volt being too strong for
                    // the ledge and the engine wheelie too strong for the volt to
@@ -79,12 +82,23 @@ const PHYS = {
   frameR: 0.45,    // frame body radius — used ONLY as the body's lethal contact
                    // radius against nut mounds now (see Bike.step). The body has
                    // no terrain collider, so this never touches rock
-  spinExt: 0.022,   // anchor extension (m) per (rad/s)^2 of frame spin
-  spinExtMax: 0.28, // cap on the spin-driven REST extension. Kept modest: this
-                    // is how far the slung anchor sits out during *sustained*
-                    // rotation, so raising it pushes the wheels into the wall
-                    // riding a loop. The dramatic stretch comes from momentum
-                    // flinging the wheel past the rest, out to maxStretch
+  spinExt: 0.022,   // anchor extension (m) per (rad/s)^2 of frame spin — the spin-
+                    // driven outward sling of the wheels' spring anchor. INERT while
+                    // spinExtMax is 0 (the cap below clamps min(0, spinExt*avel^2)=0)
+  spinExtMax: 0,    // cap (m) on that spin-driven REST extension. At 0 the sling is
+                    // OFF: sling = 1 + min(0, spinExt*avel^2)/anchorDist = 1 always,
+                    // so the wheels' spring anchor never extends outward no matter how
+                    // fast the frame spins — they stay at their fixed rest radius. Was
+                    // 0.28, which flung the wheels out far enough that a standstill-
+                    // alovolt slam recoiled the frame up ~1.5 m and pogo-somersaulted
+                    // on flat ground; at 0 the head plants and the rider dies in half a
+                    // turn (Elasto no-flat-ground-flip). Only ever acted while spinning
+                    // (avel^2), so drop-death, landings and the air-spin ceiling are
+                    // untouched. Cost: no outward sling to help wheels reach an outer
+                    // wall riding a loop. The dramatic momentary wheel-stretch is
+                    // unaffected (that's momentum -> maxStretch, not this). NOTE: at 0,
+                    // spinExt above is dead — if 0 sticks, remove the sling outright
+                    // (spinExt, spinExtMax, and the `sling` factor in step)
 
   engineT: 1.1,    // torque applied to the driven (rear) wheel
   engineLow: 0.25, // extra low-end torque fraction: full extra at zero
@@ -98,22 +112,39 @@ const PHYS = {
                    // counter the gas wheelie. Higher = stronger wheelie/stoppie
   wheelieRate: 0.5, // rad/s pitch-back rate the engine reaction saturates at
   maxSpin: 55,     // rad/s cap on driven wheel spin
-  brakeRate: 30,   // exponential lock rate for both wheels
+  brakeRate: 60,   // how hard the brake grabs the WHEEL: the exponential rate
+                   // (per second) it bleeds wheel spin. THIS is the real
+                   // braking-force lever, not brakeGrip. While the tyre stays
+                   // rolling-synced to the ground (which it does at normal grip),
+                   // the contact friction sits well below its Coulomb ceiling, so
+                   // brakeGrip is non-binding and raising it does nothing — the
+                   // stop is paced entirely by how fast this bleeds the spin, which
+                   // friction then turns into linear deceleration as it re-syncs
+                   // the wheel. Raised 30->90 to put back (and exceed) the stopping
+                   // power the old rollRes spin-bleed was quietly supplying, then
+                   // eased 90->55 (90 read a tad strong). Push higher for a harder
+                   // grab; once it bleeds faster than friction
+                   // can re-sync each substep the wheel locks into a skid and
+                   // brakeGrip becomes the ceiling. (Capped stable below ~480, the
+                   // substep rate, where the per-step factor would hit zero.)
   brakeR: 0.32,    // fraction of brake torque reacted onto the frame
   brakeSkid: 1.0,  // skid friction torque multiplier passed to the frame.
                    // Halved alongside the brakeGrip boost below: the stronger
                    // brakes shed a lot more momentum, and the skid torque
                    // scales with that braking force, so without this cut a
                    // hard stop would just throw the rider over the bars
-  brakeGrip: 2.2,  // the locked tire bites the rock this many times harder
-                   // than rolling traction (P.mu) while the brake is held —
-                   // a brake-only grip boost, so the bike STOPS hard without
-                   // changing how it accelerates or climbs (engine traction
-                   // still uses plain P.mu, so the tuned maps are untouched).
-                   // Glass is exempt (still crossed on momentum alone), and
-                   // braking stays endo-limited, so slamming the brakes at
-                   // speed still pitches you over — this just raises the
-                   // deceleration the front end can deliver before that
+  brakeGrip: 4.0,  // Coulomb friction CEILING while braking (× P.mu) — the most a
+                   // braked tyre can grip IF it breaks loose and SLIDES. Big
+                   // caveat: at normal settings the wheel does NOT slide under
+                   // braking — the contact friction keeps it rolling-synced well
+                   // below this ceiling — so this knob is non-binding and raising
+                   // it (even to 200) changes the stop not at all. Braking force is
+                   // set by brakeRate (the spin-bleed), not here. This only starts
+                   // to bite once brakeRate is high enough to lock the wheel into a
+                   // skid; then it caps that skid's grip. Kept at 4.0 as a generous
+                   // ceiling so a lock-up still bites hard. Engine traction uses
+                   // plain P.mu (accel/climb and the tuned maps untouched); glass
+                   // is exempt (crossed on momentum alone)
   brakeCap: 0.5,   // stoppie pitch (rad) the brake torque fades out at
   parkMu: 1.9,     // static friction once the brake has fully clamped a
                    // stopped wheel: a held brake parks the bike on a hill
@@ -127,41 +158,41 @@ const PHYS = {
   // and the gaps between pumps let gravity act (a dangling body sags back, so a
   // ledge recovery is a pump-and-time skill). The ALOVOLT (both keys) is CONTINUOUS
   // instead — a sustained strong clockwise drive while held, the supervolt for big
-  // air rotations and recoveries. NEITHER has a hard spin cap: the top rate is
-  // EMERGENT, set by the drive torque balancing avelDamp (angular drag) below — the
-  // physics decides the ceiling, not a clamp. A fresh normal press pumps at once.
-  voltAcc: 21,      // torque of ONE normal volt pump (the punch). Sets normal-volt
+  // air rotations and recoveries. NEITHER has a hard spin cap: there's no angular
+  // drag term, so rotation conserves angular momentum — the alovolt's top spin is
+  // bounded EMERGENTLY by air drag on the fast, flung-out wheels (and lower the
+  // faster you're also falling, as fall speed stacks onto the wheels). A fresh
+  // normal press pumps at once.
+  voltAcc: 14.5,    // torque of ONE normal volt pump (the punch). Sets normal-volt
                     // rotation (fine control / balance) AND how easily you can pump
                     // off a ledge — keep it modest so a DANGLING body (gravity
                     // resisting) can't be pumped up, while a body whose CoM is still
                     // OVER the ledge (gravity not resisting) rotates back easily.
-                    // Raised 17->21 for a harder, snappier punch; burst/cadence were
-                    // trimmed in step (below) so the AVERAGE only edged up slightly
-  voltBurstDur: 0.125, // seconds each pump applies torque — the length of one punch.
-                    // Trimmed 0.133->0.125 (shorter punch). With voltAcc up to 21 and
-                    // voltCadence out to 0.66, the AVERAGE torque
-                    // (voltAcc*voltBurstDur/voltCadence) goes ~3.77 -> ~3.98: only a
-                    // touch stronger overall, delivered in fewer, harder, shorter pumps
-  voltCadence: 0.66, // seconds between pump starts while held (~1.5 pumps/s) — fewer,
-                    // more distinct pumps (0.45->0.6->0.66). The GAP is where
-                    // gravity/damping act on a hang, so a longer gap also makes a
-                    // ledge recovery more of a pump-and-time skill
-  alovoltAcc: 7,    // CONTINUOUS torque of the alovolt (both keys) — sustained, not
-                    // pulsed, so it clearly out-spins the bursty normal volt (emergent
-                    // air terminal ≈ alovoltAcc/(frameI*avelDamp)). The cadence gates
-                    // when it can ENGAGE, but the drive itself is the same on ground
-                    // and air. Kept modest ON PURPOSE: a stronger sustained torque
-                    // VAULTS the bike off flat ground (you'd pogo into flips); at 7 a
-                    // ground spin reaches under a turn before the head hits and crashes
-                    // — past ~10-11 it starts completing flips. So the no-flat-ground-
-                    // flip behaviour falls out of the physics, no gate (8->7)
+                    // Eased down over the feel passes (17->21->16->14.5) to a softer
+                    // pump. Average torque voltAcc*voltBurstDur/voltCadence ~ 2.8
+  voltBurstDur: 0.152, // seconds each pump applies torque — the length of one punch.
+                    // Raised 0.125->0.152 in lockstep with voltCadence 0.66->0.8 to
+                    // hold the duty cycle (voltBurstDur/voltCadence) — and so the
+                    // AVERAGE torque (voltAcc*voltBurstDur/voltCadence) — constant: a
+                    // pump is a touch longer, the rhythm a touch slower, same total push
+  voltCadence: 0.8, // seconds between pump starts while held (~1.25 pumps/s) — fewer,
+                    // more distinct pumps (0.45->0.6->0.66->0.8). The GAP is where
+                    // gravity/damping act on a hang, so a longer gap makes a ledge
+                    // recovery more of a pump-and-time skill (voltBurstDur was raised
+                    // to match, so the average torque is unchanged)
+  alovoltAcc: 4,    // CONTINUOUS torque of the alovolt (both keys) — sustained, not
+                    // pulsed, so it clearly out-spins the bursty normal volt while
+                    // held. The cadence gates when it can ENGAGE, but the drive itself
+                    // is the same on ground and air. Eased 7->4 for a more controllable
+                    // supervolt spin-up. The no-flat-ground-flip behaviour no longer
+                    // depends on keeping this modest — it's now held by the spin-fling
+                    // sling being OFF (spinExtMax=0): the wheels stay planted, so a
+                    // flat-ground spin drives the head into the ground rather than
+                    // pogoing. TOP SPIN isn't set here either — it's bounded emergently
+                    // by air drag on the wheels (lower PHYS.drag for a higher ceiling)
   voltReachRate: 14, // 1/s the rider's arm pumps toward fully-leaned DURING each
                     // torque punch and falls back in the gap, so the arm visibly
                     // punches per pump (render.js reads bike.voltReach). Cosmetic
-  avelDamp: 2.0,   // angular drag bled off avel per second, ground AND air — settles
-                   // rotation between pumps and on release (a volt STOPS instead of
-                   // free-spinning) and lets gravity drag a hanging body back in the
-                   // pump gaps. Higher = tighter/quicker to settle; lower = floatier
 
   mu: 1.1,         // tire friction coefficient
   muGlass: 0.06,   // tire friction on obsidian glass: the engine can barely
@@ -180,19 +211,37 @@ const PHYS = {
                    // powered wheel keeps spinning a bit longer (more wheelspin)
                    // before it hooks up, vs a freewheeling wheel that grips clean.
                    // A subtle but noticeable on-power-vs-coasting landing difference
-  rollRes: 9,      // rolling resistance (spin decel, rad/s^2, on contact)
+  // Rolling resistance — the wheels' resistance to ROTATION. A rigid circular wheel
+  // on a rigid surface has NO true rolling resistance (real rolling drag comes from
+  // the contact patch deforming, which a point-contact circle doesn't have), so
+  // there is NO constant dry-friction term: the at-rest / low-speed feel emerges
+  // from contact friction alone (zero force while a wheel rolls clean). (A constant
+  // term used to live here and was the "sticky at rest" culprit — removed.) What's
+  // left is one gentle SPEED-proportional bleed, separate from tyre friction (mu)
+  // and braking grip (mu*brakeGrip / parkMu) so it never touches climb/brake feel:
+  rollResV: 0.15,  // SPEED-dependent coast-down (extra spin decel per rad/s of
+                   // spin): ~0 at rest, so it adds NO at-rest stickiness — it grows
+                   // with wheel speed, a gentle drag-like bleed that settles
+                   // cruising speed and lets a coast wind down. Below air drag's
+                   // range (dragV0) it's the only thing slowing a roll. Raise it for
+                   // a shorter coast, or drop to 0 to lean entirely on air drag up top
   dragV0: 19,      // speed (m/s) below which there is no air drag at all:
                    // the tuned maps top out ~17 m/s (Sriracha's spiral dive),
                    // so leaving the normal range drag-free keeps every map's
                    // ballistics bit-identical. Drag only bites past this
-  drag: 0.03,      // quadratic air drag (1/m) on the speed ABOVE dragV0: a
+  drag: 0.022,     // quadratic air drag (1/m) on the speed ABOVE dragV0: a
                    // mass-independent decel of drag*(|v|-dragV0)^2 that sets
                    // the top speed. Free-fall terminal is dragV0+sqrt(g/drag)
-                   // ~ 34 m/s, and it's the SAME on the gas or coasting, so a
+                   // ~ 30 m/s, and it's the SAME on the gas or coasting, so a
                    // long descent can't be out-run by idling. The engine tops
                    // out at maxSpin*wheelR (~22) on the flat, so the gas is
                    // always the faster choice up to there and never slower
-                   // past it (it just stops adding once drag has the lead)
+                   // past it (it just stops adding once drag has the lead).
+                   // This ALSO bounds the alovolt air-spin: drag on the fast
+                   // flung-out wheels is what caps rotation, so lowering it raises
+                   // that ceiling. Eased 0.03->0.022 for a higher ceiling and a bit
+                   // more carried speed (the tuned maps top out below dragV0, so
+                   // they're untouched; gravity was nudged up to compensate)
   // The body has no terrain collider at all (see Bike.step): nothing holds the
   // frame off a surface, so a hard enough slam sinks it straight through and the
   // head is dragged down to its death. This is what makes a big drop fatal — the
@@ -426,7 +475,8 @@ class Bike {
     // ALOVOLT (both keys) is the CONTINUOUS supervolt — a sustained clockwise drive,
     // but it can only ENGAGE when the cadence is ready (a cooldown blocks it, same as
     // a pump) and RELEASING it spends a cooldown of its own. No hard spin cap (the air
-    // top-rate is emergent, where the drive balances avelDamp), and no air/ground branch:
+    // top-rate is emergent — rotation conserves angular momentum and is bounded by
+    // air drag on the flung-out wheels), and no air/ground branch:
     // that a hard spin crashes you on flat ground but rotates you in the air EMERGES
     // from the contact + the modest torque (alovoltAcc can't vault the bike off the ground).
     const L = !!input.left, R = !!input.right;
@@ -598,9 +648,11 @@ class Bike {
     this.vel.x += (fx / P.frameM) * dt;
     this.vel.y += (fy / P.frameM) * dt;
     this.avel += (torque / P.frameI) * dt;
-    // angular drag, ground AND air: a held volt sustains the spin against it, and
-    // releasing lets it settle the angle (Elasto-style controllable rotation)
-    this.avel *= 1 - P.avelDamp * dt;
+    // NO angular drag term: rotation conserves angular momentum (Elasto-faithful).
+    // The air-spin ceiling isn't lost — it emerges from air drag on the fast,
+    // flung-out wheels (the linear drag below); on the ground the suspension and
+    // contacts settle the angle. An artificial damper here only duplicated that
+    // bound while deadening the controllable feel, so it was removed.
 
     // quadratic linear drag on the speed above dragV0: a mass-independent
     // deceleration applied to the frame and both wheels so the whole bike
@@ -692,11 +744,12 @@ class Bike {
     // and no special-casing. (The frame is still lethal against nut mounds; that
     // is a separate hazard, handled below.)
 
-    // rolling resistance: grounded wheels slowly shed spin, which bleeds
-    // bike speed through tire friction and lets it coast to a full stop
+    // rolling resistance: grounded wheels slowly shed spin — speed-proportional
+    // only (no constant dry-friction term; a rigid wheel has no true rolling
+    // resistance), which bleeds bike speed through tire friction so a coast winds down
     for (const w of this.wheels) {
       if (!w.onGround) continue;
-      const dec = (P.rollRes + 0.15 * Math.abs(w.spin)) * dt;
+      const dec = P.rollResV * Math.abs(w.spin) * dt;
       if (Math.abs(w.spin) <= dec) w.spin = 0;
       else w.spin -= Math.sign(w.spin) * dec;
     }

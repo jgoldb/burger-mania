@@ -1,7 +1,7 @@
-// The skip cheat is gated behind ?skip=true in the page URL. This drives the
-// game with NO such param and asserts that typing "skip" does nothing — the
-// level-select overlay never opens, and the menu keeps working normally.
-// (The positive case — the overlay opening WITH the param — is skip_check.js.)
+// The skip cheat is dev-only: it surfaces as a "Skip" main-menu item only on a
+// local dev host. This drives the game on a NON-dev host (no hostname) and
+// asserts the menu has no "Skip" item, so the level-select overlay can't be
+// opened. (The positive case — a dev host, opened from the menu — is skip_check.js.)
 // Run with: node test/cheat_gate_check.js
 const fs = require('fs');
 const path = require('path');
@@ -40,7 +40,7 @@ const gameCanvas = makeCanvas();
 const clock = { t: 0 };
 global.window = {
   innerWidth: 800, innerHeight: 600,
-  // deliberately NO ?skip=true — the cheat must stay locked
+  // a non-dev host (no hostname) — the cheat must stay locked
   location: { search: '' },
   AudioContext: function () { return { currentTime: clock.t, state: 'running',
     get sampleRate() { return 8000; }, destination: {}, resume() {},
@@ -81,21 +81,23 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
   key('Enter');           // intro -> menu
   let texts = frameTexts(3);
   if (!texts.includes('Play')) bad('menu should show Play, got: ' + texts.join('|'));
+  // on a non-dev host the dev-only "Skip" item must not be in the menu
+  if (texts.includes('Skip')) bad('the "Skip" menu item showed on a non-dev host');
 
-  // type the cheat: with no ?skip=true it must be inert
+  // typing the old s-k-i-p combo must be inert (there is no key combo anymore)
   key('s'); key('k'); key('i'); key('p');
   texts = frameTexts(3);
-  if (texts.includes('SKIP TO MAP')) bad('skip overlay opened despite missing ?skip=true');
-  if (!texts.includes('Play')) bad('menu should still be up after the dud cheat');
+  if (texts.includes('SKIP TO MAP')) bad('skip overlay opened on a non-dev host');
+  if (!texts.includes('Play')) bad('menu should still be up after the dud keys');
 
   // and the menu still works: Enter activates Play -> difficulty
   key('Enter');
   texts = frameTexts(3);
   if (!texts.includes('CHOOSE DIFFICULTY')) {
-    bad('menu navigation broke after typing the cheat keys, got: ' + texts.join('|'));
+    bad('menu navigation broke after typing the old cheat keys, got: ' + texts.join('|'));
   }
 
-  console.log(fail ? 'FAILED (' + fail + ')' : 'OK  skip cheat stays locked without ?skip=true');
+  console.log(fail ? 'FAILED (' + fail + ')' : 'OK  skip cheat stays locked off a dev host');
   process.exit(fail ? 1 : 0);              // the song scheduler keeps node alive
 })().catch(e => { console.log('FAIL exception:', e); process.exit(1); });
 `;

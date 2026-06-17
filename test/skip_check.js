@@ -55,8 +55,8 @@ function FakeAudioContext() {
 const clock = { t: 0 };
 global.window = {
   innerWidth: 800, innerHeight: 600,
-  // the skip cheat is gated behind ?skip=true in the URL; this test drives it
-  location: { search: '?skip=true' },
+  // the skip cheat unlocks on a local dev host; this test drives it from there
+  location: { hostname: 'localhost', search: '' },
   AudioContext: function () { const ac = FakeAudioContext(); ac.__real = true; lastAC = ac; return ac; },
   addEventListener(type, fn) { (windowHandlers[type] = windowHandlers[type] || []).push(fn); },
 };
@@ -106,10 +106,12 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   if (!texts.includes('Play')) bad('menu should show Play button, got: ' + texts.join('|'));
   if (texts.includes('SKIP TO MAP')) bad('skip overlay should not be up at the menu');
 
-  // open the picker from the menu (no track active yet)
-  key('s'); key('k'); key('i'); key('p');
+  // open the picker from the dev-only "Skip" menu item (no track active yet).
+  // It sits just before Audio (the last item), so two ArrowUps wrap onto it.
+  key('ArrowUp'); key('ArrowUp');
+  key('Enter');
   texts = frameTexts(3);
-  if (!texts.includes('SKIP TO MAP')) bad('skip overlay heading missing after cheat');
+  if (!texts.includes('SKIP TO MAP')) bad('skip overlay heading missing after opening from menu');
   if (playedNow !== 'menu') bad('skip from menu should play menu song, got ' + playedNow);
 
   // navigate down past the visible window (10 maps, 6 visible -> scrolls),
@@ -127,8 +129,9 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   if (!texts.includes('Play')) bad('Escape from skip(menu) should return to the menu');
   if (playedNow !== 'menu') bad('after Escape should still play menu, got ' + playedNow);
 
-  // re-open and pick map 6 (index 5 = first volcano map)
-  key('s'); key('k'); key('i'); key('p');
+  // re-open and pick map 6 (index 5 = first volcano map). Escape left the
+  // menu selection parked on "Skip", so a plain Enter re-opens the picker.
+  key('Enter');
   frameTexts(3);
   for (let i = 0; i < 5; i++) key('ArrowDown');
   key('Enter');
