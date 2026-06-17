@@ -15,7 +15,19 @@
 // an older version" failure instead of a silent, wrong-looking playback.
 const REPLAY = (() => {
   const FORMAT = 'burger-mania-replay';
-  const VERSION = 11; // bumped 2026-06-17: tire + volt feel pass. Tires are squishier
+  const VERSION = 11; // bumped 2026-06-17: tire + volt + suspension feel passes (all
+                     // batched into the still-undeployed v11, so no new version number).
+                     // Suspension: softened (springK 23->20->18, ~28% more travel) and
+                     // recoil slowed significantly (springC 3.3->4.0->5) — the damping ratio
+                     // climbs ~0.73->1.26, now OVERDAMPED, so the spring eases back to rest
+                     // slowly without overshoot instead of recoiling.
+                     // Wheel-inertia pass: the driven wheel was lightened (wheelI
+                     // 0.018->0.012) so a free-spinning (gas-off) wheel no longer dumps a
+                     // big forward lurch when it lands — its stored angular momentum, and
+                     // thus the landing kick, is ∝ wheelI. brakeRate 60->90 holds braking
+                     // (force ∝ wheelI*brakeRate); engineT stays 1.1 (ground accel barely
+                     // moves). Side effect: the in-air gas pump spins up ~1.5x quicker.
+                     // Tire + volt pass: tires are squishier
                      // in a pinch and now squeeze FURTHER the more momentum the biker
                      // carries (wheelSquish 0.08->0.12, new momentum-scaled wheelSquish
                      // Max/V) — and the squish actually works now: it softens the

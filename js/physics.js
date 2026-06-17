@@ -21,7 +21,25 @@ const PHYS = {
 
   wheelR: 0.4,
   wheelM: 0.22,
-  wheelI: 0.018,
+  wheelI: 0.012,   // driven-wheel rotational inertia. LOWERED 0.018->0.012 (a third lighter)
+                   // so a free-spinning wheel carries less angular momentum. The problem:
+                   // pump the gas in the air, release, and the wheel keeps spinning (good) —
+                   // but landing that overspun wheel dumped its stored angular momentum
+                   // (L = wheelI*spin) into a forward LURCH as the contact synced it to the
+                   // ground, so a coasting (gas-off) touchdown felt powered/hard to settle.
+                   // The forward kick on landing is ∝ wheelI, so a lighter wheel "stops"
+                   // (syncs) against the ground far more easily, as a freewheel should.
+                   // COUPLING:
+                   //  - braking works by bleeding spin, so brake force ∝ wheelI*brakeRate —
+                   //    brakeRate was raised inversely (60->90) to hold the stop AND the
+                   //    stoppie reaction (tip ∝ wheelI*brakeRate) exactly.
+                   //  - ground accel ∝ engineT*wheelR/(M*wheelR^2 + wheelI) with M the whole
+                   //    bike, and wheelI is tiny next to M*wheelR^2, so a lighter wheel moves
+                   //    accel only ~+2% — engineT LEFT at 1.1.
+                   //  - SIDE EFFECT (intended-ish): airborne free spin-up is ∝ engineT/wheelI,
+                   //    so the in-air gas pump winds the wheel up ~1.5x quicker now. Consistent
+                   //    with a lighter wheel ("easily goes to full speed"); dial wheelI back up
+                   //    if the pump feels too twitchy.
 
   frameM: 1.3,     // frame mass. Raised 1.0->1.3 over the feel passes to give
                    // the bike more heft — it was getting tossed around by
@@ -44,26 +62,28 @@ const PHYS = {
                    // lean, wheelie and stoppie unchanged. Raise further (and bump
                    // voltAcc to hold the lean) for a weaker air flick still
 
-  springK: 23,     // suspension stiffness. 42(stock)->26->20->23: softened twice for a
-                   // SOFTER/STRETCHIER/SLOWER suspension, then nudged back up "a drop less
-                   // soft" per the user. At 23: travel ~42/23 = 1.8x stock under the same
-                   // load, spring frequency ω=sqrt(K/wheelM) ~25% below stock (period
-                   // ~0.45->0.60 s) so it still takes more time to compress and spring
-                   // back, just a touch firmer/snappier than the 20. CAVEAT it ALSO sets
+  springK: 18,     // suspension stiffness. 42(stock)->26->20->23->20->18: softened twice for a
+                   // SOFTER/STRETCHIER/SLOWER suspension, nudged back up to 23 ("a drop less
+                   // soft"), then softened back down (20, then a further drop to 18) per the
+                   // user. At 18: travel ~42/18 = 2.3x stock under the same load, spring
+                   // frequency ω=sqrt(K/wheelM) ~35% below stock (period ~0.45->0.69 s) so it
+                   // takes even longer to compress and spring back. CAVEAT it ALSO sets
                    // the drop-death line: the body has no collider, so a hard landing
                    // compresses the spring until the rigid head reaches terrain = death,
                    // and that bottom-out depth scales with 1/K — softer dies from lower
                    // drops (mostly held by the raised springCFade below; firming back to
                    // 23 actually buys a little fall-toughness back). Land flat to survive,
                    // Elasto-style
-  springC: 3.3,    // suspension damping — THE bounce lever. Held at 3.3 across the springK
-                   // changes, so the DAMPING RATIO (springC/(2*sqrt(springK*wheelM)))
-                   // tracks the stiffness: ~0.66 at stock 42, up to 0.79 at the softest
-                   // 20, now ~0.73 at springK 23 — still under 1.0 (it RECOILS rather than
-                   // soaking dead) and high enough that the spring-back stays languid /
-                   // takes a while, which the user wanted. Lower = bouncier (snaps back
-                   // faster), higher = more planted / even slower spring-back; the
-                   // hard-LANDING bounce + fall-toughness specifically is springCFade
+  springC: 5,      // suspension damping — THE recoil/bounce lever. RAISED 3.3->4.0->5 to slow
+                   // the spring-back recoil SIGNIFICANTLY per the user. The DAMPING RATIO
+                   // (springC/(2*sqrt(springK*wheelM))) tracks the stiffness too: ~0.66 at
+                   // stock 42; with the softer springK 18 below, 5 puts it at ~1.26 — now
+                   // OVERDAMPED (past critical 1.0), so the spring no longer overshoots/recoils
+                   // at all: it eases back to rest slowly without a bounce — the slowest,
+                   // deadest spring-back yet (the user pushed it past my ~0.95 target). Lower
+                   // = bouncier (snaps back faster, recoils once under 1.0), higher = even
+                   // more planted / slower creep back; the hard-LANDING bounce + fall-
+                   // toughness specifically is springCFade
   springCFade: 36, // relative speed (m/s) where the suspension damper fades to
                    // half, so a fast compression rides mostly on the spring (and
                    // bounces) instead of being soaked dead. The body has no terrain
@@ -110,9 +130,13 @@ const PHYS = {
                     // spinExt above is dead — if 0 sticks, remove the sling outright
                     // (spinExt, spinExtMax, and the `sling` factor in step)
 
-  engineT: 1.1,    // torque applied to the driven (rear) wheel. BACK to the gentle stock
-                   // 1.1 — the launch/low-end acceleration the user likes (1.9 felt "too
-                   // fast"). This sets the WHOLE accel curve's level, so it's deliberately
+  engineT: 1.1,    // torque applied to the driven (rear) wheel. LEFT at 1.1 despite the
+                   // lighter wheelI above: steady ground accel ∝ engineT*wheelR/(M*wheelR^2
+                   // + wheelI) where M is the WHOLE bike (the contact drags the frame in
+                   // through the stiff suspension), and wheelI (0.012) is tiny next to
+                   // M*wheelR^2 (~0.28), so the lighter wheel only nudges accel ~+2% — not
+                   // worth trimming. (Only the FREE-AIR spin-up, ∝ engineT/wheelI, feels the
+                   // lighter wheel.) This sets the WHOLE accel curve's level, so it's deliberately
                    // modest: the bike reaches its 60 mph cap in ~18 s, which is fine now
                    // that the cap (maxSpin) removed the old 40 s asymptotic crawl. Don't
                    // raise this for "quicker to top" — it quickens the LAUNCH too (the same
@@ -155,8 +179,12 @@ const PHYS = {
                    // now: maxSpin = top_mph / 0.894 in rad/s (e.g. 50 mph -> 56, 70 -> 78).
                    // engineFade softens the last bit of the approach so it's not a dead
                    // wall. Also the reference for engineFade (spin/maxSpin)
-  brakeRate: 60,   // how hard the brake grabs the WHEEL: the exponential rate
-                   // (per second) it bleeds wheel spin. THIS is the real
+  brakeRate: 90,   // how hard the brake grabs the WHEEL: the exponential rate
+                   // (per second) it bleeds wheel spin. RAISED 60->90 to hold braking against
+                   // the lighter wheelI above — the brake works by bleeding spin and friction
+                   // converts that to decel, so brake force ∝ wheelI*brakeRate; scaling
+                   // brakeRate inversely to the wheelI cut keeps the stop (and the stoppie
+                   // reaction tip ∝ wheelI*brakeRate) unchanged. THIS is the real
                    // braking-force lever, not brakeGrip. While the tyre stays
                    // rolling-synced to the ground (which it does at normal grip),
                    // the contact friction sits well below its Coulomb ceiling, so
