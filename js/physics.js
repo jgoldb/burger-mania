@@ -26,55 +26,65 @@ const PHYS = {
   frameM: 1.3,     // frame mass. Raised 1.0->1.3 over the feel passes to give
                    // the bike more heft — it was getting tossed around by
                    // impacts too easily and felt underweight
-  frameI: 0.55,    // frame rotational inertia. Raised 0.35->0.55: the SAME volt
-                   // torque now spins the bike up more slowly, so a lean feels
-                   // like shifting real weight instead of flicking a light
-                   // frame. This is the main "harder to volt / heavier" lever
-                   // (engine wheelie and brake stoppie get a touch heavier too)
+  frameI: 1.5,     // frame rotational inertia. Raised over the feel passes
+                   // (0.35->0.55->1.1->1.5) — the SAME volt torque spins the bike up more
+                   // slowly, so a lean shifts real weight instead of flicking a light
+                   // frame. This is the main "harder to volt / heavier" lever, and it
+                   // is ALSO what tames the airborne volt without any air/ground
+                   // special-case: on the GROUND the volt-lean, wheelie and stoppie
+                   // are torque BALANCES (the lean torque settles against gravity +
+                   // the contact reaction), so they're nearly inertia-independent and
+                   // barely move when this rises — only a small voltAcc bump restores
+                   // them. In the AIR there's no balance: rotation is purely
+                   // inertia-driven (torque*t/frameI, conserved), so more inertia cuts
+                   // it directly. So raising frameI (and nudging voltAcc to hold the
+                   // ground lean) leaves grounded volting/wheelies/stoppies feeling the
+                   // same while the free-air flick stops over-rotating. 0.55->1.5 took
+                   // a 0.5 s air pump from ~0.93 rad down to ~0.57 rad (~-38%); grounded
+                   // lean, wheelie and stoppie unchanged. Raise further (and bump
+                   // voltAcc to hold the lean) for a weaker air flick still
 
-  springK: 42,     // suspension stiffness — UNCHANGED. Sets the drop-death line:
-                   // a hard landing must compress the suspension far enough that
-                   // the rigidly-attached head reaches terrain (the body has no
-                   // collider), and that bottom-out depth scales with K. At 42 the
-                   // line sits at ~12.5 m/s / ~28m flat (a touch lower at an angle —
-                   // land flat to survive, Elasto-style), where the fall-toughness
-                   // was tuned. The springy FEEL comes from the light damping
-                   // (springC) below, NOT from changing this
-  springC: 4.0,    // suspension damping — THE bounce lever. The old dead value was
-                   // 5.0 (damping ratio ~0.82, just absorbs). 2.8 (~0.46) still
-                   // recoiled too much, so it's now 4.0 (~0.66) — heavily damped but
-                   // still under 1.0, so the suspension RECOILS a little instead of
-                   // soaking dead, just with much less bounce-back. Stepped up
-                   // alongside the gravity cut too: less gravity to hold the wheels
-                   // down means the same recoil hops the lighter bike off the ground
-                   // more, so the damper has to soak more to keep it planted.
-                   // (2.0 / ~0.33 read as "too bouncy / bike too light".) Barely
-                   // touches the spring SPEED — that's springK — so the snappy
-                   // expand/collapse is preserved. Lower = bouncier, higher = more
-                   // planted; the hard-LANDING bounce specifically is springCFade
-  springCFade: 12, // relative speed (m/s) where the suspension damper fades to
+  springK: 23,     // suspension stiffness. 42(stock)->26->20->23: softened twice for a
+                   // SOFTER/STRETCHIER/SLOWER suspension, then nudged back up "a drop less
+                   // soft" per the user. At 23: travel ~42/23 = 1.8x stock under the same
+                   // load, spring frequency ω=sqrt(K/wheelM) ~25% below stock (period
+                   // ~0.45->0.60 s) so it still takes more time to compress and spring
+                   // back, just a touch firmer/snappier than the 20. CAVEAT it ALSO sets
+                   // the drop-death line: the body has no collider, so a hard landing
+                   // compresses the spring until the rigid head reaches terrain = death,
+                   // and that bottom-out depth scales with 1/K — softer dies from lower
+                   // drops (mostly held by the raised springCFade below; firming back to
+                   // 23 actually buys a little fall-toughness back). Land flat to survive,
+                   // Elasto-style
+  springC: 3.3,    // suspension damping — THE bounce lever. Held at 3.3 across the springK
+                   // changes, so the DAMPING RATIO (springC/(2*sqrt(springK*wheelM)))
+                   // tracks the stiffness: ~0.66 at stock 42, up to 0.79 at the softest
+                   // 20, now ~0.73 at springK 23 — still under 1.0 (it RECOILS rather than
+                   // soaking dead) and high enough that the spring-back stays languid /
+                   // takes a while, which the user wanted. Lower = bouncier (snaps back
+                   // faster), higher = more planted / even slower spring-back; the
+                   // hard-LANDING bounce + fall-toughness specifically is springCFade
+  springCFade: 36, // relative speed (m/s) where the suspension damper fades to
                    // half, so a fast compression rides mostly on the spring (and
                    // bounces) instead of being soaked dead. The body has no terrain
                    // collider, so a big enough slam sinks the frame through until
                    // the head hits terrain = death; how far the frame bottoms out
-                   // sets that fatal drop height. With springC now lighter the frame
-                   // compresses a little more (dies a touch lower) — this is the
-                   // fall-toughness fine-tune: higher fade = damper bites deeper into
-                   // a slam = tougher falls. Re-tune by playtest with springC
-  maxStretch: 5.0,  // FAR safety backstop on suspension travel from the raw
-                    // anchor — the wheels can never escape past this, but it's
-                    // set way out so normal play never reaches it. The real
-                    // limiter on the spin-fling is now the progressive extension
-                    // spring (stretchSoft/stretchK below), which resists more and
-                    // more the further the wheel flings instead of hard-capping.
-                    // Raised 1.2->4.0 so that progressive spring, not this wall,
-                    // shapes the fling
+                   // sets that fatal drop height. RAISED 12->26->36 to offset the softer
+                   // springK: the soft spring bottoms out deeper on a slam, so the
+                   // damper has to bite harder/longer into the slam to keep the fatal
+                   // drop height up (probed: recovers flat-slam survival ~15.5->~16.0
+                   // m/s at springK 20; diminishing returns past here, so the soft setup
+                   // just dies a touch lower than stock). Higher = tougher falls but
+                   // moderate bumps damp a touch more too; re-tune by playtest
+  // (no maxStretch: there is deliberately NO hard cap on suspension travel — a wheel
+  // stretches exactly as far as the springs allow. The progressive extension spring
+  // below, force ∝ overshoot², is what halts a violent fling, by physics, not a wall.)
   stretchSoft: 1.8, // wheel distance from the frame CENTRE (m) where the
                     // progressive extension spring starts to bite. Set beyond the
                     // wheel's normal fling reach so ordinary riding and landings
                     // (the wheel sits closer to the centre under compression)
                     // never feel it — only a fast spin flings a wheel out this far
-  stretchK: 200,    // stiffness of the progressive extension spring (force grows
+  stretchK: 60,    // stiffness of the progressive extension spring (force grows
                     // with overshoot² past stretchSoft). Higher = wheels fling
                     // less far and snap back harder; lower = they stretch further.
                     // At 200 a wheel reaches ~2.4 from centre at 15 rad/s spin,
@@ -96,22 +106,55 @@ const PHYS = {
                     // (avel^2), so drop-death, landings and the air-spin ceiling are
                     // untouched. Cost: no outward sling to help wheels reach an outer
                     // wall riding a loop. The dramatic momentary wheel-stretch is
-                    // unaffected (that's momentum -> maxStretch, not this). NOTE: at 0,
+                    // unaffected (that's momentum vs the progressive spring, not this). NOTE: at 0,
                     // spinExt above is dead — if 0 sticks, remove the sling outright
                     // (spinExt, spinExtMax, and the `sling` factor in step)
 
-  engineT: 1.1,    // torque applied to the driven (rear) wheel
-  engineLow: 0.25, // extra low-end torque fraction: full extra at zero
-                   // wheel spin, gone by engineKnee. Steep-hill starts get
-                   // the grunt without raising cruise acceleration
+  engineT: 1.1,    // torque applied to the driven (rear) wheel. BACK to the gentle stock
+                   // 1.1 — the launch/low-end acceleration the user likes (1.9 felt "too
+                   // fast"). This sets the WHOLE accel curve's level, so it's deliberately
+                   // modest: the bike reaches its 60 mph cap in ~18 s, which is fine now
+                   // that the cap (maxSpin) removed the old 40 s asymptotic crawl. Don't
+                   // raise this for "quicker to top" — it quickens the LAUNCH too (the same
+                   // lever), which is exactly what the user didn't want. The "reach top
+                   // quicker" job is done instead by the cap + flattening the high-speed
+                   // taper (engineFade 0), which keeps accel near-constant to the top
+  engineLow: 0.25, // extra low-end torque fraction: full extra at zero wheel spin, gone
+                   // by engineKnee. Back to 0.25 (stock hill-start grunt) with engineT
   engineKnee: 12,  // wheel spin (rad/s, ~4.8 m/s) where the extra runs out
+  engineFade: 0,   // HIGH-END torque taper, ∝ (spin/maxSpin)^2. Set to 0 ("FLATTEN the
+                    // drop-off"): the user wanted the engine to keep pulling at full thrust
+                    // all the way up instead of tapering off near the top, so the bike holds
+                    // a near-constant acceleration to the 60 mph cap and reaches it sooner
+                    // rather than petering out. At 0 there's no engine-side taper at all —
+                    // the only easing into the cap is the natural slip as the wheel nears
+                    // maxSpin, which is gentle enough that it's not a dead wall. Raise it
+                    // for a softer, more "running out of breath" top (slower final approach)
   engineR: 4.5,    // reaction torque on the frame while the engine spins up — the
                    // WHEELIE-strength lever, independent of gravity/volt. Lowered
                    // 6.5->4.5: at uniform low gravity the front popped up faster than
                    // a volt could hold it down; a gentler reaction lets the volt
                    // counter the gas wheelie. Higher = stronger wheelie/stoppie
   wheelieRate: 0.5, // rad/s pitch-back rate the engine reaction saturates at
-  maxSpin: 55,     // rad/s cap on driven wheel spin
+  wheelieFadeSpin: 45, // wheel spin (rad/s, ~18 m/s) where the GAS wheelie up-pitch
+                   // fades to zero — the reaction lift scales by accelLeft =
+                   // max(0, 1 - |spin|/wheelieFadeSpin), full off the line and gone by
+                   // here. DELIBERATELY decoupled from maxSpin (it used to divide by
+                   // maxSpin): tying it to the cap meant raising maxSpin for top speed
+                   // also made the front-lift persist to a higher speed — the opposite
+                   // of wanted. As its own knob the wheelie plants out at its own
+                   // (lower) speed while the bike still pulls to a much higher top.
+                   // Lower = the front comes down sooner / wheelie only at low speed;
+                   // raise toward maxSpin to keep lifting the front further up the range
+  maxSpin: 67,     // rad/s HARD cap on driven wheel spin — and now it IS the top speed
+                   // setter: 67*wheelR = 26.8 m/s = 60 mph. Set back down (95->67) to put
+                   // the cap right at the wanted top, and the engine (engineT 1.9) is now
+                   // strong enough to drive the wheel up to it and HOLD it, so the bike
+                   // reaches a clear, definite 60 mph in ~12-13 s instead of asymptoting
+                   // toward some fuzzy far number over ~40 s. THIS is the top-speed dial
+                   // now: maxSpin = top_mph / 0.894 in rad/s (e.g. 50 mph -> 56, 70 -> 78).
+                   // engineFade softens the last bit of the approach so it's not a dead
+                   // wall. Also the reference for engineFade (spin/maxSpin)
   brakeRate: 60,   // how hard the brake grabs the WHEEL: the exponential rate
                    // (per second) it bleeds wheel spin. THIS is the real
                    // braking-force lever, not brakeGrip. While the tyre stays
@@ -163,27 +206,29 @@ const PHYS = {
   // bounded EMERGENTLY by air drag on the fast, flung-out wheels (and lower the
   // faster you're also falling, as fall speed stacks onto the wheels). A fresh
   // normal press pumps at once.
-  voltAcc: 14.5,    // torque of ONE normal volt pump (the punch). Sets normal-volt
+  voltAcc: 17.3,    // torque of ONE normal volt pump (the punch). Sets normal-volt
                     // rotation (fine control / balance) AND how easily you can pump
                     // off a ledge — keep it modest so a DANGLING body (gravity
                     // resisting) can't be pumped up, while a body whose CoM is still
                     // OVER the ledge (gravity not resisting) rotates back easily.
-                    // Eased down over the feel passes (17->21->16->14.5) to a softer
-                    // pump. Average torque voltAcc*voltBurstDur/voltCadence ~ 2.8
-  voltBurstDur: 0.152, // seconds each pump applies torque — the length of one punch.
-                    // Raised 0.125->0.152 in lockstep with voltCadence 0.66->0.8 to
-                    // hold the duty cycle (voltBurstDur/voltCadence) — and so the
-                    // AVERAGE torque (voltAcc*voltBurstDur/voltCadence) — constant: a
-                    // pump is a touch longer, the rhythm a touch slower, same total push
-  voltCadence: 0.8, // seconds between pump starts while held (~1.25 pumps/s) — fewer,
-                    // more distinct pumps (0.45->0.6->0.66->0.8). The GAP is where
-                    // gravity/damping act on a hang, so a longer gap makes a ledge
-                    // recovery more of a pump-and-time skill (voltBurstDur was raised
-                    // to match, so the average torque is unchanged)
-  alovoltAcc: 4,    // CONTINUOUS torque of the alovolt (both keys) — sustained, not
+                    // (17->21->16->14.5->16.1->17.3; the last bumps just re-match the
+                    // grounded lean after frameI rose 0.55->1.5 — together they tame
+                    // the air volt while keeping the ground feel, see frameI.)
+                    // Average torque voltAcc*voltBurstDur/voltCadence ~ 3.3
+  voltBurstDur: 0.114, // seconds each pump applies torque — the length of one punch.
+                    // Moved in lockstep with voltCadence (0.125@0.66 -> 0.152@0.8 ->
+                    // 0.114@0.6) to hold the duty cycle (voltBurstDur/voltCadence =
+                    // 0.19) — and so the AVERAGE torque (voltAcc*voltBurstDur/
+                    // voltCadence) — constant: change the rhythm, keep the total push
+  voltCadence: 0.6, // seconds between pump starts while held (~1.67 pumps/s) — faster,
+                    // tighter pumps (0.45->0.6->0.66->0.8->0.6). The GAP is where
+                    // gravity/damping act on a hang, so a shorter gap makes a ledge
+                    // recovery less of a wait (voltBurstDur was shortened to match, so
+                    // the average torque is unchanged)
+  alovoltAcc: 5,    // CONTINUOUS torque of the alovolt (both keys) — sustained, not
                     // pulsed, so it clearly out-spins the bursty normal volt while
                     // held. The cadence gates when it can ENGAGE, but the drive itself
-                    // is the same on ground and air. Eased 7->4 for a more controllable
+                    // is the same on ground and air. Eased 7->5 for a more controllable
                     // supervolt spin-up. The no-flat-ground-flip behaviour no longer
                     // depends on keeping this modest — it's now held by the spin-fling
                     // sling being OFF (spinExtMax=0): the wheels stay planted, so a
@@ -194,7 +239,11 @@ const PHYS = {
                     // torque punch and falls back in the gap, so the arm visibly
                     // punches per pump (render.js reads bike.voltReach). Cosmetic
 
-  mu: 1.1,         // tire friction coefficient
+  mu: 1.25,        // tire friction coefficient — raised 1.1->1.25 for a bit more
+                   // grip overall (holds slopes better, hooks up quicker). Engine
+                   // traction, the landing bite (gripBite is ×mu) and the braking
+                   // ceiling (brakeGrip is ×mu) all scale with this; glass rides on
+                   // muGlass instead, so glass crossings are unchanged
   muGlass: 0.06,   // tire friction on obsidian glass: the engine can barely
                    // push and the brakes barely bite, so glass is crossed on
                    // momentum alone (the parking clamp never engages on it)
@@ -205,38 +254,75 @@ const PHYS = {
                    // spun-up wheel HARD: instead of skating ~0.2s while a fast-
                    // spinning wheel syncs to the ground, the slip hooks it up fast
                    // — the weight slams it toward a halt. Glass & braking exempt
-  gripGasResist: 0.5, // fraction of the extra grip-bite the DRIVEN wheel keeps
+  gripGasResist: 0.75, // fraction of the extra grip-bite the DRIVEN wheel keeps
                    // while the THROTTLE is held (1 = full bite, 0 = no bite/base
                    // grip). The engine fights the grip's deceleration, so a
                    // powered wheel keeps spinning a bit longer (more wheelspin)
                    // before it hooks up, vs a freewheeling wheel that grips clean.
-                   // A subtle but noticeable on-power-vs-coasting landing difference
-  // Rolling resistance — the wheels' resistance to ROTATION. A rigid circular wheel
-  // on a rigid surface has NO true rolling resistance (real rolling drag comes from
-  // the contact patch deforming, which a point-contact circle doesn't have), so
-  // there is NO constant dry-friction term: the at-rest / low-speed feel emerges
-  // from contact friction alone (zero force while a wheel rolls clean). (A constant
-  // term used to live here and was the "sticky at rest" culprit — removed.) What's
-  // left is one gentle SPEED-proportional bleed, separate from tyre friction (mu)
-  // and braking grip (mu*brakeGrip / parkMu) so it never touches climb/brake feel:
-  rollResV: 0.15,  // SPEED-dependent coast-down (extra spin decel per rad/s of
-                   // spin): ~0 at rest, so it adds NO at-rest stickiness — it grows
-                   // with wheel speed, a gentle drag-like bleed that settles
-                   // cruising speed and lets a coast wind down. Below air drag's
-                   // range (dragV0) it's the only thing slowing a roll. Raise it for
-                   // a shorter coast, or drop to 0 to lean entirely on air drag up top
-  dragV0: 19,      // speed (m/s) below which there is no air drag at all:
+                   // Raised 0.5->0.75: at 0.5 a rear-wheel landing under gas at a
+                   // glancing angle barely bit (biteMax 1+(gripBite-1)*0.5 = 2.5) and
+                   // skated like ice — too dramatic. 0.75 (biteMax 3.25) keeps most of
+                   // the bite so it hooks up far sooner, while still leaving a clear
+                   // on-power-vs-coasting landing difference
+  // Rolling resistance — THROTTLE-GATED, and the on-gas and off-gas halves use DIFFERENT
+  // mechanisms because they need different things:
+  //  - ON the gas (rollResGas): a light SPIN bleed on the wheels. rollResGas*spin is ~0
+  //    at a standstill, so it leaves the launch/low-end acceleration identical to stock
+  //    and only settles the top speed (~21 m/s). The engine dominates here; this just
+  //    keeps the top from drifting up forever.
+  //  - OFF the gas (coastC/coastV): a direct VELOCITY brake on the whole grounded bike.
+  //    A spin bleed CANNOT stop the bike — the wheel's rotational inertia is tiny, so
+  //    bleeding spin barely decelerates the heavy frame, and cranking it just LOCKS the
+  //    wheels while the frame coasts on, disconnected (measured: bigger spin-bleed made
+  //    the 21 m/s coast stop LATER, not sooner). So the coast brake scales the frame +
+  //    wheel velocities directly: a firm speed-proportional bite (coastV) plus a constant
+  //    floor (coastC) that doesn't fade at low speed, so the bike rolls to a genuine STOP
+  //    instead of crawling forever. Separate from tyre friction (mu) / braking grip, so
+  //    climb and braking feel are untouched.
+  rollResGas: 0,   // ON-THROTTLE spin bleed (spin decel per rad/s of spin). Set to 0 as
+                   // part of flattening the drop-off — any on-gas speed resistance grows
+                   // with speed and would sap acceleration up top, the opposite of wanted.
+                   // The top is set purely by the maxSpin cap (= 60 mph) now. (~0 at low
+                   // spin anyway, so it never touched the launch.)
+  coastC: 0.7,  // OFF-THROTTLE constant brake (m/s^2) — the "actually comes to a STOP"
+                   // term. The speed brake (coastV) alone fades as the bike slows, so it
+                   // would crawl toward zero forever; this constant floor doesn't fade,
+                   // so it kills the final crawl and parks the bike in finite distance.
+                   // RAMPED IN ONLY BELOW coastStopV so it acts as a stopping assist near
+                   // zero, NOT a force at cruising speed — otherwise a constant decel this
+                   // size would hold the bike on any slope gentler than ~asin(coastC/g)
+                   // and you couldn't coast downhill. So at speed only coastV acts (a
+                   // hill still freewheels to a terminal); near a stop this fades in and
+                   // parks it. Raise for a firmer, shorter final stop
+  coastV: 0.2,  // OFF-THROTTLE speed brake (1/s): decel = coastV*speed. THE lever for how
+                   // quickly a coast slows — it does the bulk of the slow-down from cruising
+                   // speed (coastC only handles the last few m/s). Eased 0.35->0.2 so the
+                   // bike coasts longer / doesn't halt so abruptly off the gas (from 16 m/s:
+                   // ~7 s/40 m -> ~12 s/71 m, still a finite stop). On the FRAME, so it
+                   // actually decelerates the bike (not the old spin-bleed that just spun the
+                   // wheels down and never stopped it). Also sets the downhill coasting
+                   // terminal (gravity vs coastV*speed): higher = stops sooner on the flat
+                   // but coasts slower downhill; lower = longer flat coast / faster downhill
+  coastStopV: 3.5, // speed (m/s) below which the constant coast brake (coastC) ramps in
+                   // (linearly, full at rest). Above it, coasting is coastV-only so a
+                   // downhill still builds speed to its terminal; below it the bike is in
+                   // its final roll-up-to-a-stop and coastC parks it. Lower = the bike
+                   // freewheels closer to a standstill before the stop-assist grabs
+  dragV0: 28,      // speed (m/s) below which there is no air drag at all:
                    // the tuned maps top out ~17 m/s (Sriracha's spiral dive),
                    // so leaving the normal range drag-free keeps every map's
-                   // ballistics bit-identical. Drag only bites past this
+                   // ballistics bit-identical. Drag only bites past this. Set to 28, just
+                   // ABOVE the 60 mph (26.8 m/s) flat cap, so on the flat the maxSpin cap
+                   // (not drag) cleanly sets the top — drag stays out of the way there and
+                   // only catches a fast DESCENT. Still well above the maps' ~17 m/s
+                   // ceiling, so every map stays drag-free and bit-identical. Free-fall
+                   // terminal = dragV0 + sqrt(g/drag) ~ 39
   drag: 0.022,     // quadratic air drag (1/m) on the speed ABOVE dragV0: a
-                   // mass-independent decel of drag*(|v|-dragV0)^2 that sets
-                   // the top speed. Free-fall terminal is dragV0+sqrt(g/drag)
-                   // ~ 30 m/s, and it's the SAME on the gas or coasting, so a
-                   // long descent can't be out-run by idling. The engine tops
-                   // out at maxSpin*wheelR (~22) on the flat, so the gas is
-                   // always the faster choice up to there and never slower
-                   // past it (it just stops adding once drag has the lead).
+                   // mass-independent decel of drag*(|v|-dragV0)^2. Free-fall terminal
+                   // is dragV0+sqrt(g/drag) ~ 39 m/s, and it's the SAME on the gas or
+                   // coasting, so a long descent can't be out-run by idling. On the FLAT
+                   // the top is the maxSpin cap (60 mph), reached below dragV0, so drag
+                   // doesn't shape it — drag only catches a fast DESCENT past 28 m/s.
                    // This ALSO bounds the alovolt air-spin: drag on the fast
                    // flung-out wheels is what caps rotation, so lowering it raises
                    // that ceiling. Eased 0.03->0.022 for a higher ceiling and a bit
@@ -263,20 +349,36 @@ const PHYS = {
                        // cancels the rebound. Only damps separation (never adds
                        // a push), so wheels can still overlap almost completely
 
-  wheelSquish: 0.08,   // how far (m) the tire may DEFORM when it is PINCHED. A
-                       // wheel stuck in a narrow slot touches two near-opposing
-                       // walls at once; only then does its effective contact
-                       // radius shrink by up to this much (scaled by how head-on
-                       // the pinch is) for the POSITIONAL push-out, so the two
-                       // walls stop shoving it back and forth and its own
-                       // momentum can carry it through a gap a little under the
-                       // full 2*wheelR. A single-sided contact — all normal
-                       // riding and EVERY landing — has no opposing pair, so
-                       // squish is 0 there and the tire is rigid: grip, climbing,
-                       // bounce and the drop-death line are untouched. At 0.08
-                       // the effective width drops 0.80 -> ~0.64, so the marginal
-                       // gaps where one wheel squeaked through and the other
-                       // wedged now pass both. 0 = rigid tire (old behaviour)
+  wheelSquish: 0.16,   // how far (m) the tire's contact radius may COMPRESS when it
+                       // is PINCHED at low speed — the at-rest FLOOR of the squish. A
+                       // wheel caught between two near-opposing surfaces (a ceiling
+                       // pressing down onto the wheel riding the floor, or two walls)
+                       // deforms: the contact it is squeezed UP against goes soft —
+                       // it applies no push-out and (via jn) no friction until the
+                       // tire bottoms out reC=wheelR-squish past it — so the wheel's
+                       // throttle + momentum carry it through a gap tighter than the
+                       // rigid 2*wheelR. Only the squeezed-against side softens; the
+                       // SUPPORTING floor keeps full radius/grip/drive (see sqScale in
+                       // wheelContacts), and a single-sided contact (all normal riding,
+                       // EVERY landing) has no opposing pair so squish is 0 — grip,
+                       // climbing, bounce and the drop-death line are untouched. The
+                       // tightest floor-to-ceiling gap a wheel rides through is roughly
+                       // 2*wheelR - squish. 0.08->0.10->0.12 over the feel passes
+  wheelSquishMax: 0.32,// the squish CEILING at full momentum. The compression ramps
+                       // from wheelSquish (at rest) up to this as the biker's FRAME
+                       // speed climbs to wheelSquishV, then saturates — so a bike
+                       // carrying momentum squeezes a tighter gap than a crawling one,
+                       // but only up to here ("more momentum = more squeeze, to a
+                       // limit"). At 0.28 a wheel at speed rides a floor-to-ceiling gap
+                       // down to ~0.52 m (vs ~0.68 at the at-rest floor, ~0.80 rigid).
+                       // Must be >= wheelSquish; set EQUAL to disable the momentum
+                       // scaling (constant squish), BOTH 0 for a rigid tire. Keep well
+                       // below wheelR (0.4) so the tire keeps substance when pinched
+  wheelSquishV: 12,    // FRAME speed (m/s) at which the pinch squish reaches
+                       // wheelSquishMax. Lower = the full squeeze is available at a
+                       // gentler pace; higher = you must really be moving to get it.
+                       // The momentum measure is the frame speed (this.vel), so both
+                       // wheels share the one value
 
   // (Crash-trip removed: Elasto doesn't throw the rider over the bars on a hard
   // wheel impact — a hard landing either plants or, if the drop is high enough,
@@ -534,8 +636,8 @@ class Bike {
     }
 
     // fast spins sling the wheels outward: the spring's rest anchor extends
-    // radially with the square of the spin rate, like elastic bars. The
-    // maxStretch clamp below still bounds total travel from the raw anchor
+    // radially with the square of the spin rate, like elastic bars. Total travel
+    // is bounded only by the springs now (no hard clamp — see end of step)
     const sling = 1 + Math.min(P.spinExtMax, P.spinExt * this.avel * this.avel) /
       Math.hypot(P.anchorX, P.anchorY);
     for (let i = 0; i < 2; i++) {
@@ -603,8 +705,16 @@ class Bike {
       if (i === this.rearIndex && input.throttle &&
           w.spin * this.facing < P.maxSpin) {
         const before = w.spin;
-        const eT = P.engineT * (1 + P.engineLow *
-          Math.max(0, 1 - Math.abs(w.spin) / P.engineKnee));
+        // engine torque shaped by wheel spin: a low-end grunt boost (engineLow,
+        // gone by engineKnee) for hill starts, MINUS a high-end taper (engineFade,
+        // ∝ (spin/maxSpin)^2) so the pull fades as the wheel nears the cap. The
+        // taper is what makes acceleration fall off the faster you go — a real
+        // engine running out of breath in top gear — so the bike eases up to its
+        // top speed instead of pulling flat-out into the maxSpin wall.
+        const spinFrac = Math.abs(w.spin) / P.maxSpin;
+        const eT = P.engineT *
+          (1 + P.engineLow * Math.max(0, 1 - Math.abs(w.spin) / P.engineKnee)) *
+          (1 - P.engineFade * Math.min(1, spinFrac * spinFrac));
         w.spin += (eT / P.wheelI) * dt * this.facing;
         // cap the engine's own wind-up without clawing back the extra
         if (w.spin * this.facing > P.maxSpin) w.spin = P.maxSpin * this.facing;
@@ -613,17 +723,18 @@ class Bike {
         // air-weakening gate is gone). Two fades stack:
         //  - `fade` on pitch-back rate, so a held wheelie climbs slowly
         //    instead of snapping over — until gravity takes it past balance.
-        //  - `accelLeft` on remaining engine headroom (1 at a standstill,
-        //    0 as the wheel nears maxSpin): the front lift tracks how much
-        //    acceleration the engine can still deliver, so the wheelie is
-        //    strong off the line and levels out as you reach speed, with none
-        //    left at top speed — Elasto Mania style. This scales only the
-        //    REACTION (the lift), never eT (forward thrust), so acceleration,
-        //    hill-climb and the tuned maps are all unchanged.
+        //  - `accelLeft` on remaining wheelie headroom (1 at a standstill, 0 once
+        //    the wheel reaches wheelieFadeSpin): the front lift tracks how much
+        //    grunt is left to pop it, so the wheelie is strong off the line and
+        //    levels out as you gain speed, with none left past wheelieFadeSpin —
+        //    Elasto Mania style. Faded against wheelieFadeSpin (NOT maxSpin) so the
+        //    front plants out at its own, lower speed independent of how high the
+        //    top-speed cap is set. This scales only the REACTION (the lift), never
+        //    eT (forward thrust), so acceleration and hill-climb are unchanged.
         if (w.spin !== before) {
           const back = this.avel * -this.facing; // current pitch-back rate
           const fade = Math.min(1, Math.max(0, 1 - back / P.wheelieRate));
-          const accelLeft = Math.max(0, 1 - Math.abs(w.spin) / P.maxSpin);
+          const accelLeft = Math.max(0, 1 - Math.abs(w.spin) / P.wheelieFadeSpin);
           torque -= P.engineR * this.facing * fade * accelLeft;
         }
       }
@@ -685,24 +796,13 @@ class Bike {
       w.rot += w.spin * dt;
     }
 
-    // hard limit on suspension travel so the wheels can never escape
-    const c2 = Math.cos(this.angle), s2 = Math.sin(this.angle);
-    for (let i = 0; i < 2; i++) {
-      const w = this.wheels[i];
-      const lx = (i === 0 ? -1 : 1) * P.anchorX, ly = P.anchorY;
-      const ax = this.pos.x + lx * c2 - ly * s2;
-      const ay = this.pos.y + lx * s2 + ly * c2;
-      const dx = w.pos.x - ax, dy = w.pos.y - ay;
-      const d = Math.hypot(dx, dy);
-      if (d > P.maxStretch) {
-        const ux = dx / d, uy = dy / d;
-        w.pos.x = ax + ux * P.maxStretch;
-        w.pos.y = ay + uy * P.maxStretch;
-        const rvx = w.vel.x - this.vel.x, rvy = w.vel.y - this.vel.y;
-        const vr = rvx * ux + rvy * uy;
-        if (vr > 0) { w.vel.x -= ux * vr; w.vel.y -= uy * vr; }
-      }
-    }
+    // NO hard cap on suspension travel — a wheel stretches exactly as far as the
+    // physics carries it: the linear suspension spring (springK) plus the progressive
+    // extension spring (stretchSoft/stretchK), whose force rises with overshoot² and
+    // halts even a violent fling by storing its energy, are the only things reining the
+    // wheels in. (There used to be a `maxStretch` positional clamp here that teleported
+    // a wheel back + killed its outward velocity past a fixed distance; it was a feel
+    // wall that capped the stretch behind the springs, so it's gone.)
 
     // Soft wheel-meet. The two wheels have no collider against each other, so
     // on a high-speed smash they pass right through — but each is tethered to
@@ -744,14 +844,31 @@ class Bike {
     // and no special-casing. (The frame is still lethal against nut mounds; that
     // is a separate hazard, handled below.)
 
-    // rolling resistance: grounded wheels slowly shed spin — speed-proportional
-    // only (no constant dry-friction term; a rigid wheel has no true rolling
-    // resistance), which bleeds bike speed through tire friction so a coast winds down
-    for (const w of this.wheels) {
-      if (!w.onGround) continue;
-      const dec = P.rollResV * Math.abs(w.spin) * dt;
-      if (Math.abs(w.spin) <= dec) w.spin = 0;
-      else w.spin -= Math.sign(w.spin) * dec;
+    // rolling resistance — THROTTLE-SPLIT (see the consts for the full why):
+    //  - ON the gas: a light spin bleed (rollResGas). ~0 at low spin so the launch is
+    //    untouched; it only settles the top speed. Clamped to spin 0 so it can't flip sign.
+    //  - OFF the gas: a direct VELOCITY brake on the grounded bike (coastC + coastV*speed),
+    //    scaling the frame AND wheels together so they decelerate as one rigid body (and
+    //    the wheels don't keep spinning). This is what actually brings the coast to a STOP
+    //    — a spin bleed can't (the wheel's inertia is too small to slow the frame).
+    if (input.throttle) {
+      for (const w of this.wheels) {
+        if (!w.onGround) continue;
+        const dec = P.rollResGas * Math.abs(w.spin) * dt;
+        if (Math.abs(w.spin) <= dec) w.spin = 0;
+        else w.spin -= Math.sign(w.spin) * dec;
+      }
+    } else if (this.wheels[0].onGround || this.wheels[1].onGround) {
+      const sp = Math.hypot(this.vel.x, this.vel.y);
+      if (sp > 1e-6) {
+        // constant brake ramps in only below coastStopV (a near-stop assist), so a
+        // downhill still freewheels at speed instead of being held by it
+        const cC = P.coastC * Math.max(0, 1 - sp / P.coastStopV);
+        const drop = (cC + P.coastV * sp) * dt;         // m/s shed this step
+        const f = drop >= sp ? 0 : 1 - drop / sp;       // clamp to a full stop
+        this.vel.x *= f; this.vel.y *= f;
+        for (const w of this.wheels) { w.vel.x *= f; w.vel.y *= f; w.spin *= f; }
+      }
     }
 
     // the head is the only fatal terrain collider
@@ -802,23 +919,67 @@ class Bike {
     // stays 0 and the tire resolves exactly as before — grip, climbing, bounce
     // and the drop-death line are all untouched. Convex corners (hill apex,
     // ledge edge) have DIVERGING normals (opp < 0), so they don't trigger it.
-    let squish = 0;
-    if (P.wheelSquish > 0) {
+    let squish = 0, pinchAmt = 0, pinchAxX = 0, pinchAxY = 0;
+    if (P.wheelSquishMax > 0) {
+      // the biker's MOMENTUM lets a pinched tyre deform further: the squish
+      // ceiling ramps from wheelSquish (at rest) up to wheelSquishMax as the
+      // frame speed climbs to wheelSquishV, then saturates — so a bike carrying
+      // speed squeezes a tighter slot than a crawling one, to a limit. Frame
+      // velocity is the momentum measure, so both wheels share the one value.
+      const mom = Math.hypot(this.vel.x, this.vel.y);
+      const give = P.wheelSquish + (P.wheelSquishMax - P.wheelSquish) *
+        Math.min(1, mom / P.wheelSquishV);
       const ns = [];
       for (const seg of segs) {
         const cp = closestOnSeg(w.pos.x, w.pos.y, seg);
         const nx = w.pos.x - cp.x, ny = w.pos.y - cp.y;
         const d = Math.hypot(nx, ny);
-        if (d >= P.wheelR || d === 0) continue;
-        ns.push([nx / d, ny / d]);
+        // gather pinch candidates out to wheelR + give, NOT the strict wheelR the
+        // rigid push-out uses. A wheel wedged in a slot only ~2*wheelR wide is held
+        // by the SUPPORTING wall at d ~= wheelR, which parks the OPPOSING wall at
+        // d ~= wheelR as well — a hair past a strict `d < wheelR` test, so the pair
+        // never registered and squish stayed 0 no matter how the consts were tuned.
+        // (Only a slot whose far wall actively descends PAST wheelR onto the tire —
+        // e.g. a thin downward sliver — ever tripped the strict test; a constant-
+        // width ~2*wheelR slot, the common case in a tight tunnel, never did.) The
+        // tire can compress by up to `give`, so an opposing wall within wheelR + give
+        // is already deforming it: detect the pinch out to that envelope and the
+        // squish engages as the wheel meets the throat instead of jamming rigidly at
+        // the 2*wheelR boundary. This widens DETECTION only — the resolution loop
+        // below still uses strict wheelR, so only genuinely penetrating contacts ever
+        // push out, and a lone contact (no opposing pair) still yields squish 0.
+        if (d >= P.wheelR + give || d === 0) continue;
+        ns.push([nx / d, ny / d, d]);
       }
       for (let i = 0; i < ns.length; i++) {
         for (let j = i + 1; j < ns.length; j++) {
           const opp = -(ns[i][0] * ns[j][0] + ns[i][1] * ns[j][1]);
-          if (opp > 0) squish = Math.max(squish, P.wheelSquish * opp);
+          if (opp <= 0) continue;
+          squish = Math.max(squish, give * opp);
+          // VISUAL squash (cosmetic, inert): the REAL geometric squeeze — how far
+          // inside a rigid 2*wheelR tyre the two opposing walls actually sit — so
+          // the drawn deform tracks the slot width (proportional to the press),
+          // not the momentum-driven `give` ceiling. The compression axis comes off
+          // the pair's anti-parallel normals, so it stays put even when BOTH walls
+          // bottom out and push (where a summed contact normal cancels and spins).
+          const amt = (2 * P.wheelR - (ns[i][2] + ns[j][2])) * opp;
+          if (amt > pinchAmt) {
+            pinchAmt = amt;
+            const axX = ns[i][0] - ns[j][0], axY = ns[i][1] - ns[j][1];
+            const al = Math.hypot(axX, axY) || 1;
+            pinchAxX = axX / al; pinchAxY = axY / al;
+          }
         }
       }
     }
+
+    // cosmetic tyre-squash inputs (inert to the sim — read by updateWheelSquash
+    // in game.js + drawWheel, never written back here). Accumulate a push-out-
+    // weighted average contact normal so the renderer knows WHICH way the tyre
+    // is pressed: weighting by the rigid push-out depth `pen` lets the SUPPORTING
+    // wall dominate while a pinch's soft opposing wall (which earns no push-out)
+    // barely tugs it, so the squash axis stays true even wedged in a slot.
+    let cnx = 0, cny = 0, cnw = 0;
 
     for (const seg of segs) {
       const cp = closestOnSeg(w.pos.x, w.pos.y, seg);
@@ -830,21 +991,40 @@ class Bike {
 
       // positional correction — push out to the contact radius, reduced by any
       // squish so a pinched tire sits compressed in the slot instead of being
-      // shoved into the far wall. With squish 0 (single contact, or the feature
-      // off) pen == wheelR - d and this is bit-identical to a rigid tire.
-      const pen = (P.wheelR - squish) - d;
+      // shoved into the far wall. The squish only softens the contact the tire is
+      // squeezed UP against — a ceiling or a wall — never the SUPPORTING ground:
+      // gAlign is +1 for a ceiling (normal points along gravity), 0 for a vertical
+      // wall, -1 for the floor (normal opposes gravity). sqScale ramps the squish
+      // in from 0 at the straight-down support to full for anything horizontal or
+      // overhead, so a pinched wheel keeps its full radius (and full grip/drive)
+      // on the floor while its TOP deforms into the obstruction — the throttle and
+      // its own momentum then carry it through the gap. With squish 0 (single
+      // contact, or the feature off) reC == wheelR and this is a rigid tire.
+      const gAlign = nx * this.gravDir.x + ny * this.gravDir.y;
+      const sqScale = Math.min(1, Math.max(0, gAlign + 1));
+      const reC = P.wheelR - squish * sqScale;
+      const pen = reC - d;
       if (pen > 0) {
         w.pos.x += nx * pen;
         w.pos.y += ny * pen;
+        cnx += nx * pen; cny += ny * pen; cnw += pen; // tyre-squash axis (cosmetic)
       }
 
       // normal impulse: tire rebound ramps in with impact speed instead
       // of switching on — a real slam keeps the whole elastic-bar kick,
       // while mild hits (and the once-rebounded remnants of a slam) land
-      // dead, so touchdowns plant instead of chattering
+      // dead, so touchdowns plant instead of chattering.
+      //   Gated on `pen > 0` (the per-contact COMPRESSED radius reC): the soft
+      // outer `squish` of a tire squeezed against a ceiling/wall it hasn't bottomed
+      // out against yet (reC < d < wheelR) applies NO normal force and — since
+      // friction is clamped by jn below — NO friction either, so the tire just
+      // deforms and the wheel's momentum/throttle carry it through the gap instead
+      // of the wall gripping it to a halt. The floor keeps reC == wheelR (see
+      // sqScale), so support and drive are untouched; without squish (single
+      // contact / feature off) every contact is rigid (reC == wheelR).
       const vn = w.vel.x * nx + w.vel.y * ny;
       let jn = 0;
-      if (vn < 0) {
+      if (vn < 0 && pen > 0) {
         const ramp = (-vn - P.wheelBounceLo) / (P.wheelBounceHi - P.wheelBounceLo);
         const e = P.wheelBounce * Math.min(1, Math.max(0, ramp));
         jn = -(1 + e) * vn * P.wheelM;
@@ -924,5 +1104,15 @@ class Bike {
         this.avel += tip * P.brakeSkid * fade / P.frameI;
       }
     }
+
+    // publish this step's cosmetic squash inputs: the unit contact normal (the
+    // direction the tyre is supported FROM, so the renderer flattens toward its
+    // opposite) and the pinch compression. Both inert — the sim never reads them.
+    if (cnw > 1e-9) {
+      const il = 1 / Math.hypot(cnx, cny);
+      w.contactNX = cnx * il; w.contactNY = cny * il;
+    }
+    w.pinchAmt = pinchAmt > 0 ? pinchAmt : 0;   // geometric pinch squeeze (m), cosmetic
+    w.pinchAxisX = pinchAxX; w.pinchAxisY = pinchAxY;
   }
 }

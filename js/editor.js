@@ -112,6 +112,16 @@ const EDITOR = (() => {
   // every draw. mouseDown/cursor read them; a click inside a popup is swallowed.
   let popups = [];
   let autosaveAt = 0;
+  // the Load folder browser (see "Load overlay" below). `mapDir` is the chosen
+  // maps folder handle, kept across opens so we only prompt once; `browse` is
+  // the modal view state while the overlay is up (null when closed); its hit
+  // rects and a generation counter (which drops stale async folder scans) ride
+  // alongside.
+  let mapDir = null;
+  let browse = null;
+  let browseRects = [];
+  let browseGen = 0;
+  let browseDrag = null;   // { grab } while dragging the file-list scrollbar thumb
 
   // ---------- map data ----------
 
@@ -242,7 +252,13 @@ const EDITOR = (() => {
     const d = JSON.parse(text);
     if (d.format !== FORMAT) throw new Error('not a Burger Mania map');
     // version 1 maps store glass as x-spans; parseGlass migrates them
-    if (d.version !== 1 && d.version !== VERSION) throw new Error('unsupported map version ' + d.version);
+    if (d.version !== 1 && d.version !== VERSION) {
+      // flag it the way REPLAY.parse does, so the Load folder browser can count
+      // these as a known "different version" skip rather than silent corruption
+      const e = new Error('unsupported map version ' + d.version);
+      e.versionMismatch = true;
+      throw e;
+    }
     if (!Array.isArray(d.polygons) || !d.polygons.length ||
         !d.polygons.every(p => Array.isArray(p) && p.length >= 3 && p.every(isPt))) {
       throw new Error('map polygons are damaged');
@@ -848,8 +864,11 @@ const EDITOR = (() => {
     }
   }
 
-  // New and Load throw away the working map, so when there are unsaved edits
-  // they raise a discard-changes dialog first; a clean map runs straight through
+  // New throws away the working map outright, so with unsaved edits it raises a
+  // discard-changes dialog first; a clean map runs straight through. (Load defers
+  // its own discard prompt until a specific map has actually been chosen - see
+  // loadFromBrowser / loadFile - because its browser/picker can still be
+  // cancelled, and warning before then would be premature.)
   function confirmIfDirty(verb, fn) {
     if (dirty) confirmPrompt = { verb, run: fn };
     else fn();
@@ -898,22 +917,188 @@ const EDITOR = (() => {
     busy = false;
   }
 
+  // swap the working map for a freshly parsed one — the clean break New/Load
+  // share: drop the selection, wipe the undo history (so Undo can't drag the
+  // old map back), recommit, mark it saved, and frame the whole thing
+  function adoptMap(loaded) {
+    map = loaded;
+    sel = null; hov = null; draft = null;
+    resetHistory();
+    commit(true);
+    dirty = false;
+    fitView();
+    note('Loaded ' + map.name + (THEMES[map.theme] ? '' : ' - unknown theme "' + map.theme + '" shows as meadow'));
+  }
+
   async function loadFile() {
     if (busy) return;
     busy = true;
     try {
       const loaded = parse(await REPLAY.openFile(PICKER));
-      map = loaded;
-      sel = null; hov = null; draft = null;
-      resetHistory();
-      commit(true);
-      dirty = false;
-      fitView();
-      note('Loaded ' + map.name + (THEMES[map.theme] ? '' : ' - unknown theme "' + map.theme + '" shows as meadow'));
+      // the native picker is itself cancellable, so only warn about unsaved
+      // edits once a real file has come back (mirrors the folder browser)
+      if (dirty) confirmPrompt = { verb: 'load this map', run: () => adoptMap(loaded) };
+      else adoptMap(loaded);
     } catch (e) {
       if (!(e && e.name === 'AbortError')) note('Load failed: ' + (e.message || e));
     }
     busy = false;
+  }
+
+  // ---------- Load overlay (folder browser) ----------
+  // Load raises a modal panel instead of a bare file dialog: pick a maps folder
+  // once (its handle is remembered in IndexedDB under 'mapDir', kept apart from
+  // the replay folder), list every .bmm map in it, preview the highlighted one
+  // through the real renderer, and click (or Enter) to load it. Mirrors the
+  // game's Replays screen and reuses REPLAY's directory plumbing. Browsers
+  // without the File System Access API can't browse a folder, so there Load
+  // falls back to the single-file open dialog (loadFile).
+  const MAP_DIR = { id: 'burger-mania-maps', key: 'mapDir' };
+
+  function openLoadBrowser() {
+    if (!REPLAY.fsSupported) { loadFile(); return; }
+    closeMenu();
+    naming = false;
+    browse = { mode: 'loading', all: [], files: [], sel: 0, scroll: 0, perPage: 1, note: '', query: '' };
+    refreshBrowser();
+  }
+
+  // (re)scan the chosen folder into browse.files. Async (folder + permission
+  // probes), so a generation counter drops a scan superseded by a newer one
+  // — e.g. the user changed folders before the first finished.
+  async function refreshBrowser() {
+    const gen = ++browseGen;
+    const stale = () => gen !== browseGen || !browse;
+    browse.mode = 'loading';
+    browse.note = '';
+    if (!mapDir) {
+      mapDir = await REPLAY.restoreDir(MAP_DIR.key);
+      if (stale()) return;
+    }
+    if (!mapDir) {
+      browse.mode = 'choose';
+      browse.note = 'Choose the folder your ' + EXT + ' maps live in.';
+      return;
+    }
+    const readable = await REPLAY.dirPermission(mapDir, false);
+    if (stale()) return;
+    if (!readable) {
+      browse.mode = 'reopen';
+      browse.note = 'The browser needs a fresh OK to read "' + mapDir.name + '".';
+      return;
+    }
+    let files, outdated;
+    try {
+      ({ files, outdated } = await REPLAY.listDir(mapDir, { ext: EXT, parse }));
+    } catch (e) {
+      if (stale()) return;
+      browse.mode = 'error';
+      browse.note = 'Could not read "' + mapDir.name + '": ' + (e.message || e);
+      return;
+    }
+    if (stale()) return;
+    browse.all = files;          // the full scan; browse.files is filtered from it
+    filterBrowser();             // apply any standing search query
+    browse.mode = 'list';
+    browse.note = files.length
+      ? (staleMapNote(outdated) ||
+         files.length + (files.length > 1 ? ' maps' : ' map') + ' in "' + mapDir.name + '"')
+      : (staleMapNote(outdated) || 'No ' + EXT + ' maps in "' + mapDir.name + '" yet.');
+  }
+
+  // maps from a different build can't be opened here (their version is one this
+  // editor doesn't know); like the replay browser, hide them but say how many,
+  // so the gap isn't a mystery. '' when none were skipped.
+  function staleMapNote(n) {
+    if (!n) return '';
+    return n + (n > 1 ? ' maps are' : ' map is') + ' from a different version and were skipped.';
+  }
+
+  // re-derive the visible list (browse.files) from the full scan (browse.all)
+  // through the current search query, matching the map's display name OR its
+  // filename, case-insensitively. The highlight and scroll snap back to the top
+  // so the selection always lands on a visible row.
+  function filterBrowser() {
+    if (!browse) return;
+    const q = (browse.query || '').trim().toLowerCase();
+    const all = browse.all || [];
+    browse.files = q
+      ? all.filter(f => (((f.data && f.data.name) || '') + ' ' + f.name).toLowerCase().includes(q))
+      : all.slice();
+    browse.sel = 0;
+    browse.scroll = 0;
+  }
+
+  async function chooseMapFolder() {
+    try {
+      mapDir = await REPLAY.pickDir(MAP_DIR);
+    } catch (e) {
+      if (browse && !(e && e.name === 'AbortError')) browse.note = 'Folder dialog failed: ' + (e.message || e);
+      return;
+    }
+    if (browse) refreshBrowser();
+  }
+
+  async function reopenMapFolder() {
+    if (!mapDir) return;
+    if (await REPLAY.dirPermission(mapDir, true)) { if (browse) refreshBrowser(); }
+    else if (browse) browse.note = 'Permission denied - try a different folder.';
+  }
+
+  function closeBrowser() {
+    browse = null;
+    browseDrag = null;
+    browseGen++;          // abandon any in-flight scan
+    browseRects = [];
+  }
+
+  // move the highlight (which also drives the preview), keeping it on-screen
+  function browseMove(d) {
+    if (!browse || browse.mode !== 'list' || !browse.files.length) return;
+    browse.sel = clamp(browse.sel + d, 0, browse.files.length - 1);
+    if (browse.sel < browse.scroll) browse.scroll = browse.sel;
+    else if (browse.sel >= browse.scroll + browse.perPage) browse.scroll = browse.sel - browse.perPage + 1;
+  }
+
+  // load the highlighted (or given) map. The file's parsed data is shared with
+  // the preview list, so deep-copy it — editing the working map must not mutate
+  // the cached preview (and re-opening Load must still show the original).
+  // Unsaved edits only raise the discard-changes dialog now (after a map was
+  // actually picked), drawn over the still-open browser: confirm loads and
+  // closes it, cancel returns to the browser to pick again or back out.
+  function loadFromBrowser(i) {
+    if (!browse || browse.mode !== 'list') return;
+    const f = browse.files[i == null ? browse.sel : i];
+    if (!f) return;
+    const load = () => { adoptMap(JSON.parse(JSON.stringify(f.data))); closeBrowser(); };
+    if (dirty) confirmPrompt = { verb: 'load this map', run: load };
+    else load();
+  }
+
+  // is the screen point on the file list's scrollbar? (its geometry, browse.bar,
+  // is recomputed every draw by drawBrowseBody, and null when the list fits)
+  function overBrowseBar(x, y) {
+    const b = browse && browse.bar;
+    return !!b && hitRect({ x: b.x, y: b.top, w: b.w, h: b.trackH }, x, y);
+  }
+
+  // grab the scrollbar: dragging the thumb scrolls; clicking the track jumps the
+  // thumb's centre to the pointer (then keeps dragging from there)
+  function beginBarDrag(py) {
+    const b = browse.bar;
+    const onThumb = py >= b.thumbY && py <= b.thumbY + b.thumbH;
+    const grab = onThumb ? py - b.thumbY : b.thumbH / 2;
+    browseDrag = { grab };
+    if (!onThumb) scrollToBar(py);   // a track click jumps straight to it
+  }
+
+  // map a pointer y to a scroll position through the live scrollbar geometry
+  function scrollToBar(py) {
+    const b = browse && browse.bar;
+    if (!b || b.maxScroll <= 0 || !browseDrag) return;
+    const span = b.trackH - b.thumbH;
+    const t = span > 0 ? clamp((py - b.top - browseDrag.grab) / span, 0, 1) : 0;
+    browse.scroll = Math.round(t * b.maxScroll);
   }
 
   // ---------- hit testing ----------
@@ -1071,6 +1256,22 @@ const EDITOR = (() => {
       }
       return;
     }
+    // the Load folder browser is modal too: the scrollbar grabs, a file row
+    // loads that map, a footer button acts, everything else is swallowed
+    if (browse) {
+      if (overBrowseBar(x, y)) { hooks.blip(); beginBarDrag(y); return; }
+      for (const b of browseRects) {
+        if (hitRect(b, x, y)) {
+          hooks.blip();
+          if (b.id === 'browseRow') loadFromBrowser(b.idx);
+          else if (b.id === 'browseSearchClear') { browse.query = ''; filterBrowser(); }
+          else if (b.id === 'browseSearch') { /* always focused: the click just swallows */ }
+          else action(b.id);
+          return;
+        }
+      }
+      return;
+    }
     if (helpOpen) { helpOpen = false; return; }
     for (const b of uiRects) {
       if (hitRect(b, x, y)) {
@@ -1138,6 +1339,15 @@ const EDITOR = (() => {
 
   function mouseMove(x, y, shift) {
     mx = x; my = y;
+    // over the Load browser: a held scrollbar drag flicks the list; otherwise
+    // hovering a row highlights it (and so previews it)
+    if (browse) {
+      if (browseDrag) { scrollToBar(y); return; }
+      for (const b of browseRects) {
+        if (b.id === 'browseRow' && hitRect(b, x, y)) { browse.sel = b.idx; break; }
+      }
+      return;
+    }
     const w = s2w(x, y);
     if (drag) {
       if (drag.kind === 'pan') {
@@ -1230,6 +1440,7 @@ const EDITOR = (() => {
 
   function mouseUp(x, y) {
     if (x != null) { mx = x; my = y; }
+    browseDrag = null;   // release a scrollbar drag (browse owns no other drag)
     if (drag && drag.kind === 'paint' && drag.moved) {
       commit(true);
       note(glassMode === 'nocollide'
@@ -1258,6 +1469,14 @@ const EDITOR = (() => {
   }
 
   function wheel(e) {
+    // the Load browser owns the wheel while it's up: scroll the file list
+    if (browse) {
+      if (browse.mode === 'list') {
+        const max = Math.max(0, browse.files.length - browse.perPage);
+        browse.scroll = clamp(browse.scroll + (e.deltaY > 0 ? 1 : -1), 0, max);
+      }
+      return;
+    }
     zoomAt(e.clientX, e.clientY, Math.pow(1.0015, -e.deltaY));
   }
 
@@ -1267,6 +1486,21 @@ const EDITOR = (() => {
     if (confirmPrompt) {
       if (k === 'Enter' || k === 'y' || k === 'Y') runConfirm();
       else if (k === 'Escape' || k === 'n' || k === 'N') cancelConfirm();
+      return;
+    }
+    // the Load browser is modal too: arrows walk the list, Enter loads, and the
+    // search box is always focused while maps are listed — any other printable
+    // key types into it (filtering live). Esc clears a typed query first, then
+    // (when empty) shuts the browser.
+    if (browse) {
+      if (k === 'Escape') { if (browse.query) { browse.query = ''; filterBrowser(); } else closeBrowser(); }
+      else if (k === 'ArrowDown') browseMove(1);
+      else if (k === 'ArrowUp') browseMove(-1);
+      else if (k === 'Enter') loadFromBrowser();
+      else if (browse.mode === 'list' && browse.all.length) {
+        if (k === 'Backspace') { browse.query = browse.query.slice(0, -1); filterBrowser(); }
+        else if (k.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) { browse.query += k; filterBrowser(); }
+      }
       return;
     }
     if (naming) {
@@ -1281,7 +1515,7 @@ const EDITOR = (() => {
       if (lk === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); }
       else if (lk === 'y') { e.preventDefault(); redo(); }
       else if (lk === 's') { e.preventDefault(); saveFile(); }
-      else if (lk === 'o') { e.preventDefault(); confirmIfDirty('load another map', loadFile); }
+      else if (lk === 'o') { e.preventDefault(); openLoadBrowser(); }
       else if (k === 'Enter') hooks.test();
       return;
     }
@@ -1350,16 +1584,28 @@ const EDITOR = (() => {
       case 'fit': fitView(); break;
       case 'help': helpOpen = !helpOpen; break;
       case 'new': confirmIfDirty('start a new map', newMap); break;
-      case 'load': confirmIfDirty('load another map', loadFile); break;
+      case 'load': openLoadBrowser(); break;   // the discard prompt waits for a chosen map
       case 'save': saveFile(); break;
       case 'test': hooks.test(); break;
       case 'exit': hooks.exit(); break;
+      // the Load browser's footer buttons
+      case 'browseChoose': chooseMapFolder(); break;
+      case 'browseReopen': reopenMapFolder(); break;
+      case 'browseCancel': closeBrowser(); break;
     }
   }
 
   function cursor() {
     if (confirmPrompt) {
       for (const b of confirmRects) if (hitRect(b, mx, my)) return 'pointer';
+      return 'default';
+    }
+    if (browse) {
+      if (browseDrag) return 'grabbing';
+      if (overBrowseBar(mx, my)) return 'grab';
+      for (const b of browseRects) {
+        if (hitRect(b, mx, my)) return b.id === 'browseSearch' ? 'text' : 'pointer';
+      }
       return 'default';
     }
     if (drag && (drag.kind === 'pan' || drag.kind === 'rotate')) return 'grabbing';
@@ -1394,7 +1640,7 @@ const EDITOR = (() => {
       note(fresh ? 'Welcome! H shows the controls' : 'Picked up where you left off - H shows the controls');
     }
     sel = null; hov = null; drag = null; draft = null;
-    naming = false; confirmPrompt = null;
+    naming = false; confirmPrompt = null; browse = null;
   }
 
   // ---------- drawing ----------
@@ -1447,7 +1693,7 @@ const EDITOR = (() => {
     // popups dock under the toolbar; rebuilt every frame so their hitboxes never
     // go stale when the tool, the open dropdown, or a modal changes
     popups = [];
-    if (!helpOpen && !confirmPrompt) {
+    if (!helpOpen && !confirmPrompt && !browse) {
       if (tool === 'object') drawObjectPalette(ctx, W, H, rt);
       else if (tool === 'doodad') drawDoodadPalette(ctx, W, H, rt);
       else if (tool === 'glass') drawGlassPalette(ctx, W, H, rt);
@@ -1457,6 +1703,10 @@ const EDITOR = (() => {
     }
     drawStatus(ctx, W, H);
     if (helpOpen) drawHelp(ctx, W, H);
+    // the browser draws first so a deferred discard-changes prompt (raised when a
+    // map is picked) lands on top of it, not behind — input already prioritises
+    // the confirm dialog over the browser (see mouseDown / key / cursor)
+    if (browse) drawBrowser(ctx, W, H, patterns, rt);
     if (confirmPrompt) drawConfirm(ctx, W, H);
   }
 
@@ -2527,7 +2777,8 @@ const EDITOR = (() => {
     ['T  /  N', 'cycle the theme (or pick one from the Theme menu) / rename the map'],
     ['wheel  + - 0', 'zoom (0 fits the whole map)'],
     ['Ctrl+Z / Ctrl+Y', 'undo / redo'],
-    ['Ctrl+S / Ctrl+O', 'save / open a ' + EXT + ' map file'],
+    ['Ctrl+S', 'save the map to a ' + EXT + ' file'],
+    ['Ctrl+O / Load', 'browse a folder of ' + EXT + ' maps - the highlighted one previews; click or Enter loads it (arrows/wheel scroll; just type to filter by name, Esc clears then closes)'],
     ['Ctrl+Enter', 'test ride the map - Esc comes back, Enter retries'],
     ['Esc', 'cancel / deselect; from a clean screen, back to the menu'],
   ];
@@ -2607,6 +2858,318 @@ const EDITOR = (() => {
     ctx.restore();
   }
 
+  // ---------- Load overlay drawing ----------
+
+  // one footer/action button of the Load browser, in the shared toolbar style;
+  // pushes its hitbox onto browseRects so mouseDown/cursor can find it
+  function drawBrowseButton(ctx, r) {
+    const hot = hitRect(r, mx, my);
+    ctx.save();
+    ctx.fillStyle = hot ? 'rgba(70,34,10,0.92)' : 'rgba(20,12,6,0.82)';
+    roundRectPath(ctx, r.x, r.y, r.w, r.h, 8);
+    ctx.fill();
+    ctx.lineWidth = hot ? 2.5 : 1.5;
+    ctx.strokeStyle = hot ? '#f9c623' : 'rgba(249,198,35,0.4)';
+    ctx.stroke();
+    ctx.fillStyle = hot ? '#ffe27a' : '#f0e8da';
+    ctx.font = 'bold 13px ' + FONT;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(r.label, r.x + r.w / 2, r.y + r.h / 2 + 1);
+    ctx.restore();
+    browseRects.push(r);
+  }
+
+  // a live thumbnail of a map file, rendered through the SAME world/object
+  // renderers the editor and the game use (so the preview is faithful), scaled
+  // to fit the (x,y,w,h) box and clipped to it. The prepared level is cached on
+  // the file record (f._prep) so paging the list doesn't re-prep every frame.
+  function drawMapPreview(ctx, f, patterns, x, y, w, h, rt) {
+    if (w <= 4 || h <= 4) return;
+    if (!f._prep) f._prep = prepareLevel(f.data);
+    const prep = f._prep;
+    const b = levelBounds(prep);
+    const bw = Math.max(1e-3, b.maxX - b.minX), bh = Math.max(1e-3, b.maxY - b.minY);
+    const inset = 8;
+    const scale = Math.min((w - inset * 2) / bw, (h - inset * 2) / bh);
+    const cx = (b.minX + b.maxX) / 2, cy = (b.minY + b.maxY) / 2;
+    const pat = patterns[f.data.theme] || patterns.meadow;
+    ctx.save();
+    roundRectPath(ctx, x, y, w, h, 10);
+    ctx.clip();
+    ctx.fillStyle = '#000';
+    ctx.fillRect(x, y, w, h);
+    ctx.translate(x + w / 2, y + h / 2);
+    ctx.scale(scale, scale);
+    ctx.translate(-cx, -cy);
+    const hwv = (w / 2) / scale, hhv = (h / 2) / scale;
+    const view = { x0: cx - hwv, y0: cy - hhv, x1: cx + hwv, y1: cy + hhv };
+    drawWorld(ctx, prep, pat, view, rt, null, true);
+    drawDoodadLayer(ctx, f.data.doodads, 'back', rt);
+    for (const n of f.data.nuts) drawNutMound(ctx, n[0], n[1], rt);
+    for (const bg of f.data.burgers) drawBurger(ctx, bg[0], bg[1], rt);
+    for (const fb of f.data.flipBurgers) { drawBurger(ctx, fb[0], fb[1], rt); drawFlipBadge(ctx, fb[0], fb[1], fb[2]); }
+    drawPopcorn(ctx, f.data.goal[0], f.data.goal[1], rt);
+    drawDoodadLayer(ctx, f.data.doodads, 'front', rt);
+    drawForeground(ctx, prep, pat, view, rt);
+    // a simple green spawn pip (the full ghost-bike marker is reserved for the
+    // live editing canvas)
+    ctx.lineWidth = Math.max(0.05, 1.5 / scale);
+    ctx.strokeStyle = 'rgba(155,224,138,0.95)';
+    ctx.fillStyle = 'rgba(155,224,138,0.3)';
+    ctx.beginPath();
+    ctx.arc(f.data.start.x, f.data.start.y, 0.55, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+    // frame
+    ctx.save();
+    roundRectPath(ctx, x, y, w, h, 10);
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = 'rgba(249,198,35,0.4)';
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // the Load browser's search field: a rounded input atop the file list that
+  // filters it live. It is always focused while maps are listed (a blinking
+  // caret shows it), so typing anywhere narrows the list; a ✕ clears it. Pushes
+  // its box — and the clear button (first, so it wins the overlap) — onto
+  // browseRects for the pointer handlers.
+  function drawBrowseSearch(ctx, r, rt) {
+    const hot = hitRect(r, mx, my);
+    const pad = 10;
+    ctx.save();
+    roundRectPath(ctx, r.x, r.y, r.w, r.h, 7);
+    ctx.fillStyle = 'rgba(8,5,2,0.6)';
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = hot ? 'rgba(249,198,35,0.6)' : 'rgba(249,198,35,0.32)';
+    ctx.stroke();
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    const midY = r.y + r.h / 2 + 1;
+    // magnifier glyph, then the query (or a faint placeholder), with a blinking
+    // caret to advertise that the field takes keystrokes without a click
+    ctx.font = '13px ' + FONT;
+    ctx.fillStyle = 'rgba(240,232,218,0.5)';
+    ctx.fillText('⚲', r.x + pad, midY);
+    const tx = r.x + pad + 16;
+    const caret = (rt * 2) % 1 < 0.5 ? '|' : '';
+    if (browse.query) {
+      const clearW = 24;
+      ctx.fillStyle = '#ffe27a';
+      ctx.fillText(ellipsize(ctx, browse.query, Math.max(20, r.x + r.w - pad - clearW - tx)) + caret, tx, midY);
+      // clear (✕) button at the right edge
+      const cs = 18, cx = r.x + r.w - pad - cs + 4, cy = r.y + (r.h - cs) / 2;
+      const ch = hitRect({ x: cx, y: cy, w: cs, h: cs }, mx, my);
+      ctx.fillStyle = ch ? '#ffe27a' : 'rgba(240,232,218,0.55)';
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 15px ' + FONT;
+      ctx.fillText('×', cx + cs / 2, midY);
+      browseRects.push({ id: 'browseSearchClear', x: cx, y: cy, w: cs, h: cs });
+    } else {
+      ctx.fillStyle = 'rgba(240,232,218,0.4)';
+      ctx.fillText('Search maps' + caret, tx, midY);
+    }
+    ctx.restore();
+    browseRects.push({ id: 'browseSearch', x: r.x, y: r.y, w: r.w, h: r.h });
+  }
+
+  // the list + preview half of the browser (only drawn when the folder has
+  // maps): a scrollable column of file rows on the left, a live preview of the
+  // highlighted map on the right with its name and stats beneath.
+  function drawBrowseBody(ctx, patterns, x, y, w, h, rt) {
+    const gap = 14;
+    const listW = Math.min(360, Math.max(220, w * 0.44));
+    // a search field caps the list column; the live preview to its right keeps
+    // the full height
+    const searchH = 30, searchGap = 10;
+    drawBrowseSearch(ctx, { x, y, w: listW, h: searchH }, rt);
+    const listX = x, listY = y + searchH + searchGap, listH = h - searchH - searchGap;
+    const prevX = listX + listW + gap, prevY = y;
+    const prevW = x + w - prevX, prevH = h;
+
+    // ---- file rows ----
+    // Scroll is its own state (driven by the wheel, the scrollbar, and keyboard
+    // nav), NOT slaved to the selection — a per-draw "keep sel visible" snap
+    // would fight a deliberate scrollbar drag. browseMove keeps the highlight on
+    // screen when the keyboard moves it; here we only clamp scroll to its range.
+    const rowH = 42;
+    browse.perPage = Math.max(1, Math.floor(listH / rowH));
+    const maxScroll = Math.max(0, browse.files.length - browse.perPage);
+    browse.scroll = clamp(browse.scroll, 0, maxScroll);
+
+    // when the list overflows, a wide grabbable scrollbar takes the right
+    // gutter and the rows shrink to leave room for it
+    const barW = 14;
+    const scrollable = maxScroll > 0;
+    const rowW = listW - (scrollable ? barW : 0);
+
+    ctx.save();
+    roundRectPath(ctx, listX, listY, listW, listH, 8);
+    ctx.fillStyle = 'rgba(8,5,2,0.5)';
+    ctx.fill();
+    ctx.save();
+    roundRectPath(ctx, listX, listY, rowW, listH, 8);
+    ctx.clip();
+    const end = Math.min(browse.files.length, browse.scroll + browse.perPage);
+    for (let i = browse.scroll; i < end; i++) {
+      const f = browse.files[i];
+      const ry = listY + (i - browse.scroll) * rowH;
+      const seld = i === browse.sel;
+      const hot = hitRect({ x: listX, y: ry, w: rowW, h: rowH }, mx, my);
+      if (seld || hot) {
+        ctx.fillStyle = seld ? 'rgba(120,62,16,0.9)' : 'rgba(70,34,10,0.85)';
+        roundRectPath(ctx, listX + 3, ry + 3, rowW - 6, rowH - 6, 6);
+        ctx.fill();
+      }
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'left';
+      ctx.fillStyle = seld ? '#ffe27a' : '#f0e8da';
+      ctx.font = 'bold 13px ' + FONT;
+      ctx.fillText(ellipsize(ctx, f.data.name || '(unnamed)', rowW - 22), listX + 11, ry + 15);
+      ctx.fillStyle = 'rgba(240,232,218,0.55)';
+      ctx.font = '11px ' + FONT;
+      ctx.fillText(ellipsize(ctx, f.name, rowW - 22), listX + 11, ry + 30);
+      browseRects.push({ id: 'browseRow', idx: i, x: listX, y: ry, w: rowW, h: rowH });
+    }
+    // a search that matches nothing: the folder has maps, just none past the
+    // filter. Say so in the list area (the preview half stays blank).
+    if (!browse.files.length) {
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(240,232,218,0.55)';
+      ctx.font = '13px ' + FONT;
+      ctx.fillText('No maps match', listX + rowW / 2, listY + Math.min(listH / 2, 46));
+    }
+    ctx.restore();
+
+    // the scrollbar: a track + a chunky thumb you can drag, or click the track
+    // to flick to a spot. Its live geometry is stashed on browse.bar for the
+    // pointer handlers (overBrowseBar / beginBarDrag / scrollToBar).
+    if (scrollable) {
+      const pad = 4;
+      const barX = listX + listW - barW;
+      const top = listY + pad, trackH = listH - pad * 2;
+      const thumbH = Math.max(28, trackH * browse.perPage / browse.files.length);
+      const thumbY = top + (trackH - thumbH) * (browse.scroll / maxScroll);
+      ctx.fillStyle = 'rgba(0,0,0,0.32)';                          // track
+      roundRectPath(ctx, barX + 3, top, barW - 6, trackH, (barW - 6) / 2);
+      ctx.fill();
+      const hotBar = browseDrag || hitRect({ x: barX, y: top, w: barW, h: trackH }, mx, my);
+      ctx.fillStyle = hotBar ? 'rgba(249,198,35,0.95)' : 'rgba(249,198,35,0.62)';   // thumb
+      roundRectPath(ctx, barX + 2, thumbY, barW - 4, thumbH, (barW - 4) / 2);
+      ctx.fill();
+      browse.bar = { x: barX, w: barW, top, trackH, thumbY, thumbH, maxScroll };
+    } else {
+      browse.bar = null;
+    }
+    roundRectPath(ctx, listX, listY, listW, listH, 8);
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = 'rgba(249,198,35,0.32)';
+    ctx.stroke();
+    ctx.restore();
+
+    // ---- preview of the highlighted map ----
+    if (prevW > 40) {
+      const capH = 42, imgH = prevH - capH;
+      const f = browse.files[browse.sel];
+      if (f) {
+        drawMapPreview(ctx, f, patterns, prevX, prevY, prevW, imgH, rt);
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'alphabetic';
+        ctx.fillStyle = '#ffe27a';
+        ctx.font = 'bold 14px ' + FONT;
+        ctx.fillText(ellipsize(ctx, f.data.name || '(unnamed)', prevW), prevX, prevY + imgH + 18);
+        const themeName = f.data.theme + (THEMES[f.data.theme] ? '' : ' (unknown theme)');
+        const extras = [];
+        if (f.data.flipBurgers.length) extras.push(f.data.flipBurgers.length + ' gravity');
+        if (f.data.nuts.length) extras.push(f.data.nuts.length + ' nuts');
+        const meta = themeName + ' · ' + f.data.polygons.length + ' poly · ' +
+          f.data.burgers.length + ' burgers' + (extras.length ? ' · ' + extras.join(' · ') : '');
+        ctx.fillStyle = 'rgba(240,232,218,0.72)';
+        ctx.font = '11px ' + FONT;
+        ctx.fillText(ellipsize(ctx, meta, prevW), prevX, prevY + imgH + 36);
+      }
+    }
+  }
+
+  // the Load folder browser: a modal panel with a title, the chosen folder, the
+  // list+preview body (or a centred message in the choose/reopen/error/empty
+  // states), and a footer of folder-management + Cancel buttons. browseRects is
+  // rebuilt here every frame, so its hitboxes never go stale.
+  function drawBrowser(ctx, W, H, patterns, rt) {
+    browseRects = [];
+    browse.bar = null;       // drawBrowseBody re-sets it when a scrollbar is shown
+    ctx.save();
+    ctx.fillStyle = 'rgba(8,5,2,0.72)';
+    ctx.fillRect(0, 0, W, H);
+    const pad = 18;
+    const pw = Math.min(W * 0.94, 920), ph = Math.min(H * 0.92, 600);
+    const px = (W - pw) / 2, py = Math.max(16, (H - ph) / 2);
+    ctx.fillStyle = 'rgba(20,12,6,0.97)';
+    roundRectPath(ctx, px, py, pw, ph, 14);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(249,198,35,0.5)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // header: title, and (if one is chosen) the folder name
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#f9c623';
+    ctx.font = 'bold 20px ' + FONT;
+    ctx.fillText('Load Map', px + pad, py + 26);
+    if (mapDir && mapDir.name) {
+      ctx.textAlign = 'right';
+      ctx.font = '12px ' + FONT;
+      ctx.fillStyle = 'rgba(240,232,218,0.7)';
+      ctx.fillText(ellipsize(ctx, 'Folder: ' + mapDir.name, pw * 0.5), px + pw - pad, py + 26);
+    }
+
+    // footer buttons, laid out right-to-left from the panel's right edge
+    const bh = 36, fgap = 10, fy = py + ph - pad - bh;
+    ctx.font = 'bold 13px ' + FONT;
+    const btns = [{ id: 'browseCancel', label: 'Cancel' }];
+    if (browse.mode === 'reopen') btns.push({ id: 'browseReopen', label: 'Reopen Folder' });
+    btns.push({ id: 'browseChoose', label: mapDir ? 'Change Folder...' : 'Choose Folder...' });
+    let bx = px + pw - pad;
+    for (const b of btns) {
+      const bw = Math.max(84, ctx.measureText(b.label).width + 26);
+      bx -= bw;
+      drawBrowseButton(ctx, { id: b.id, label: b.label, x: bx, y: fy, w: bw, h: bh });
+      bx -= fgap;
+    }
+
+    const bodyTop = py + 50, bodyBot = fy - 12;
+    // the search-and-list body shows whenever the folder HAS maps (browse.all),
+    // even if the live filter currently matches none — so the search field stays
+    // available to widen the query
+    if (browse.mode === 'list' && browse.all.length) {
+      drawBrowseBody(ctx, patterns, px + pad, bodyTop, pw - pad * 2, bodyBot - bodyTop, rt);
+      // the count/stale line sits in the footer, left of the buttons; while a
+      // filter is active it reports how many of the folder's maps match instead
+      const foot = browse.query
+        ? browse.files.length + ' of ' + browse.all.length + ' maps match "' + browse.query + '"'
+        : browse.note;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.font = '12px ' + FONT;
+      ctx.fillStyle = 'rgba(240,232,218,0.7)';
+      ctx.fillText(ellipsize(ctx, foot, Math.max(40, bx - (px + pad))), px + pad, fy + bh / 2);
+    } else {
+      // choose / reopen / error / loading / empty: a centred message
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = '15px ' + FONT;
+      ctx.fillStyle = browse.mode === 'error' ? '#ff9a6a' : 'rgba(240,232,218,0.88)';
+      ctx.fillText(ellipsize(ctx, browse.note || 'Loading...', pw - pad * 2),
+        px + pw / 2, (bodyTop + bodyBot) / 2);
+    }
+    ctx.restore();
+  }
+
   return {
     init(h) { hooks = Object.assign(hooks, h); },
     open, draw,
@@ -2628,6 +3191,17 @@ const EDITOR = (() => {
     get doodadLayer() { return doodadLayer; },
     get menu() { return menu; },
     get confirmOpen() { return !!confirmPrompt; },
+    // the Load folder browser, exposed for the headless tests: whether it's up,
+    // its current mode, and the file names it's listing
+    get browseOpen() { return !!browse; },
+    get browseMode() { return browse ? browse.mode : null; },
+    get browseFiles() { return browse ? browse.files.map(f => f.name) : []; },
+    get browseSel() { return browse ? browse.sel : -1; },
+    get browseScroll() { return browse ? browse.scroll : 0; },
+    get browseQuery() { return browse ? browse.query : ''; },
+    // the file-list scrollbar's last-drawn geometry (or null when it fits / is
+    // closed) — exposed so the headless test can grab and drag it
+    browseBar() { return browse ? browse.bar : null; },
     // the current selection's rotate-handle world point (or null when nothing
     // rotatable is selected) — exposed so the headless test can grab it
     get rotateHandle() { const g = rotGeom(sel); return g ? g.handle : null; },

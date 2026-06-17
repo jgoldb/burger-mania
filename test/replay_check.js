@@ -330,7 +330,7 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
   }
   // ---- a synthetic instant-win replay covers the finished path ----
   savedFiles['synthetic-win.bmr'] = JSON.stringify({
-    format: 'burger-mania-replay', version: 10,
+    format: 'burger-mania-replay', version: 11,
     savedAt: '2026-06-11T00:00:00.000Z',
     label: 'Synthetic Win', outcome: 'finished', time: 0.02,
     trackId: null, levelIndex: 0, skin: 3, // recorded on the top-tier skin

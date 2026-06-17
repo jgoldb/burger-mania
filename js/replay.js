@@ -15,7 +15,23 @@
 // an older version" failure instead of a silent, wrong-looking playback.
 const REPLAY = (() => {
   const FORMAT = 'burger-mania-replay';
-  const VERSION = 10; // bumped 2026-06-16: physics feel pass (emergent cleanup).
+  const VERSION = 11; // bumped 2026-06-17: tire + volt feel pass. Tires are squishier
+                     // in a pinch and now squeeze FURTHER the more momentum the biker
+                     // carries (wheelSquish 0.08->0.12, new momentum-scaled wheelSquish
+                     // Max/V) — and the squish actually works now: it softens the
+                     // squeezed-against wall (gravity-aware, floor keeps grip) so the
+                     // contact forces don't grip the tire to a halt. Base grip raised
+                     // (mu 1.1->1.25) and the driven-wheel landing slip softened
+                     // (gripGasResist 0.5->0.75) so a rear-wheel touchdown under gas
+                     // hooks up instead of skating like ice. The airborne volt was
+                     // over-rotating: fixed at the ROOT — frame rotational inertia was
+                     // too low (frameI 0.55->1.5, voltAcc 14.5->17.3 to re-match the
+                     // grounded lean), NOT an air/ground branch. Grounded volt/wheelie/
+                     // stoppie are gravity+contact balances so they're inertia-robust
+                     // and stay the same; the free-air flick (purely inertia-driven)
+                     // calms ~38%. These change the contact/rotation forces, so pre-v11
+                     // tapes desync — rejected cleanly.
+                     // Prior, v10 (2026-06-16): physics feel pass (emergent cleanup).
                      // Rolling resistance: the constant at-rest term was the "sticky
                      // at rest" culprit (a rigid wheel has no true rolling resistance)
                      // — removed (rollRes 9->0->gone), leaving only a gentle speed-
@@ -245,14 +261,19 @@ const REPLAY = (() => {
     });
   }
 
-  async function pickDir() {
-    const h = await window.showDirectoryPicker({ id: 'burger-mania-replays' });
-    idbSet('replayDir', h).catch(() => {});
+  // Pick a folder and remember its handle. `opts` overrides where it's filed:
+  // the dialog id (so the browser reopens the right place) and the IndexedDB
+  // key the handle is cached under. Defaults to the replay folder; the map
+  // editor passes its own { id, key } so maps and replays remember separately.
+  async function pickDir(opts) {
+    opts = opts || {};
+    const h = await window.showDirectoryPicker({ id: opts.id || 'burger-mania-replays' });
+    idbSet(opts.key || 'replayDir', h).catch(() => {});
     return h;
   }
 
-  async function restoreDir() {
-    try { return (await idbGet('replayDir')) || null; }
+  async function restoreDir(key) {
+    try { return (await idbGet(key || 'replayDir')) || null; }
     catch (e) { return null; }
   }
 
@@ -266,17 +287,22 @@ const REPLAY = (() => {
     return false;
   }
 
-  // every parseable EXT file in the folder, newest first, plus a count of
+  // every parseable file in the folder, newest first, plus a count of
   // files skipped because they're from another game version (so the UI can
-  // explain the gap rather than just dropping them silently)
-  async function listDir(h) {
+  // explain the gap rather than just dropping them silently). `opts` overrides
+  // the extension to match and the parser to validate with — the map editor
+  // passes its own (.bmm + map parser) so this lists maps as well as replays.
+  async function listDir(h, opts) {
+    opts = opts || {};
+    const ext = opts.ext || EXT;
+    const parseFn = opts.parse || parse;
     const out = [];
     let outdated = 0;
     for await (const entry of h.values()) {
-      if (entry.kind !== 'file' || !entry.name.endsWith(EXT)) continue;
+      if (entry.kind !== 'file' || !entry.name.endsWith(ext)) continue;
       try {
         const f = await entry.getFile();
-        out.push({ name: entry.name, mtime: f.lastModified, data: parse(await f.text()) });
+        out.push({ name: entry.name, mtime: f.lastModified, data: parseFn(await f.text()) });
       } catch (e) {
         // a version mismatch is a known, explainable skip; anything else is a
         // damaged or non-replay file and is left out without comment

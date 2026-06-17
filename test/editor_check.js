@@ -93,6 +93,34 @@ global.Image = function () { const img = {}; setImmediate(() => img.onload && im
 global.DOMMatrix = function (m) { this.m = m; };
 global.setTimeout = setTimeout;
 
+// File System Access API stubs, so REPLAY.fsSupported is true and the editor's
+// Load folder-browser path (not the bare single-file dialog) is exercised.
+// `fakeDir` is the folder showDirectoryPicker hands back; the test stages it
+// with .bmm files before opening Load. No IndexedDB is provided, so the editor
+// finds no remembered folder and asks the user to choose one (the 'choose' path).
+let fakeDir = null;
+function makeFakeDir(name, files) {       // files: [{ name, text, mtime }]
+  return {
+    name,
+    queryPermission: async () => 'granted',
+    requestPermission: async () => 'granted',
+    async *values() {
+      for (const f of files) {
+        yield {
+          kind: 'file', name: f.name,
+          getFile: async () => ({ lastModified: f.mtime || 0, text: async () => f.text }),
+        };
+      }
+    },
+  };
+}
+global.window.showSaveFilePicker = async () => { throw new Error('unused'); };
+global.window.showOpenFilePicker = async () => { throw new Error('unused'); };
+global.window.showDirectoryPicker = async () => {
+  if (!fakeDir) throw Object.assign(new Error('aborted'), { name: 'AbortError' });
+  return fakeDir;
+};
+
 function pumpFrames(n, dt) {
   for (let i = 0; i < n; i++) {
     clock.t += dt;
@@ -624,10 +652,14 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   key('Escape');                               // cancel keeps the current map
   if (EDITOR.confirmOpen) bad('Escape should close the dialog');
   if (EDITOR.map.polygons.length !== polysWas) bad('cancelling New must not change the map');
-  EDITOR.action('load');                       // Load raises it too
-  if (!EDITOR.confirmOpen) bad('Load on a dirty map should raise the discard dialog');
-  key('Escape');                               // cancel without touching the file picker
-  if (EDITOR.confirmOpen) bad('Escape should close the Load dialog');
+  // Load opens its browser immediately, even on a dirty map - the discard
+  // warning is deferred until a map is actually picked (the browser can still be
+  // cancelled), so it must NOT pre-confirm the way New does
+  EDITOR.action('load');
+  if (EDITOR.confirmOpen) bad('Load must not raise the discard dialog before a map is chosen');
+  if (!EDITOR.browseOpen) bad('Load on a dirty map should open the folder browser straight away');
+  key('Escape');                               // backing out of the browser changes nothing
+  if (EDITOR.browseOpen) bad('Escape should close the Load browser');
   if (EDITOR.map.polygons.length !== polysWas) bad('cancelling Load must not change the map');
   EDITOR.action('new');                        // now confirm a New
   key('Enter');                                // Enter = Discard
@@ -656,6 +688,132 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   if (!EDITOR2.map) bad('a reloaded editor should recover the autosaved working map');
   EDITOR2.action('new');
   if (!EDITOR2.confirmOpen) bad('a map recovered from the autosave cache must be dirty, so New warns first');
+
+  // ---- Load folder browser: choose a folder, list maps, preview, select ----
+  // The harness stubs the File System Access API (fsSupported true), so Load
+  // opens the in-editor browser instead of a bare file dialog. Stage two real
+  // .bmm files (the current working map re-serialized under two names) in a fake
+  // folder showDirectoryPicker will hand back.
+  key('1');
+  const mapText = EDITOR.serialize();
+  const altText = JSON.stringify(Object.assign(JSON.parse(mapText), { name: 'Second Map' }));
+  fakeDir = makeFakeDir('maps', [
+    { name: 'untitled.bmm', text: mapText, mtime: 100 },
+    { name: 'second.bmm', text: altText, mtime: 200 },
+  ]);
+  const settle = async () => { await new Promise(r => setImmediate(r)); };
+
+  // EDITOR is a clean fresh template here, so Load opens the browser outright
+  EDITOR.action('load');
+  if (EDITOR.confirmOpen) bad('Load on a clean map should not raise the discard dialog');
+  if (!EDITOR.browseOpen) bad('Load should open the folder browser');
+  await settle();                               // refreshBrowser: no remembered folder
+  if (EDITOR.browseMode !== 'choose') bad('with no remembered folder the browser should ask to choose one, got ' + EDITOR.browseMode);
+  pumpFrames(1, 1 / 60);                         // draw the choose state (must not throw)
+
+  EDITOR.action('browseChoose');                // pick the staged folder
+  await settle(); await settle();               // showDirectoryPicker + dirPermission + listDir
+  if (EDITOR.browseMode !== 'list') bad('choosing a folder should list its maps, got ' + EDITOR.browseMode);
+  if (EDITOR.browseFiles.length !== 2) bad('the browser should list both staged maps, got ' + JSON.stringify(EDITOR.browseFiles));
+  if (EDITOR.browseFiles[0] !== 'second.bmm') bad('maps should sort newest-first, got ' + JSON.stringify(EDITOR.browseFiles));
+  pumpFrames(2, 1 / 60);                         // draw the list + the live map preview (must not throw)
+
+  // arrow-walk the highlight (which drives the preview), then Enter loads it
+  if (EDITOR.browseSel !== 0) bad('the browser should start on the first map, got ' + EDITOR.browseSel);
+  key('ArrowDown');                             // highlight untitled.bmm (index 1)
+  if (EDITOR.browseSel !== 1) bad('ArrowDown should move the browser highlight, got ' + EDITOR.browseSel);
+  pumpFrames(1, 1 / 60);                         // preview the newly-highlighted map (must not throw)
+  key('Enter');                                 // load the highlighted map
+  if (EDITOR.browseOpen) bad('selecting a map should close the browser');
+  if (EDITOR.map.name !== 'Untitled Map') bad('loading should adopt the highlighted map, got ' + EDITOR.map.name);
+  if (EDITOR.confirmOpen) bad('a clean load should not raise a discard dialog');
+
+  // the chosen folder is remembered: a dirty Load lists straight away (no second
+  // folder prompt) and STILL doesn't pre-confirm - the discard dialog only
+  // appears once a map is picked, drawn over the still-open browser so Cancel
+  // returns to it; confirming loads the chosen map and closes the browser
+  key('3'); mouseDown(410, 300); mouseUp(410, 300); key('1');   // an unsaved edit
+  const dirtyBurgers = EDITOR.map.burgers.length;
+  EDITOR.action('load');
+  if (EDITOR.confirmOpen) bad('a dirty Load must not pre-confirm before a map is chosen');
+  if (!EDITOR.browseOpen) bad('a dirty Load should open the browser straight away');
+  await settle(); await settle();               // remembered folder -> the list (no second prompt)
+  if (EDITOR.browseMode !== 'list') bad('a remembered folder should list straight away, got ' + EDITOR.browseMode);
+  key('ArrowDown');                             // highlight untitled.bmm (index 1)
+  key('Enter');                                 // pick it -> NOW the discard dialog
+  if (!EDITOR.confirmOpen) bad('choosing a map on a dirty editor should raise the discard dialog');
+  if (!EDITOR.browseOpen) bad('the discard dialog should sit over the still-open browser');
+  pumpFrames(1, 1 / 60);                         // draw browser + dialog stacked (must not throw)
+  key('Escape');                                // Cancel the discard -> back to the browser, no load
+  if (EDITOR.confirmOpen) bad('cancelling the discard should dismiss the dialog');
+  if (!EDITOR.browseOpen) bad('cancelling the discard should return to the browser, not close it');
+  if (EDITOR.map.burgers.length !== dirtyBurgers) bad('cancelling the discard must not change the map');
+  key('Enter');                                 // pick again (still on index 1) -> dialog again
+  if (!EDITOR.confirmOpen) bad('re-picking a map should raise the discard dialog again');
+  key('Enter');                                 // Enter = Discard & load
+  if (EDITOR.confirmOpen) bad('confirming should dismiss the dialog');
+  if (EDITOR.browseOpen) bad('confirming a load should close the browser');
+  if (EDITOR.map.name !== 'Untitled Map') bad('confirming should adopt the chosen map, got ' + EDITOR.map.name);
+  key('1');
+
+  // ---- scrollbar: a wide, grabbable thumb to flick a long list ----
+  // re-stage a folder with more maps than fit a page, then drag/click the bar
+  fakeDir = makeFakeDir('many', Array.from({ length: 14 }, (_, i) =>
+    ({ name: 'map-' + i + '.bmm', text: mapText, mtime: 1000 + i })));
+  EDITOR.action('load');
+  if (EDITOR.confirmOpen) key('Enter');         // discard if undo left it dirty
+  await settle(); await settle();               // remembered folder -> a (stale) list
+  EDITOR.action('browseChoose');                // re-pick: the 14-map folder
+  await settle(); await settle();
+  if (EDITOR.browseFiles.length !== 14) bad('the big folder should list 14 maps, got ' + EDITOR.browseFiles.length);
+
+  // ---- search box: typing filters the list live (by map name OR filename) ----
+  // the 14 maps all carry the name "Untitled Map"; their filenames are map-0..13
+  for (const c of 'second') key(c);             // a query matching no name and no filename
+  if (EDITOR.browseQuery !== 'second') bad('typing should fill the search box, got ' + JSON.stringify(EDITOR.browseQuery));
+  if (EDITOR.browseFiles.length !== 0) bad('"second" should match none of the untitled maps, got ' + EDITOR.browseFiles.length);
+  pumpFrames(1, 1 / 60);                         // draw the no-match state (must not throw)
+  key('Backspace'); key('Backspace'); key('Backspace'); key('Backspace');   // -> "se"
+  if (EDITOR.browseQuery !== 'se') bad('Backspace should trim the query, got ' + JSON.stringify(EDITOR.browseQuery));
+  key('Escape');                                // first Esc clears the query, does NOT close
+  if (!EDITOR.browseOpen) bad('Esc with a query should clear it, not close the browser');
+  if (EDITOR.browseQuery !== '') bad('Esc should clear the search box, got ' + JSON.stringify(EDITOR.browseQuery));
+  if (EDITOR.browseFiles.length !== 14) bad('clearing the search should restore all 14 maps, got ' + EDITOR.browseFiles.length);
+  for (const c of 'map-13') key(c);             // only the filename map-13.bmm contains this
+  if (EDITOR.browseFiles.length !== 1) bad('"map-13" should match exactly one filename, got ' + EDITOR.browseFiles.length);
+  if (EDITOR.browseFiles[0] !== 'map-13.bmm') bad('the filename filter should surface map-13.bmm, got ' + JSON.stringify(EDITOR.browseFiles));
+  key('Escape');                                // back to the full list for the scrollbar test
+  if (EDITOR.browseFiles.length !== 14) bad('clearing should restore the full list before the scrollbar test');
+
+  pumpFrames(1, 1 / 60);                         // draw -> compute the scrollbar geometry
+  const bar = EDITOR.browseBar();
+  if (!bar) bad('a list taller than the page should show a scrollbar');
+  else {
+    if (bar.w < 12) bad('the scrollbar should be wide enough to grab, got ' + bar.w);
+    if (EDITOR.browseScroll !== 0) bad('the list should start scrolled to the top');
+    if (EDITOR.browseSel !== 0) bad('the highlight should start on the first map');
+    // grab the thumb and drag it past the bottom -> scrolls to the end
+    mouseDown(bar.x + bar.w / 2, bar.thumbY + 2);
+    mouseMove(bar.x + bar.w / 2, bar.top + bar.trackH + 40);
+    mouseUp(bar.x + bar.w / 2, bar.top + bar.trackH + 40);
+    if (EDITOR.browseScroll !== bar.maxScroll) {
+      bad('dragging the thumb to the bottom should scroll to the end, got ' + EDITOR.browseScroll + '/' + bar.maxScroll);
+    }
+    // and a redraw must NOT snap it back: scroll is independent of the (still
+    // top-most) selection, or a continuously-redrawing app would undo the drag
+    pumpFrames(2, 1 / 60);
+    if (EDITOR.browseScroll !== bar.maxScroll) {
+      bad('a redraw should keep the scrollbar where it was dragged, got ' + EDITOR.browseScroll + '/' + bar.maxScroll);
+    }
+    // a click on the track up top flicks the list back to the start
+    const bar2 = EDITOR.browseBar();
+    mouseDown(bar2.x + bar2.w / 2, bar2.top + 2);
+    mouseUp(bar2.x + bar2.w / 2, bar2.top + 2);
+    if (EDITOR.browseScroll !== 0) bad('clicking the track at the top should flick the list to the start, got ' + EDITOR.browseScroll);
+  }
+  EDITOR.action('browseCancel');
+  if (EDITOR.browseOpen) bad('Cancel should close the browser after the scrollbar test');
+  key('1');
 
   // ---- toolbar dropdowns: View (toggles) + Theme (picker) ----
   key('1');                                    // select tool: no tool palette open

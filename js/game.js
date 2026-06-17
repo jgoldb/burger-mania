@@ -1404,10 +1404,10 @@
     }
     ensureAudio();
     if (AC && AC.state === 'suspended') AC.resume();
-    // the editor owns the keyboard while it's up; M still mutes unless
-    // the map name is being typed
+    // the editor owns the keyboard while it's up; M still mutes unless the map
+    // name is being typed or the Load browser's search box is taking keystrokes
     if (state === 'editor') {
-      if (!EDITOR.naming && (e.key === 'm' || e.key === 'M')) {
+      if (!EDITOR.naming && !EDITOR.browseOpen && (e.key === 'm' || e.key === 'M')) {
         setMuted(!muted);
         return;
       }
@@ -2005,6 +2005,126 @@
     bike.engineLoad = (bike.engineLoad || 0) + (target - (bike.engineLoad || 0)) * 0.12;
   }
 
+  // ---------- rider jostle (cosmetic soft-body) ----------
+  // The rider's upper body is a damped spring riding the chassis: it lags the
+  // bike's acceleration (engine shove, braking pitch, terrain chatter, the slam
+  // of a landing), so the torso heaves, the head bobs and the limbs flex on
+  // their joints. Sitting still it settles to the neutral drawn pose; a launch
+  // lifts it gently off the seat and a hard landing slams it down. A second
+  // little spring lags the bike's ANGULAR acceleration so a sharp pitch
+  // (cresting a jump, slamming down) whips the head into a nod.
+  //   Purely visual: it READS bike.vel/avel but never writes the sim, so replays
+  // reproduce it exactly off the same input tape — nothing here touches the .bmr
+  // format or needs a VERSION bump. drawBike applies the offset, graded by how
+  // high up the body each point sits, so the seat and pegs stay planted while
+  // the head travels most. Lazily-initialised fields (no constructor change),
+  // so a fresh Bike starts settled and menu/preview bikes read 0 via `|| 0`.
+  const JOSTLE_K = 320, JOSTLE_C = 13;   // body spring: ~2.8 Hz, lightly damped → it bobs
+  const JOSTLE_DRIVE = 3.0;              // how hard felt-accel shoves the body
+  const JOSTLE_ACAP = 32;                // clamp felt-accel (m/s²): a slam saturates, never explodes
+  const JOSTLE_CAP = 0.18;               // max body offset (m) — the silhouette never tears
+  const HEADWOB_K = 360, HEADWOB_C = 14; // head-nod spring
+  const HEADWOB_DRIVE = 0.05;            // how hard angular-accel whips the head
+  const HEADWOB_ACAP = 50, HEADWOB_CAP = 0.16; // clamps (rad/s² in, rad out): a gentle nod
+
+  function updateRiderJostle(dt) {
+    // The chassis' actual acceleration this frame (world space, no gravity term):
+    // the artist's rest pose ALREADY draws the rider sagged under 1g, so the
+    // standing weight is baked in and only the DEVIATION from sitting still
+    // should move the body — which works out to pure -acceleration (gravity
+    // cancels against the rest pose). So a clean parabola in the air lifts the
+    // body gently off the seat, a hard landing slams it down, and a still bike
+    // sits neutral — all without caring which way a gravity burger aimed "down".
+    let ax = 0, ay = 0;
+    if (bike.pjVx != null) {
+      ax = (bike.vel.x - bike.pjVx) / dt;
+      ay = (bike.vel.y - bike.pjVy) / dt;
+    }
+    bike.pjVx = bike.vel.x; bike.pjVy = bike.vel.y;
+    const am = Math.hypot(ax, ay);
+    if (am > JOSTLE_ACAP) { const s = JOSTLE_ACAP / am; ax *= s; ay *= s; }
+    // pseudo-force: the body lags OPPOSITE the chassis' acceleration
+    let vx = bike.jostleVX || 0, vy = bike.jostleVY || 0;
+    let ox = bike.jostleX || 0, oy = bike.jostleY || 0;
+    vx += (-JOSTLE_K * ox - JOSTLE_C * vx - JOSTLE_DRIVE * ax) * dt;
+    vy += (-JOSTLE_K * oy - JOSTLE_C * vy - JOSTLE_DRIVE * ay) * dt;
+    ox += vx * dt; oy += vy * dt;
+    // clamp the offset (and bleed off the velocity that drove past the cap) so
+    // even the worst slam can only heave the body so far before it springs back
+    const om = Math.hypot(ox, oy);
+    if (om > JOSTLE_CAP) { const s = JOSTLE_CAP / om; ox *= s; oy *= s; vx *= s; vy *= s; }
+    bike.jostleVX = vx; bike.jostleVY = vy; bike.jostleX = ox; bike.jostleY = oy;
+
+    // head nod: a second spring lagging the chassis' angular acceleration
+    let aa = 0;
+    if (bike.pjAvel != null) aa = (bike.avel - bike.pjAvel) / dt;
+    bike.pjAvel = bike.avel;
+    if (aa > HEADWOB_ACAP) aa = HEADWOB_ACAP; else if (aa < -HEADWOB_ACAP) aa = -HEADWOB_ACAP;
+    let hv = bike.headWobV || 0, hw = bike.headWob || 0;
+    hv += (-HEADWOB_K * hw - HEADWOB_C * hv - HEADWOB_DRIVE * aa) * dt;
+    hw += hv * dt;
+    if (hw > HEADWOB_CAP) { hw = HEADWOB_CAP; hv = 0; }
+    else if (hw < -HEADWOB_CAP) { hw = -HEADWOB_CAP; hv = 0; }
+    bike.headWobV = hv; bike.headWob = hw;
+  }
+
+  // ---------- wheel squash (cosmetic tyre deform) ----------
+  // The tyre flattens against whatever it's pressed into. physics.wheelContacts
+  // publishes per wheel (all inert): `pinchAmt` + `pinchAxis{X,Y}` (the REAL
+  // geometric squeeze between two opposing walls, and its axis) and `contactN{X,Y}`
+  // (the support normal for a lone contact). Here we resolve each wheel to a
+  // smoothed (amount, axis, pivot) the renderer scales by. Two modes, whichever
+  // is bigger:
+  //  • PINCH — amount = the geometric gap squeeze (proportional to how tight the
+  //    slot is, NOT to momentum), axis straight off the opposing pair (stable
+  //    even bottomed out). Pivot rides toward the gravity-ward end of the axis,
+  //    so a vertical pinch stays planted on the floor while the top caves in, and
+  //    a sideways pinch squashes symmetrically about the centre.
+  //  • CONTACT — a small weight-bearing flatten + a springy landing pulse, along
+  //    the support normal, pivoted at the contact patch (squash-and-stretch).
+  // Reads the sim, never writes it → replays reproduce it, no version bump. Lazy
+  // `||0` fields, so preview/menu wheels read perfectly round.
+  const SQ_R0 = PHYS.wheelR;    // tyre contact radius (= collider) for pivot maths
+  const SQ_BASE = 0.03;         // resting flatten (m of diameter) while grounded
+  const SQ_IMPACT_GAIN = 0.18;  // a full-power landing adds this much flatten (m)
+  const SQ_IMPACT_DECAY = 0.86; // per-frame bleed of the landing pulse (springy rebound)
+  const SQ_EASE = 0.45;         // how fast the flatten chases its target
+  const SQ_DIR_EASE = 0.4;      // how fast the axis/pivot swing to a new contact
+  const SQ_MAX = 0.55;          // cap on flatten (m); render also clamps the ratio
+
+  function updateWheelSquash(dt) {
+    for (const w of bike.wheels) {
+      const pinch = w.pinchAmt || 0;
+      const contact = (w.onGround ? SQ_BASE : 0) + (w.sqImpact || 0);
+      let tFlat, axX, axY, pvX, pvY;
+      if (pinch >= contact && pinch > 0) {
+        // pinch: stable axis off the opposing pair; pivot toward the support end
+        tFlat = pinch;
+        axX = w.pinchAxisX || 0; axY = w.pinchAxisY || 0;
+        // keep the axis SIGN aligned frame-to-frame so easing can't cancel it
+        // (the squash itself is sign-agnostic; only the smoothing cares)
+        if (axX * (w.sqAxisX || 0) + axY * (w.sqAxisY || 0) < 0) { axX = -axX; axY = -axY; }
+        // pivot offset = axis·gravity along the axis: full radius toward the
+        // floor for a vertical slot, ~zero (centre) for a sideways one — and
+        // sign-independent, so it never flips with the axis
+        const ag = axX * bike.gravDir.x + axY * bike.gravDir.y;
+        pvX = axX * ag * SQ_R0; pvY = axY * ag * SQ_R0;
+      } else {
+        // lone contact: flatten along the support normal, planted at the patch
+        tFlat = contact;
+        axX = w.contactNX || 0; axY = w.contactNY || 0;
+        pvX = -axX * SQ_R0; pvY = -axY * SQ_R0;
+      }
+      if (tFlat > SQ_MAX) tFlat = SQ_MAX;
+      w.sqFlat = (w.sqFlat || 0) + (tFlat - (w.sqFlat || 0)) * SQ_EASE;
+      w.sqAxisX = (w.sqAxisX || 0) + (axX - (w.sqAxisX || 0)) * SQ_DIR_EASE;
+      w.sqAxisY = (w.sqAxisY || 0) + (axY - (w.sqAxisY || 0)) * SQ_DIR_EASE;
+      w.sqPivX = (w.sqPivX || 0) + (pvX - (w.sqPivX || 0)) * SQ_DIR_EASE;
+      w.sqPivY = (w.sqPivY || 0) + (pvY - (w.sqPivY || 0)) * SQ_DIR_EASE;
+      w.sqImpact = (w.sqImpact || 0) * SQ_IMPACT_DECAY;
+    }
+  }
+
   function emitExhaust(dt) {
     const load = bike.engineLoad || 0;
     if (load < 0.05) { exhaustAcc = 0; return; } // coasting: tailpipe is clean
@@ -2293,7 +2413,10 @@
       bike.step(FDT / SUB, input, level.segments, level.nuts);
       bike.wheels.forEach((w, k) => {
         if (!wasGround[k] && w.onGround && drop[k] > WHEEL_HIT_MIN) {
-          wheelHit(Math.min(1, (drop[k] - WHEEL_HIT_MIN) / WHEEL_HIT_SPAN));
+          const power = Math.min(1, (drop[k] - WHEEL_HIT_MIN) / WHEEL_HIT_SPAN);
+          wheelHit(power);
+          // same gate as the thud sound: punch a squash pulse into the tyre
+          w.sqImpact = Math.max(w.sqImpact || 0, power * SQ_IMPACT_GAIN);
         }
         wasGround[k] = w.onGround;
       });
@@ -2352,6 +2475,8 @@
     // cosmetic engine load + exhaust smoke (after the sim, alive or not, so the
     // tailpipe keeps puffing as the load bleeds off on a crash)
     updateEngineLoad(input);
+    updateRiderJostle(FDT);
+    updateWheelSquash(FDT);
     emitExhaust(FDT);
   }
 
@@ -2649,6 +2774,7 @@
       style: stylePts,
       styleBest,
       state,
+      speed: bike && bike.vel ? Math.hypot(bike.vel.x, bike.vel.y) : 0,
       lives: watching || testing ? null : lives,
       hasNext: hasNextLevel(),
       mapLabel: testing ? level.name : mapLabel(),

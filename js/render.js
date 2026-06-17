@@ -4215,6 +4215,38 @@ function riderDisc(ctx, pt, r, col) {
   ctx.beginPath(); ctx.arc(pt.x, pt.y, r, 0, Math.PI * 2); ctx.fill();
 }
 
+// Apply the cosmetic tyre squash (set by game.js updateWheelSquash from the
+// physics contacts) in the wheel-LOCAL frame — the caller must already have
+// translated to the wheel centre. Compresses the tyre along `sqAxis` and bulges
+// across it, pivoted at `sqPiv` so the planted side stays put while the far side
+// caves in: a faithful picture of the pinch-squish wedged in a slot, plus
+// squash-and-stretch on landings. Shared by drawWheel and the wheel rings drawn
+// over in drawBike (rim glow / prism halo) so they deform with the tyre. A no-op
+// on a round tyre, so preview/menu wheels are untouched. Cosmetic only.
+function wheelSquash(ctx, w) {
+  const sqFlat = w.sqFlat || 0;
+  if (sqFlat <= 0.005) return;
+  let dx = w.sqAxisX || 0, dy = w.sqAxisY || 0;     // compression axis
+  const dl = Math.hypot(dx, dy);
+  if (dl < 1e-4) return;
+  dx /= dl; dy /= dl;
+  const R0 = 0.40;                                  // tyre outer radius (= collider reach)
+  const s = Math.min(0.62, sqFlat / (2 * R0));      // fractional compression along the axis
+  const ks = 1 - s;                                 // squash along the axis
+  const kt = 1 + s * 0.55;                          // bulge across it (the sidewall)
+  // M = ks·(d⊗d) + kt·(t⊗t), t ⟂ d; symmetric so M10 == M01
+  const dx2 = dx * dx, dy2 = dy * dy, dxy = dx * dy;
+  const M00 = ks * dx2 + kt * dy2;
+  const M01 = (ks - kt) * dxy;
+  const M11 = ks * dy2 + kt * dx2;
+  // pivot the scale at sqPiv (planted contact, or the wheel centre for a balanced
+  // pinch) so that point stays fixed under the transform
+  const pcx = w.sqPivX || 0, pcy = w.sqPivY || 0;
+  const ox = pcx - (M00 * pcx + M01 * pcy);
+  const oy = pcy - (M01 * pcx + M11 * pcy);
+  ctx.transform(M00, M01, M01, M11, ox, oy);
+}
+
 function drawWheel(ctx, w) {
   // tyre tread + rim are skin-tier dependent: stock = bald slick, WARMED UP =
   // light grip texture, RED HOT/AFTERBURNER = chunky off-road knobs, MASTER =
@@ -4222,9 +4254,48 @@ function drawWheel(ctx, w) {
   // (tier 3) → gold armored (tier 4)
   const sk = bikePalette(BIKE_SKIN);
   const armored = sk.tread === 'armor';
+  // Strobe guard (the wagon-wheel effect). A spinning wheel sampled once per
+  // display frame aliases: once it turns more than half of a repeated feature's
+  // spacing between frames, that feature reads as slowing — or running BACKWARD —
+  // at the very moment the wheel is fastest. The chosen look is "crisp tread,
+  // blur only at the very top". Cosmetic; the sim's w.rot / w.spin are untouched.
+  //  (1) Cap the DRAWN per-frame rotation just under the reversal point of THIS
+  //      skin's finest CHUNKY feature, so its spokes AND lugs/knobs always read
+  //      crisp and FORWARD (never strobe) right through normal riding. The bald
+  //      slick and the subtle-siped grip tyre have no chunky ring, so they keep a
+  //      faster spoke-only cap; the 16-knob and 12-lug treads need a tighter one.
+  //      The trade is a touch of apparent top spin for crisp, forward tread. Δw.rot
+  //      IS the true per-frame rotation (w.rot integrates spin in the sim), so the
+  //      cap is refresh-rate-correct; a wheel drawn twice in a frame (a gym-mirror
+  //      reflection) just sees Δ≈0 the second time.
+  const STROBE_CAP = armored ? 0.24 : sk.tread === 'knob' ? 0.18 : 0.55;
+  if (w._rotVis === undefined) w._rotVis = w._rotPrev = w.rot;
+  w._rotVis += Math.max(-STROBE_CAP, Math.min(STROBE_CAP, w.rot - w._rotPrev));
+  w._rotPrev = w.rot;
+  //  (2) Near MAX spin, dissolve the (now strobe-free) crisp tread into a smooth
+  //      motion-blur band — a top-end flourish for speed feel, not strobe
+  //      mitigation (the cap already handles that). blurFrac ramps 0→1 over the top
+  //      slice of the spin range, driven by |w.spin| so it matches across a mirror's
+  //      second pass and is 0 at rest. (The 30 fine grip sipes are far too dense to
+  //      keep crisp at any real spin, so those alone still fade out early instead.)
+  const maxSpin = (typeof PHYS !== 'undefined' && PHYS.maxSpin) || 95;
+  const spinFrac = Math.abs(w.spin || 0) / maxSpin;
+  const blurFrac = Math.max(0, Math.min(1, (spinFrac - 0.72) / 0.23)); // 72%→95% of max
+  const sipeVis = Math.max(0, Math.min(1,                                // grip-only
+    (0.8 * Math.PI / 30 - Math.abs(w.spin || 0) / 60) / (0.45 * Math.PI / 30)));
+  const blurBand = (r, width) => {                  // dark band fading in near max
+    if (blurFrac <= 0) return;
+    ctx.save();
+    ctx.globalAlpha = blurFrac * 0.6;
+    ctx.strokeStyle = '#0a0a0e';
+    ctx.lineWidth = width;
+    ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+  };
   ctx.save();
   ctx.translate(w.pos.x, w.pos.y);
-  ctx.rotate(w.rot); // spin the whole wheel so the tread and spokes show speed
+  wheelSquash(ctx, w); // tyre deform, applied BEFORE the spin so the flat is world-fixed
+  ctx.rotate(w._rotVis); // capped spin angle so the tread reads crisp + forward
   // fat tire — normally its outer stroke edge reaches ~wheelR (the collider);
   // the MASTER 'armor' tire runs FATTER and punches a little past the hitbox on
   // purpose (purely cosmetic — the collider is unchanged)
@@ -4234,46 +4305,65 @@ function drawWheel(ctx, w) {
   ctx.arc(0, 0, armored ? 0.34 : 0.315, 0, Math.PI * 2);
   ctx.stroke();
   if (armored) {
-    // monstrous lugs: a dozen chunky blocks punching well past the carcass, a
-    // gold stud capping every other one
-    ctx.strokeStyle = '#08080c';
-    ctx.lineWidth = 0.10;
-    ctx.lineCap = 'butt';
-    ctx.beginPath();
-    for (let k = 0; k < 12; k++) {
-      const a = k * Math.PI * 2 / 12, c = Math.cos(a), s = Math.sin(a);
-      ctx.moveTo(c * 0.31, s * 0.31);
-      ctx.lineTo(c * 0.50, s * 0.50);
+    blurBand(0.46, 0.15);                 // motion-blur band fades in near max
+    if (blurFrac < 1) {
+      // monstrous lugs: a dozen chunky blocks punching well past the carcass, a
+      // gold stud capping every other one. Crisp + forward (the cap holds them
+      // there) right up until they dissolve into the blur band at the very top.
+      ctx.globalAlpha = 1 - blurFrac;
+      ctx.strokeStyle = '#08080c';
+      ctx.lineWidth = 0.10;
+      ctx.lineCap = 'butt';
+      ctx.beginPath();
+      for (let k = 0; k < 12; k++) {
+        const a = k * Math.PI * 2 / 12, c = Math.cos(a), s = Math.sin(a);
+        ctx.moveTo(c * 0.31, s * 0.31);
+        ctx.lineTo(c * 0.50, s * 0.50);
+      }
+      ctx.stroke();
+      ctx.fillStyle = sk.gold || '#ffce4a';
+      for (let k = 0; k < 12; k += 2) {
+        const a = k * Math.PI * 2 / 12;
+        ctx.beginPath(); ctx.arc(Math.cos(a) * 0.485, Math.sin(a) * 0.485, 0.035, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.lineCap = 'round';
+      ctx.globalAlpha = 1;
     }
-    ctx.stroke();
-    ctx.fillStyle = sk.gold || '#ffce4a';
-    for (let k = 0; k < 12; k += 2) {
-      const a = k * Math.PI * 2 / 12;
-      ctx.beginPath(); ctx.arc(Math.cos(a) * 0.485, Math.sin(a) * 0.485, 0.035, 0, Math.PI * 2); ctx.fill();
-    }
-    ctx.lineCap = 'round';
   } else if (sk.tread === 'knob') {
-    // chunky knobs poking out around the carcass
-    ctx.strokeStyle = '#0b0b0f';
-    ctx.lineWidth = 0.055;
-    ctx.beginPath();
-    for (let k = 0; k < 16; k++) {
-      const a = k * Math.PI * 2 / 16, c = Math.cos(a), s = Math.sin(a);
-      ctx.moveTo(c * 0.30, s * 0.30);
-      ctx.lineTo(c * 0.42, s * 0.42);
+    blurBand(0.385, 0.10);
+    if (blurFrac < 1) {
+      // chunky knobs poking out around the carcass — crisp + forward until they
+      // dissolve into the blur band near max
+      ctx.globalAlpha = 1 - blurFrac;
+      ctx.strokeStyle = '#0b0b0f';
+      ctx.lineWidth = 0.055;
+      ctx.beginPath();
+      for (let k = 0; k < 16; k++) {
+        const a = k * Math.PI * 2 / 16, c = Math.cos(a), s = Math.sin(a);
+        ctx.moveTo(c * 0.30, s * 0.30);
+        ctx.lineTo(c * 0.42, s * 0.42);
+      }
+      ctx.stroke();
+      ctx.globalAlpha = 1;
     }
-    ctx.stroke();
   } else if (sk.tread === 'grip') {
-    // light grip: fine, shallow sipes cut around the outer edge
-    ctx.strokeStyle = '#07070b';
-    ctx.lineWidth = 0.028;
-    ctx.beginPath();
-    for (let k = 0; k < 30; k++) {
-      const a = k * Math.PI * 2 / 30, c = Math.cos(a), s = Math.sin(a);
-      ctx.moveTo(c * 0.345, s * 0.345);
-      ctx.lineTo(c * 0.40, s * 0.40);
+    if (sipeVis > 0) {
+      // light grip: fine, shallow sipes cut around the outer edge. Far too dense
+      // (30-fold) to hold crisp at speed, but subtle and set within the carcass
+      // edge, so they just fade out early as the wheel winds up (the carcass keeps
+      // the silhouette — no blur band needed)
+      ctx.globalAlpha = sipeVis;
+      ctx.strokeStyle = '#07070b';
+      ctx.lineWidth = 0.028;
+      ctx.beginPath();
+      for (let k = 0; k < 30; k++) {
+        const a = k * Math.PI * 2 / 30, c = Math.cos(a), s = Math.sin(a);
+        ctx.moveTo(c * 0.345, s * 0.345);
+        ctx.lineTo(c * 0.40, s * 0.40);
+      }
+      ctx.stroke();
+      ctx.globalAlpha = 1;
     }
-    ctx.stroke();
   } else {
     // smooth slick: a faint sidewall sheen so the bald tire looks deliberate
     ctx.strokeStyle = '#33333c';
@@ -4574,28 +4664,40 @@ function drawBike(ctx, bike, headless, back, lamps, t) {
 
   // wheels first; the chassis, bodywork and rider all layer over them
   for (const w of bike.wheels) drawWheel(ctx, w);
-  // glowing wheel rims (Afterburner) — a soft pulsing halo hugging each tire
+  // glowing wheel rims (Afterburner) — a soft pulsing halo hugging each tire.
+  // Drawn centred on the wheel under the SAME squash as the tyre, so the halo
+  // deforms with it instead of floating as a perfect circle.
   if (sk.rimGlow) {
     const gp = 0.55 + 0.45 * Math.sin(T * 4);
     for (const w of bike.wheels) {
-      const rg = ctx.createRadialGradient(w.pos.x, w.pos.y, 0.22, w.pos.x, w.pos.y, 0.52);
+      ctx.save();
+      ctx.translate(w.pos.x, w.pos.y);
+      wheelSquash(ctx, w);
+      const rg = ctx.createRadialGradient(0, 0, 0.22, 0, 0, 0.52);
       rg.addColorStop(0, `rgba(${sk.rimGlow},0)`);
       rg.addColorStop(0.55, `rgba(${sk.rimGlow},${0.5 * gp})`);
       rg.addColorStop(1, `rgba(${sk.rimGlow},0)`);
       ctx.fillStyle = rg;
-      ctx.beginPath(); ctx.arc(w.pos.x, w.pos.y, 0.52, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(0, 0, 0.52, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
     }
   }
   // MASTER: an iridescent rim ring cycling through the spectrum as the wheel
-  // spins — drawn additively over the gold halo so it reads as a prism gleam
+  // spins — drawn additively over the gold halo so it reads as a prism gleam.
+  // Squashed with the tyre (centred + transformed) so the rainbow ring deforms
+  // with the wheel rather than staying a rigid circle.
   if (sk.prism) {
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     for (const w of bike.wheels) {
       const hue = (T * 100 + w.rot * 57.3) % 360; // spin the hue with the wheel
+      ctx.save();
+      ctx.translate(w.pos.x, w.pos.y);
+      wheelSquash(ctx, w);
       ctx.strokeStyle = `hsla(${hue},95%,62%,0.7)`;
       ctx.lineWidth = 0.05;
-      ctx.beginPath(); ctx.arc(w.pos.x, w.pos.y, 0.275, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(0, 0, 0.275, 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
     }
     ctx.restore();
   }
@@ -4826,17 +4928,36 @@ function drawBike(ctx, bike, headless, back, lamps, t) {
   // no stray seams where two body parts meet. The torso runs from the seat
   // (its rear sits back into the saddle) up to the shoulders so the rider reads
   // as a long body leaning over the tank, not a stubby blob.
-  const hip = L(-0.30, -0.46);
-  const shoulder = L(-0.13, -0.78);
-  const knee = L(0.16, -0.28);
-  const foot = L(0.04, 0.04);
+  //
+  // ---- rider soft-body jostle (see updateRiderJostle in game.js) ----
+  // bike.jostle{X,Y} is a world-space offset the rider's upper body lags the
+  // chassis by on every shove, brake, bump and landing. R() is L() plus that
+  // offset, scaled by how high up the body the point sits: ~0 at the seat line,
+  // ~1 at the shoulders, ~1.3 at the head. So the torso heaves and the head
+  // bobs while the butt stays in the saddle, the hands stay on the bars and the
+  // boots stay on the pegs — which bends the arms and legs at their joints. It
+  // rides the shared rider geometry, so every skin jostles for free. Anything
+  // truly planted (boots, bar grips) keeps using L().
+  const jox = bike.jostleX || 0, joy = bike.jostleY || 0;
+  const jWeight = (ly) => {
+    const w = (-ly - 0.30) / 0.55;        // 0 at the seat line, 1 at the shoulders
+    return w < 0 ? 0 : w > 1.4 ? 1.4 : w; // clamped so nothing runs away
+  };
+  const R = (lx, ly) => {
+    const p = L(lx, ly), w = jWeight(ly);
+    return { x: p.x + jox * w, y: p.y + joy * w };
+  };
+  const hip = R(-0.30, -0.46);
+  const shoulder = R(-0.13, -0.78);
+  const knee = R(0.16, -0.28);
+  const foot = L(0.04, 0.04);   // boots planted on the pegs
   const RIMC = '244,236,217';   // cream; a thin OPAQUE core + a faint feather
   const RIMO = '#f4ecd9';       // so it reads as a soft edge, never see-through
   const bootPts = [L(-0.06, -0.02), L(0.18, -0.04), L(0.22, 0.10), L(0.22, 0.18), L(-0.08, 0.18)];
   // torso silhouette: rear/butt set back into the seat (-0.62) → up the spine →
   // shoulders → chest leaning forward over the tank → belly → back to the hip
-  const torsoPts = [L(-0.14, -0.48), L(0.07, -0.70), L(0.00, -0.84), L(-0.26, -0.85),
-                    L(-0.46, -0.74), L(-0.60, -0.56), L(-0.62, -0.44), L(-0.34, -0.45)];
+  const torsoPts = [R(-0.14, -0.48), R(0.07, -0.70), R(0.00, -0.84), R(-0.26, -0.85),
+                    R(-0.46, -0.74), R(-0.60, -0.56), R(-0.62, -0.44), R(-0.34, -0.45)];
   const outline = (pts, w, col) => {  // stroke a closed panel path
     ctx.strokeStyle = col; ctx.lineWidth = w; ctx.beginPath();
     ctx.moveTo(pts[0].x, pts[0].y);
@@ -4870,9 +4991,9 @@ function drawBike(ctx, bike, headless, back, lamps, t) {
   strokeSeg(ctx, L(0.14, 0.18), L(0.24, 0.18), 0.04, sk.sole);   // sole
   disc(knee, 0.10, sk.pad);                                      // knee pad
   poly(torsoPts, sk.jacket);                                     // jacket
-  poly([L(-0.62, -0.44), L(-0.60, -0.56), L(-0.44, -0.62), L(-0.36, -0.46)], sk.shade); // lower-back shade
-  poly([L(-0.08, -0.56), L(0.07, -0.70), L(0.00, -0.80), L(-0.16, -0.66)], sk.hi);      // chest highlight
-  if (sk.stripe) strokeSeg(ctx, L(-0.30, -0.50), L(-0.04, -0.80), 0.04, sk.stripe);     // chest stripe
+  poly([R(-0.62, -0.44), R(-0.60, -0.56), R(-0.44, -0.62), R(-0.36, -0.46)], sk.shade); // lower-back shade
+  poly([R(-0.08, -0.56), R(0.07, -0.70), R(0.00, -0.80), R(-0.16, -0.66)], sk.hi);      // chest highlight
+  if (sk.stripe) strokeSeg(ctx, R(-0.30, -0.50), R(-0.04, -0.80), 0.04, sk.stripe);     // chest stripe
   disc(shoulder, 0.14, sk.pad);                                  // shoulder pad
   // MASTER: the rider's plate armor — a gold-edged chest plate (with a sternum
   // ridge) and a shoulder pauldron, matching the bike's panels + the helmet.
@@ -4886,17 +5007,17 @@ function drawBike(ctx, bike, headless, back, lamps, t) {
       for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
       ctx.closePath(); ctx.stroke();
     };
-    aplate([L(-0.34, -0.54), L(-0.20, -0.74), L(0.02, -0.70), L(-0.02, -0.52)], '#1a1820'); // chest plate
-    strokeSeg(ctx, L(-0.17, -0.70), L(-0.19, -0.54), 0.024, GD);    // sternum ridge (base)
-    strokeSeg(ctx, L(-0.17, -0.70), L(-0.19, -0.54), 0.01, GT);     // sternum ridge (gold)
-    aplate([L(-0.26, -0.82), L(-0.04, -0.84), L(0.00, -0.72), L(-0.22, -0.70)], '#1a1820'); // pauldron
-    strokeSeg(ctx, L(-0.24, -0.74), L(-0.02, -0.76), 0.016, GD);    // pauldron ridge
+    aplate([R(-0.34, -0.54), R(-0.20, -0.74), R(0.02, -0.70), R(-0.02, -0.52)], '#1a1820'); // chest plate
+    strokeSeg(ctx, R(-0.17, -0.70), R(-0.19, -0.54), 0.024, GD);    // sternum ridge (base)
+    strokeSeg(ctx, R(-0.17, -0.70), R(-0.19, -0.54), 0.01, GT);     // sternum ridge (gold)
+    aplate([R(-0.26, -0.82), R(-0.04, -0.84), R(0.00, -0.72), R(-0.22, -0.70)], '#1a1820'); // pauldron
+    strokeSeg(ctx, R(-0.24, -0.74), R(-0.02, -0.76), 0.016, GD);    // pauldron ridge
   }
   // collar (under the head photo, which overlaps it) — skipped when the head
   // has popped off on death, so there's no floating neck stub
   if (!headless) {
     ctx.fillStyle = sk.shade;
-    const nk = L(-0.10, -0.88); ctx.beginPath(); ctx.arc(nk.x, nk.y, 0.10, 0, Math.PI * 2); ctx.fill();
+    const nk = R(-0.10, -0.88); ctx.beginPath(); ctx.arc(nk.x, nk.y, 0.10, 0, Math.PI * 2); ctx.fill();
   }
 
   // The arm is two bones hinged at the elbow: an upper arm (shoulder→elbow) and
@@ -4920,7 +5041,7 @@ function drawBike(ctx, bike, headless, back, lamps, t) {
     // bar never moves; only the rider's hand leaves it.
     elbow = restElbow;
     const restA = Math.atan2(restHand.y - elbow.y, restHand.x - elbow.x);
-    const headPt = L(PHYS.headX + 0.14, PHYS.headY + 0.08); // front of the helmet
+    const headPt = R(PHYS.headX + 0.14, PHYS.headY + 0.08); // front of the helmet (jostles with it)
     let dA = Math.atan2(headPt.y - elbow.y, headPt.x - elbow.x) - restA;
     dA -= Math.PI * 2 * Math.floor((dA + Math.PI) / (Math.PI * 2)); // shortest turn
     // a little less than the full elbow→helmet turn so it stops shy of the head
@@ -4949,8 +5070,10 @@ function drawBike(ctx, bike, headless, back, lamps, t) {
   if (sk.stripe) strokeSeg(ctx, shoulder, elbow, 0.04, sk.stripe); // sleeve stripe
 
   if (!headless) {
-    const head = L(PHYS.headX, PHYS.headY);
-    drawHead(ctx, head.x, head.y, m, bike.angle, back);
+    const head = R(PHYS.headX, PHYS.headY);
+    // the head bobs with the body (R) and nods on sharp pitches/slams (headWob,
+    // a world-frame angle so a counter-clockwise whip tilts it that way too)
+    drawHead(ctx, head.x, head.y, m, bike.angle + (bike.headWob || 0), back);
   }
   // forearm + glove are drawn last, OVER the helmet, so the raised volt hand
   // passes in front of the head instead of disappearing behind it
@@ -7050,6 +7173,34 @@ function drawHUD(ctx, W, H, o) {
     }
   }
   ctx.shadowBlur = 0;
+
+  // tiny speedometer in the bottom-right corner of the playfield, only while
+  // actually riding (a frozen "0 mph" on the crash/finish/ready screens would
+  // just be noise). vel is in world m/s; 2.237 converts to mph
+  const ended = o.state === 'dead' || o.state === 'finished'
+    || o.state === 'ready' || (o.replay && o.replay.done)
+    || (o.test && o.test.done);
+  if (o.speed != null && !ended) {
+    const mph = Math.max(0, Math.round(o.speed * 2.23694));
+    const sf = Math.max(12, Math.round(H / 40));
+    ctx.font = `bold ${sf}px "Consolas","Courier New",monospace`;
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'bottom';
+    ctx.fillStyle = ink.text;
+    ctx.shadowColor = ink.halo;
+    ctx.shadowBlur = Math.max(2, Math.round(sf * 0.3));
+    // the bottom-right corner is the gas button's seat on touch, so lift the
+    // readout clear of the button band there; otherwise it hugs the corner
+    let sy = H - 12 - SAFE.bottom;
+    if (o.touch) {
+      const bs = Math.max(56, Math.min(Math.min(W, H) * 0.17, 96));
+      sy = H - SAFE.bottom - Math.max(10, bs * 0.2) - bs - 8;
+    }
+    ctx.fillText(`${mph} mph`, W - 14 - SAFE.right, sy);
+    ctx.shadowBlur = 0;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+  }
 
   // level name and number tucked under the minimap, right-aligned to its
   // edge so it never crowds the left metrics; the replay and test-ride

@@ -202,11 +202,16 @@ control reference; the short version:
 - **Test** (`Ctrl+Enter`) rides the map through the real sim — `Enter`
   retries instantly, `Esc` returns to the editor. Test rides bank no best
   times or checkpoints.
-- **Save**/**Load** (`Ctrl+S`/`Ctrl+O`) write and read `.bmm` map files.
-  The working map also autosaves to localStorage, so a closed tab picks
-  up where it left off. **New** and **Load** discard the current map, so
-  with unsaved edits they ask to confirm first (`Enter` discards, `Esc`
-  keeps it).
+- **Save** (`Ctrl+S`) writes the working map to a `.bmm` file.
+- **Load** (`Ctrl+O`) opens a folder browser: pick a maps folder once
+  (Chromium remembers it in IndexedDB, separate from the replays folder),
+  then it lists every `.bmm` in it with a live preview of the highlighted
+  map — arrows or the wheel scroll, a click or `Enter` loads, `Esc` closes.
+  Browsers without the File System Access API fall back to a single-file
+  open dialog. The working map also autosaves to localStorage, so a closed
+  tab picks up where it left off. **New** and **Load** discard the current
+  map, so with unsaved edits they ask to confirm first (`Enter` discards,
+  `Esc` keeps it).
 
 A `.bmm` file is JSON: a format header (`format`, `version`, `savedAt`) plus the
 fields of a level (the vertex list, `start`, `burgers`, `goal`, `theme`, and the
