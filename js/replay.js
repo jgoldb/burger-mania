@@ -17,10 +17,12 @@ const REPLAY = (() => {
   const FORMAT = 'burger-mania-replay';
   const VERSION = 11; // bumped 2026-06-17: tire + volt + suspension feel passes (all
                      // batched into the still-undeployed v11, so no new version number).
-                     // Suspension: softened (springK 23->20->18, ~28% more travel) and
-                     // recoil slowed significantly (springC 3.3->4.0->5) — the damping ratio
-                     // climbs ~0.73->1.26, now OVERDAMPED, so the spring eases back to rest
-                     // slowly without overshoot instead of recoiling.
+                     // Suspension: softened (springK 23->20->18) then STIFFENED back up
+                     // (->24) for more recoil, and the recoil retuned (springC 3.3->4.0->5
+                     // ->3.2) — first slowed to a dead overdamped creep, then eased back
+                     // under critical. With springC held at 3.2, stiffening to 24 drops the
+                     // damping ratio ~0.80->0.70, so it bounces more and firmer (and bottoms
+                     // out less). Gravity raised (g 2.7->3.0) for a heavier, more planted feel.
                      // Wheel-inertia pass: the driven wheel was lightened (wheelI
                      // 0.018->0.012) so a free-spinning (gas-off) wheel no longer dumps a
                      // big forward lurch when it lands — its stored angular momentum, and

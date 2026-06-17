@@ -2,14 +2,13 @@
 
 // Tuning constants for the bike. Units: meters, seconds, radians.
 const PHYS = {
-  g: 2.7,          // ONE uniform gravity, air and ground alike (Elasto Mania — no
+  g: 3.0,          // ONE uniform gravity, air and ground alike (Elasto Mania — no
                    // air/ground split). Was 2.8, lowered to 2.5 for a floatier
-                   // Elasto-like arc, then nudged back to 2.7 to compensate for the
-                   // reduced air drag (drag 0.03->0.022): less drag lets jumps and
-                   // bounces carry more energy, so a touch more gravity keeps them
-                   // planted and controlled. NOTE: a lighter bike recoils off the
-                   // suspension more readily — to stop the extra hop, springC was
-                   // raised in step (see below).
+                   // Elasto-like arc, nudged back to 2.7 to compensate for the reduced
+                   // air drag (drag 0.03->0.022), briefly eased to 2.6, then RAISED to 3.0
+                   // per the user for a heavier, more planted feel — it also loads the now-
+                   // stiffer suspension (springK 28) harder, which feeds more recoil off
+                   // landings and bumps.
                    // The ground feeling too light at this value
                    // was NOT a gravity problem: it was the volt being too strong for
                    // the ledge and the engine wheelie too strong for the volt to
@@ -62,28 +61,33 @@ const PHYS = {
                    // lean, wheelie and stoppie unchanged. Raise further (and bump
                    // voltAcc to hold the lean) for a weaker air flick still
 
-  springK: 18,     // suspension stiffness. 42(stock)->26->20->23->20->18: softened twice for a
-                   // SOFTER/STRETCHIER/SLOWER suspension, nudged back up to 23 ("a drop less
-                   // soft"), then softened back down (20, then a further drop to 18) per the
-                   // user. At 18: travel ~42/18 = 2.3x stock under the same load, spring
-                   // frequency ω=sqrt(K/wheelM) ~35% below stock (period ~0.45->0.69 s) so it
-                   // takes even longer to compress and spring back. CAVEAT it ALSO sets
-                   // the drop-death line: the body has no collider, so a hard landing
-                   // compresses the spring until the rigid head reaches terrain = death,
-                   // and that bottom-out depth scales with 1/K — softer dies from lower
-                   // drops (mostly held by the raised springCFade below; firming back to
-                   // 23 actually buys a little fall-toughness back). Land flat to survive,
-                   // Elasto-style
-  springC: 5,      // suspension damping — THE recoil/bounce lever. RAISED 3.3->4.0->5 to slow
-                   // the spring-back recoil SIGNIFICANTLY per the user. The DAMPING RATIO
-                   // (springC/(2*sqrt(springK*wheelM))) tracks the stiffness too: ~0.66 at
-                   // stock 42; with the softer springK 18 below, 5 puts it at ~1.26 — now
-                   // OVERDAMPED (past critical 1.0), so the spring no longer overshoots/recoils
-                   // at all: it eases back to rest slowly without a bounce — the slowest,
-                   // deadest spring-back yet (the user pushed it past my ~0.95 target). Lower
-                   // = bouncier (snaps back faster, recoils once under 1.0), higher = even
-                   // more planted / slower creep back; the hard-LANDING bounce + fall-
-                   // toughness specifically is springCFade
+  springK: 24,     // suspension stiffness. 42(stock)->26->20->23->20->18->24: softened down
+                   // to 18 for a soft/slow ride, then STIFFENED back up to 24 to get more
+                   // RECOIL in general per the user. A stiffer spring pushes back harder and
+                   // faster AND — holding springC fixed — drops the damping ratio (~0.80->
+                   // 0.70, see springC) so it bounces more; it also bottoms out less, so more
+                   // of a hit's energy returns as rebound instead of crashing the head
+                   // through. At 24: travel ~42/24 = 1.75x stock under the same load, spring
+                   // frequency ω=sqrt(K/wheelM) ~24% below stock (period ~0.45->0.60 s) — it
+                   // compresses and springs back quicker/firmer than the soft 18. CAVEAT it
+                   // ALSO sets the drop-death line: the body has no collider, so a hard
+                   // landing compresses the spring until the rigid head reaches terrain =
+                   // death, and that bottom-out depth scales with 1/K — softer dies from
+                   // lower drops, so stiffening back to 24 BUYS fall-toughness back (on top
+                   // of the raised springCFade below). Land flat to survive, Elasto-style
+  springC: 3.2,    // suspension damping — the recoil/bounce lever, paired with springK.
+                   // 3.3->4.0->5 slowed the recoil to a dead overdamped creep, then EASED
+                   // 5->3.2 for a little bounce. HELD at 3.2 while springK was stiffened
+                   // 18->24 for more recoil: the DAMPING RATIO (springC/(2*sqrt(springK*
+                   // wheelM))) therefore DROPPED ~0.80->0.70 — stiffening alone makes it
+                   // bounce more, because ζ falls as springK rises. At ~0.70 it overshoots
+                   // a few % on the way back (more than the ~1.5% at 0.80), and the firmer
+                   // springK 24 raises ω so that bounce is also quicker/snappier — more
+                   // recoil on both counts. Bounce is a threshold: at/above critical
+                   // (here springC >= 2*sqrt(24*0.22) ~= 4.60) there is NO overshoot at all,
+                   // so any bounce needs ζ under 1. Lower springC (or higher springK) = more
+                   // bounce; higher springC = back toward a dead creep. The hard-LANDING
+                   // bounce + fall-toughness specifically is springCFade
   springCFade: 36, // relative speed (m/s) where the suspension damper fades to
                    // half, so a fast compression rides mostly on the spring (and
                    // bounces) instead of being soaked dead. The body has no terrain
