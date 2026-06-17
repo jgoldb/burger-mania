@@ -90,6 +90,29 @@
 (function () {
   if (!('serviceWorker' in navigator) || !location.protocol.startsWith('http')) return;
   var sw = navigator.serviceWorker;
+
+  // Local development (localhost / 127.0.0.1 / ::1): never run a service worker.
+  // Its offline cache pins stale JS and maps, so a plain reload after an edit
+  // looks like it did nothing. Tear down any worker a prior dev session (or a
+  // visit to the production origin under the same host) left behind, drop its
+  // caches, and bail before registering a new one. The one-time reload only
+  // fires when a controller was actually in charge, so it can't loop: after it,
+  // there are no registrations left to find.
+  var host = location.hostname;
+  if (host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1' || host === '0.0.0.0') {
+    sw.getRegistrations().then(function (regs) {
+      Promise.all(regs.map(function (reg) { return reg.unregister(); })).then(function () {
+        if (regs.length && sw.controller) location.reload();
+      });
+    }).catch(function () {});
+    if (window.caches && caches.keys) {
+      caches.keys().then(function (keys) {
+        keys.forEach(function (k) { caches.delete(k); });
+      }).catch(function () {});
+    }
+    return;
+  }
+
   var hadController = !!sw.controller;  // false on the very first visit
   var waiting = null;                   // a new worker that's installed & waiting
   var poll = null;
