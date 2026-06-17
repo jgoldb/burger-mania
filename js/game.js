@@ -267,6 +267,15 @@
     }
   } catch (e) { /* unreadable save: ride at full volume */ }
 
+  const MUTE_KEY = 'burger-mania-muted';
+  try { muted = localStorage.getItem(MUTE_KEY) === '1'; } catch (e) { /* unreadable: start unmuted */ }
+
+  function setMuted(m) {
+    muted = m;
+    MUSIC.setMuted(muted);
+    try { localStorage.setItem(MUTE_KEY, muted ? '1' : '0'); } catch (e) { /* unwritable: live for this session only */ }
+  }
+
   // sliders are stored 0..1 and squared into gain so they track
   // perceived loudness rather than raw amplitude
   function applyVolume() {
@@ -340,6 +349,7 @@
       sLfo.start();
       suspSnd = { osc: sOsc, gain: sGain, filt: sFilt, lfo: sLfo };
       MUSIC.init(AC, musicGain);
+      MUSIC.setMuted(muted); // carry a persisted mute into the freshly-built context
     } catch (e) { /* no audio available */ }
   }
 
@@ -1398,16 +1408,14 @@
     // the map name is being typed
     if (state === 'editor') {
       if (!EDITOR.naming && (e.key === 'm' || e.key === 'M')) {
-        muted = !muted;
-        MUSIC.setMuted(muted);
+        setMuted(!muted);
         return;
       }
       EDITOR.key(e);
       return;
     }
     if (e.key === 'm' || e.key === 'M') {
-      muted = !muted;
-      MUSIC.setMuted(muted);
+      setMuted(!muted);
       return;
     }
     switch (state) {
