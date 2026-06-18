@@ -12,8 +12,31 @@ const TOUCH = (() => {
   try { active = matchMedia('(pointer: coarse)').matches; } catch (e) { /* stub DOM */ }
 
   // which cluster buttons are currently held (recomputed on every touch
-  // event, read by the game every sim frame)
-  const input = { up: false, down: false, left: false, right: false };
+  // event, read by the game every sim frame). `flip` is cosmetic-only: the
+  // turn-around is a one-shot fired from game.js (`flipQueued`), so the sim
+  // never reads this — it only drives the button's held press animation.
+  const input = { up: false, down: false, left: false, right: false, flip: false };
+
+  // animated press feedback: each pressable half swells a little while held so
+  // it's obvious which side (or both) a thumb is on. These are cosmetic scale
+  // factors that ease toward PRESS_SCALE when the matching input is held and
+  // back to 1 when released; advanced once per drawn frame in `animate` off the
+  // wall clock (overlay-only, so it never touches the deterministic sim).
+  const PRESS_SCALE = 1.13;   // how far a held half swells
+  const RISE = 30, FALL = 17; // approach rates (per second): snappy down, softer up
+  const scale = { up: 1, down: 1, left: 1, right: 1, flip: 1 };
+  let lastT = 0;
+  function animate() {
+    const t = Date.now() / 1000;
+    let dt = lastT ? t - lastT : 0;
+    lastT = t;
+    if (dt > 0.1) dt = 0.1;   // a tab-out shouldn't snap everything at once
+    for (const k in scale) {
+      const target = input[k] ? PRESS_SCALE : 1;
+      const f = 1 - Math.exp(-(input[k] ? RISE : FALL) * dt);
+      scale[k] += (target - scale[k]) * f;
+    }
+  }
 
   function activate() { active = true; }
 
@@ -63,7 +86,7 @@ const TOUCH = (() => {
   // purely positional, so a finger sliding off a button releases it and
   // sliding onto one presses it
   function sync(list, W, H) {
-    input.up = input.down = input.left = input.right = false;
+    input.up = input.down = input.left = input.right = input.flip = false;
     if (!list || !list.length) return;
     const L = layout(W, H);
     for (let i = 0; i < list.length; i++) {
@@ -77,6 +100,8 @@ const TOUCH = (() => {
       if (hit(L.brake, x, y)) input.down = true;
       if (hit(L.left, x, y)) input.left = true;
       if (hit(L.right, x, y)) input.right = true;
+      // cosmetic only — lights/swells the turn-around while a finger rests on it
+      if (hit(L.flip, x, y)) input.flip = true;
     }
   }
 
@@ -108,29 +133,65 @@ const TOUCH = (() => {
     ctx.restore();
   }
 
+  // a rounded-rect path that rounds only one end's corners: the outer end of a
+  // half-tile keeps the capsule's radius while the inner (divider) edge stays
+  // square, so two halves butt into one seamless capsule. arcTo with r=0 just
+  // draws a sharp corner.
+  function halfTilePath(ctx, x, y, w, h, rad, roundLeft) {
+    const rl = roundLeft ? rad : 0, rr = roundLeft ? 0 : rad;
+    ctx.beginPath();
+    ctx.moveTo(x + rl, y);
+    ctx.lineTo(x + w - rr, y);
+    ctx.arcTo(x + w, y, x + w, y + rr, rr);
+    ctx.lineTo(x + w, y + h - rr);
+    ctx.arcTo(x + w, y + h, x + w - rr, y + h, rr);
+    ctx.lineTo(x + rl, y + h);
+    ctx.arcTo(x, y + h, x, y + h - rl, rl);
+    ctx.lineTo(x, y + rl);
+    ctx.arcTo(x, y, x + rl, y, rl);
+    ctx.closePath();
+  }
+
+  // one half of a pair: at rest only its dim arrow shows (so the capsule reads
+  // as a single dark shape); while held it lights up as a raised "key" and the
+  // whole key — tile and arrow — swells by `sc` about its own centre, the press
+  // animation that makes the active side obvious. `sc` of exactly 1 (released
+  // and settled) draws no tile, matching the old quiescent look.
+  function half(ctx, r, rad, roundLeft, ang, hot, sc) {
+    const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+    const p = (sc - 1) / (PRESS_SCALE - 1);   // 0 at rest, 1 fully pressed
+    ctx.save();
+    if (sc !== 1) { ctx.translate(cx, cy); ctx.scale(sc, sc); ctx.translate(-cx, -cy); }
+    if (p > 0.004) {
+      // the lit key fades in/out together with the swell, so a release shrinks
+      // and dims off smoothly rather than popping away at the end
+      ctx.globalAlpha = Math.min(1, p * 1.5);
+      halfTilePath(ctx, r.x, r.y, r.w, r.h, rad, roundLeft);
+      ctx.fillStyle = 'rgba(70,34,10,0.92)';
+      ctx.fill();
+      ctx.lineWidth = 2.5;
+      ctx.strokeStyle = '#f9c623';
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+    tri(ctx, cx, cy, r.w * 0.22, ang, ink(hot));
+    ctx.restore();
+  }
+
   // two adjacent buttons drawn as ONE capsule: a single rounded outline around
-  // the pair, each half lit when held, with a faint centre divider so the two
-  // sides still read. Pressing the seam lights both halves. `a` is the
+  // the pair, a faint centre divider so the two sides still read, and each half
+  // lighting + swelling when held (pressing the seam lights both). `a` is the
   // left/bottom half, `b` the right/top half; they must butt together with no
   // gap (a.x + a.w === b.x), so the whole span is one continuous rounded rect.
-  function pairBox(ctx, a, b, hotA, hotB) {
+  // `scA`/`scB` are the animated press scales for each half (see `animate`).
+  function arrowPair(ctx, a, b, angA, angB, hotA, hotB, scA, scB) {
     const x = a.x, y = a.y, w = a.w + b.w, h = a.h, mid = a.x + a.w;
     const rad = Math.min(16, a.w * 0.2);
     const hot = hotA || hotB;
+    // dim capsule body
     ctx.fillStyle = 'rgba(20,12,6,0.55)';
     roundRectPath(ctx, x, y, w, h, rad);
     ctx.fill();
-    // lit half(s), clipped to the capsule so the outer corners stay rounded
-    // while the inner (divider) edge stays square — the two read as one shape
-    if (hot) {
-      ctx.save();
-      roundRectPath(ctx, x, y, w, h, rad);
-      ctx.clip();
-      ctx.fillStyle = 'rgba(70,34,10,0.92)';
-      if (hotA) ctx.fillRect(x, y, mid - x, h);
-      if (hotB) ctx.fillRect(mid, y, x + w - mid, h);
-      ctx.restore();
-    }
     // faint centre divider
     ctx.strokeStyle = 'rgba(249,198,35,0.45)';
     ctx.lineWidth = 1.5;
@@ -143,20 +204,34 @@ const TOUCH = (() => {
     ctx.lineWidth = hot ? 3 : 2;
     ctx.strokeStyle = hot ? '#f9c623' : 'rgba(249,198,35,0.5)';
     ctx.stroke();
+    // the lit, swelling halves ride on top so a press visibly rises over the rail
+    half(ctx, a, rad, true, angA, hotA, scA);
+    half(ctx, b, rad, false, angB, hotB, scB);
   }
 
-  // a merged button pair with an arrow centred on each half
-  function arrowPair(ctx, a, b, angA, angB, hotA, hotB) {
-    pairBox(ctx, a, b, hotA, hotB);
-    tri(ctx, a.x + a.w / 2, a.y + a.h / 2, a.w * 0.22, angA, ink(hotA));
-    tri(ctx, b.x + b.w / 2, b.y + b.h / 2, b.w * 0.22, angB, ink(hotB));
+  // a standalone button drawn with the same press feedback as the pair halves:
+  // a dim base at rest, and while held a lit box that swells about its centre
+  // (fading in/out with the swell so a release settles smoothly), `icon` on top.
+  function pressBtn(ctx, r, sc, hot, icon) {
+    const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+    const p = (sc - 1) / (PRESS_SCALE - 1);   // 0 at rest, 1 fully pressed
+    btnBox(ctx, r, false);                     // dim base, always
+    ctx.save();
+    if (sc !== 1) { ctx.translate(cx, cy); ctx.scale(sc, sc); ctx.translate(-cx, -cy); }
+    if (p > 0.004) {
+      ctx.globalAlpha = Math.min(1, p * 1.5);
+      btnBox(ctx, r, true);                    // lit box rises over the base
+      ctx.globalAlpha = 1;
+    }
+    icon(ctx, r, hot);
+    ctx.restore();
   }
 
   // two opposed arrows: the turn-around (rear/front wheel swap) button
-  function turnIcon(ctx, r) {
+  function turnIcon(ctx, r, hot) {
     const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
     const s = r.w * 0.17, dy = r.h * 0.14;
-    const col = ink(false);
+    const col = ink(hot);
     tri(ctx, cx + s * 0.4, cy - dy, s, 0, col);
     tri(ctx, cx - s * 0.4, cy + dy, s, Math.PI, col);
     ctx.strokeStyle = col;
@@ -196,15 +271,17 @@ const TOUCH = (() => {
     if (!active) return;
     const s = o.state;
     const L = layout(W, H);
+    animate();   // advance the held-button swell toward its rest/pressed targets
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     if (s === 'ready' || s === 'playing' || s === 'editorTest') {
-      arrowPair(ctx, L.left, L.right, Math.PI, 0, input.left, input.right);
-      arrowPair(ctx, L.brake, L.gas, Math.PI / 2, -Math.PI / 2, input.down, input.up);
-      btnBox(ctx, L.flip, false);
-      turnIcon(ctx, L.flip);
+      arrowPair(ctx, L.left, L.right, Math.PI, 0, input.left, input.right,
+        scale.left, scale.right);
+      arrowPair(ctx, L.brake, L.gas, Math.PI / 2, -Math.PI / 2, input.down, input.up,
+        scale.down, scale.up);
+      pressBtn(ctx, L.flip, scale.flip, input.flip, turnIcon);
       btnBox(ctx, L.pause, false);
       pauseIcon(ctx, L.pause);
       // restart belongs to the editor's test ride only; in the real game the
