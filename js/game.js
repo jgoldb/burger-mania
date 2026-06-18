@@ -186,8 +186,12 @@
              h === '::1' || h === '0.0.0.0';
     } catch (e) { return false; }
   })();
-  // Play is the hero slab; the rest fill the grid beneath it (see drawMainMenu)
-  const menuItems = ['Play', 'Records', 'Replays', 'Map Editor', 'Audio'];
+  // Play is the hero slab; the rest fill the grid beneath it (see drawMainMenu).
+  // The Map Editor needs a keyboard/mouse, so it's dropped on touch devices
+  // (phones/tablets announce a coarse primary pointer). Every consumer reads
+  // this array by index/length, so filtering it keeps them all in lockstep.
+  const menuItems = ['Play', 'Records', 'Replays', 'Map Editor', 'Audio']
+    .filter(it => it !== 'Map Editor' || !TOUCH.active);
   // the level-skip cheat is dev-only. Rather than a real menu item it shows as
   // a separate, dashed "dev tool" chip just above the version stamp (drawSkipChip),
   // so it can never be mistaken for a player-facing button.

@@ -6114,7 +6114,11 @@ function drawMenuBackdrop(ctx, W, H, t, pat, showAstro) {
 // a tall single column gets squashed, so we spend the horizontal room instead:
 // the buttons spill into 2+ columns, filled top-to-bottom column by column so
 // Up/Down still walks them in reading order. Portrait keeps the plain stack.
-function menuRects(W, H, n, y0) {
+// `forceCols` (optional) pins the column count instead of deriving it from the
+// screen — used to keep a short row of items together (e.g. the mobile main
+// menu lays Records/Replays/Audio across one row). The buttons just narrow to
+// share the band; the width maths below never overflows it.
+function menuRects(W, H, n, y0, forceCols) {
   const m = Math.max(12, H * 0.04) + SAFE.bottom;
   const avail = H - y0 - m;                       // room below the start
   const bandW = safeBandW(W);
@@ -6130,7 +6134,8 @@ function menuRects(W, H, n, y0) {
   const rowH = c => { const r = Math.ceil(n / c); return avail / (r + (r - 1) * 0.32); };
 
   let cols = 1;
-  if (W > H) while (cols < Math.min(n, fit) && rowH(cols) < CRAMPED) cols++;
+  if (forceCols) cols = Math.max(1, Math.min(n, forceCols));
+  else if (W > H) while (cols < Math.min(n, fit) && rowH(cols) < CRAMPED) cols++;
   const rows = Math.ceil(n / cols);
   cols = Math.ceil(n / rows);                      // drop any column left empty
 
@@ -6287,8 +6292,10 @@ function mainMenuRects(W, H, n) {
   const heroGap = Math.max(12, heroH * 0.3);
 
   // the grid carries everything but Play. On a phone the hero spans the grid's
-  // full width; on desktop it widens into a broad banner above the grid.
-  const grid = menuRects(W, H, n - 1, y0 + heroH + heroGap);
+  // full width; on desktop it widens into a broad banner above the grid. On a
+  // phone we also pin the grid to one row so Records/Replays/Audio sit side by
+  // side instead of wrapping into a 2-column block.
+  const grid = menuRects(W, H, n - 1, y0 + heroH + heroGap, mobile ? n - 1 : 0);
   const left = Math.min(...grid.map(r => r.x));
   const right = Math.max(...grid.map(r => r.x + r.w));
   let hx = left, hw = right - left;
