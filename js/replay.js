@@ -15,14 +15,26 @@
 // an older version" failure instead of a silent, wrong-looking playback.
 const REPLAY = (() => {
   const FORMAT = 'burger-mania-replay';
-  const VERSION = 11; // bumped 2026-06-17: tire + volt + suspension feel passes (all
+  const VERSION = 11; // bumped 2026-06-17: tire + volt + suspension feel passes + the
+                     // Elasto BRAKE rework (brake is now a contact-point pin spring, not a
+                     // spin-decay clutch — gas+brake, stoppie, hill-park and bounce all
+                     // emerge from it) + INFINITE rock friction (Elasto no-slip: wheels
+                     // never slip/wheelspin, glass stays slick; mu/gripSlip/gripBite/
+                     // gripGasResist + engineFade/rollResGas consts all removed) — all
                      // batched into the still-undeployed v11, so no new version number).
                      // Suspension: softened (springK 23->20->18) then STIFFENED back up
-                     // (->24) for more recoil, and the recoil retuned (springC 3.3->4.0->5
+                     // (->24->32) for more recoil, and the recoil retuned (springC 3.3->4.0->5
                      // ->3.2) — first slowed to a dead overdamped creep, then eased back
                      // under critical. With springC held at 3.2, stiffening to 24 drops the
                      // damping ratio ~0.80->0.70, so it bounces more and firmer (and bottoms
                      // out less). Gravity raised (g 2.7->3.0) for a heavier, more planted feel.
+                     // Frame mass raised hard (frameM 1.3->2.4) for a SIGNIFICANTLY heavier
+                     // bike — more inertia / planted momentum; coupled cost is ~40% slower
+                     // pickup and a touch less fall margin (it sags lower on the springs).
+                     // Suspension made ASYMMETRIC (springExtSoft 0.63): full springK in
+                     // compression (rest/landings/recoil/drop-death unchanged) but softer in
+                     // extension, so a pulled/flung wheel stretches further out — elastic, so
+                     // same energy, just more travel. Shifts the extension integration.
                      // Wheel-inertia pass: the driven wheel was lightened (wheelI
                      // 0.018->0.012) so a free-spinning (gas-off) wheel no longer dumps a
                      // big forward lurch when it lands — its stored angular momentum, and

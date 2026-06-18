@@ -173,9 +173,16 @@ const TOUCH = (() => {
         loopIcon(ctx, L.restart);
       }
     } else if (s === 'editorTestEnd') {
-      // the pause button doubles as "back to the editor" here
+      // the pause button doubles as "back to the editor" here; the SAVE
+      // button writes the test ride's tape, just like the crash/finish screens
       btnBox(ctx, L.pause, false);
       pauseIcon(ctx, L.pause);
+      ctx.globalAlpha = o.saveBusy ? 0.5 : 1;
+      btnBox(ctx, L.save, false);
+      ctx.fillStyle = ink(false);
+      ctx.font = 'bold 18px "Consolas","Courier New",monospace';
+      ctx.fillText('SAVE REPLAY', L.save.x + L.save.w / 2, L.save.y + L.save.h / 2 + 1);
+      ctx.globalAlpha = 1;
     } else if (s === 'dead' || s === 'finished') {
       btnBox(ctx, L.pause, false);
       pauseIcon(ctx, L.pause);

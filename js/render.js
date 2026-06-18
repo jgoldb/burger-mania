@@ -224,6 +224,35 @@ function makeTile(spec, px) {
   return c;
 }
 
+// Distils a theme's ground spec into a small palette of opaque dirt colours: the
+// base tint, plus its first (dominant terrain) layer's blob colours alpha-composited
+// over that base — i.e. the shades the textured ground actually reads as. drawDirt
+// tints kicked-up clods from this so a clod looks like the stuff the track is made
+// of (brown loam in the meadow, dark basalt on the volcano, gold sand in the desert,
+// asphalt in the ghetto, …). Built once per theme in makePatterns.
+function groundPalette(spec) {
+  const hex = (h) => {
+    const n = parseInt(h.slice(1), 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  };
+  const rgba = (s) => {
+    const m = s.match(/[\d.]+/g) || [];
+    return [+m[0] || 0, +m[1] || 0, +m[2] || 0, m[3] === undefined ? 1 : +m[3]];
+  };
+  const base = spec.base ? hex(spec.base) : [120, 90, 60];
+  const pal = [base.slice()];
+  const layer = spec.layers && spec.layers[0];
+  if (layer) for (const c of layer.colors) {
+    const [r, g, b, a] = rgba(c);
+    pal.push([
+      Math.round(base[0] * (1 - a) + r * a),
+      Math.round(base[1] * (1 - a) + g * a),
+      Math.round(base[2] * (1 - a) + b * a),
+    ]);
+  }
+  return pal;
+}
+
 // A coarse, low-frequency luminance noise tile: soft light/dark blots on a
 // neutral grey (rgb 128 is the soft-light no-op). Laid over the ground in
 // makePatterns at a large, incommensurate period and blended soft-light, it
@@ -304,6 +333,7 @@ function makePatterns(ctx) {
     sky.setTransform(new DOMMatrix([7 / 128, 0, 0, 7 / 128, 0, 0]));
     out[name] = Object.assign({}, t, {
       ground, sky, mottle, skyPeriod: 7 * 384 / 128, hud: hudInk(t),
+      dirt: groundPalette(t.ground),
     });
   }
   return out;
@@ -5147,18 +5177,28 @@ function drawExhaust(ctx, puffs, view) {
     if (s.mirage) {
       const fade = Math.min(1, k * 5) * (1 - k);
       if (view) {
+        // ONE smooth envelope drives the WHOLE heat-lens: a quick pop-in, then a
+        // long smoothstep glide that starts a quarter into the puff's life and
+        // LANDS GENTLY on zero (slope→0 at death), so the warp tapers off over
+        // most of the puff's life rather than dropping out at the end. (The old
+        // restamp floored opacity at 0.6, and a plain 1−k² tail is steepest right
+        // at death — both read as a snap.) `ease` scales the restamp opacity AND
+        // the displacement (incl. its constant bias terms) AND the magnification,
+        // so the swim and its hard clip-circle seam melt continuously away.
+        const t = Math.min(1, Math.max(0, (k - 0.25) / 0.75)); // 0 till 1/4 life, →1 at death
+        const ease = Math.min(1, k * 6) * (1 - t * t * (3 - 2 * t)); // 1−smoothstep tail
         // churning ripple: two shimmer frequencies on x plus a slower roll on y,
         // so the wake BOILS instead of sliding flat. Amplitudes are several times
         // the old single-sine slide for a much harder afterburner refraction.
-        const wob = (Math.sin(s.age * 26 + s.seed)
-                   + 0.5 * Math.sin(s.age * 61 + s.seed * 1.7)) * 0.14 + 0.03;
-        const wy  = Math.cos(s.age * 33 + s.seed * 0.6) * 0.09 - 0.05;
+        const wob = ((Math.sin(s.age * 26 + s.seed)
+                   + 0.5 * Math.sin(s.age * 61 + s.seed * 1.7)) * 0.14 + 0.03) * ease;
+        const wy  = (Math.cos(s.age * 33 + s.seed * 0.6) * 0.09 - 0.05) * ease;
         // heat lens: magnify the already-drawn frame ABOUT the puff centre so the
         // background bulges and swims, strongest while the puff is young/hot
-        const m = 1 + (0.18 + 0.07 * Math.sin(s.age * 40 + s.seed)) * (1 - k);
+        const m = 1 + (0.18 + 0.07 * Math.sin(s.age * 40 + s.seed)) * ease;
         ctx.save();
         ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, Math.PI * 2); ctx.clip();
-        ctx.globalAlpha = 0.6 + 0.4 * fade;  // mostly the shifted background
+        ctx.globalAlpha = ease;  // mostly the shifted background while hot
         ctx.drawImage(ctx.canvas,
           s.x * (1 - m) + m * view.x + wob,
           s.y * (1 - m) + m * view.y + wy,
@@ -5197,6 +5237,49 @@ function drawExhaust(ctx, puffs, view) {
     g.addColorStop(1, `rgba(${s.tint},0)`);
     ctx.fillStyle = g;
     ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+// Dirt kicked up by a grinding/skidding/spinning wheel: small opaque clods in the
+// theme's ground colour (see groundPalette), flung off the contact patch and pulled
+// back down by gravity. Purely cosmetic — emitDirt (game.js) spawns them from the
+// wheels' inert `grind` slip; never recorded, so replays stay deterministic. Each
+// clod is a tiny tinted disc that shrinks and fades as it flies.
+function drawDirt(ctx, clods) {
+  if (!clods || !clods.length) return;
+  for (const d of clods) {
+    const k = d.age / d.life;            // 0..1 lifetime
+    if (k >= 1) continue;
+    const r = d.r * (1 - 0.45 * k);      // erodes/settles as it flies
+    const a = (1 - k * k) * (d.alpha || 1);
+    ctx.fillStyle = `rgba(${d.tint},${a})`;
+    ctx.beginPath();
+    ctx.arc(d.x, d.y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+// Landing air-puffs (see emitLandingPuff in game.js): a soft bloom of dust shoved
+// out from under a wheel as it slams down after a jump. Each is a translucent disc
+// in a pale, dusty ground tint that billows OUT (r0→r1) as it ages, pops in over the
+// first sliver of life, then fades to nothing — same soft idiom as the grey exhaust
+// smoke, just bloomed at the contact patch instead of the pipe. Purely cosmetic.
+function drawPuffs(ctx, puffs) {
+  if (!puffs || !puffs.length) return;
+  for (const p of puffs) {
+    const k = p.age / p.life;            // 0..1 lifetime
+    if (k >= 1) continue;
+    const r = p.r0 + (p.r1 - p.r0) * k;  // billows out as it ages
+    // quick pop-in then a soft squared fade-out
+    const a = Math.min(1, k * 8) * (1 - k) * (1 - k) * (p.alpha || 1);
+    const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r);
+    g.addColorStop(0, `rgba(${p.tint},${a})`);
+    g.addColorStop(0.55, `rgba(${p.tint},${a * 0.5})`);
+    g.addColorStop(1, `rgba(${p.tint},0)`);
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+    ctx.fill();
   }
 }
 
@@ -7237,11 +7320,14 @@ function drawHUD(ctx, W, H, o) {
     ctx.textAlign = 'left';
     if (o.test.done) {
       const back = o.touch ? 'tap to retry - pause button for the editor'
-        : 'Enter retries - Esc back to the editor';
+        : 'Enter retries - S saves a replay - Esc back to the editor';
+      // on touch the panel rides just above the bottom SAVE REPLAY button
+      const anchor = o.touch ? saveButtonRect(W, H).y - 12 : undefined;
       if (o.test.outcome === 'finished') {
-        centerMsg(ctx, W, H, 'Course completed!', `Time ${fmt(o.time)} - ` + back);
+        centerMsg(ctx, W, H, 'Course completed!',
+          `Time ${fmt(o.time)} - ` + back, o.saveNote, anchor);
       } else {
-        centerMsg(ctx, W, H, 'The rider crashed!', back);
+        centerMsg(ctx, W, H, 'The rider crashed!', back, o.saveNote, anchor);
       }
     }
   } else if (o.replay) {

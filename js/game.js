@@ -124,6 +124,9 @@
   let exhaust = [];     // live exhaust smoke puffs (cosmetic; see emitExhaust)
   let exhaustAcc = 0;   // fractional puff carried between frames so a low rate
                         // still spits the odd puff instead of rounding to zero
+  let dirt = [];        // live kicked-up dirt clods (cosmetic; see emitDirt)
+  let dirtAcc = 0;      // fractional clod carried between frames (as exhaustAcc)
+  let puffs = [];       // live landing air-puffs (cosmetic; see emitLandingPuff)
   let cam = { x: level.start.x, y: level.start.y };
   const CAM_LEAD = 4.2; // how far the view centers ahead of the bike's facing
   let camLead = CAM_LEAD; // smoothed, so turning around pans rather than snaps
@@ -229,6 +232,9 @@
     popupSeq = 0;
     exhaust = [];
     exhaustAcc = 0;
+    dirt = [];
+    dirtAcc = 0;
+    puffs = [];
     camLead = bike.facing * CAM_LEAD;
     cam.x = level.start.x + camLead;
     cam.y = level.start.y;
@@ -257,6 +263,7 @@
   // the audio settings screen
   let AC = null, engineSnd = null, suspSnd = null, muted = false;
   let masterGain = null, musicGain = null, sfxGain = null;
+  let dirtNoiseBuf = null; // shared white-noise buffer reused by every dirt grain
 
   const VOLUME_KEY = 'burger-mania-volume';
   const volume = { master: 1, music: 1, sfx: 1 };
@@ -348,6 +355,11 @@
       sOsc.start();
       sLfo.start();
       suspSnd = { osc: sOsc, gain: sGain, filt: sFilt, lfo: sLfo };
+      // half a second of white noise, reused by every dirt grain (dirtTick) so a
+      // roost's patter doesn't allocate a fresh buffer per flung clod
+      dirtNoiseBuf = AC.createBuffer(1, Math.floor(AC.sampleRate * 0.5), AC.sampleRate);
+      const dn = dirtNoiseBuf.getChannelData(0);
+      for (let i = 0; i < dn.length; i++) dn[i] = Math.random() * 2 - 1;
       MUSIC.init(AC, musicGain);
       MUSIC.setMuted(muted); // carry a persisted mute into the freshly-built context
     } catch (e) { /* no audio available */ }
@@ -567,6 +579,37 @@
     o.stop(t0 + 0.18);
     // a slap of tire-on-ground grit over the thump, much louder on a slam
     whoosh(0.06, 300, 0.14 + 0.30 * power);
+  }
+
+  // a single grain of flung grit — a tiny, soft noise tick, one per kicked-up clod
+  // (see emitDirt). `size` is the clod's radius (~0.05..0.3 m): a dust fleck barely
+  // ticks, high and quiet, while a fat clod lands lower and louder, so the spray's
+  // loudness tracks the clods you actually see. Reuses the shared noise buffer and
+  // is capped/spread per frame by emitDirt, so a 30-clod landing burst patters
+  // instead of walling up the mix. `delay` (s) staggers a burst's grains so they
+  // read as a patter, not one fused click.
+  function dirtTick(size, delay) {
+    if (!AC || muted || !dirtNoiseBuf) return;
+    const t0 = AC.currentTime + (delay || 0);
+    const sz = Math.min(1, Math.max(0, (size - 0.05) / 0.22)); // clod radius → 0..1
+    const dur = 0.025 + sz * 0.05;          // bigger clods ring a touch longer
+    const src = AC.createBufferSource();
+    src.buffer = dirtNoiseBuf;
+    const f = AC.createBiquadFilter();
+    f.type = 'bandpass';
+    // big clod = lower/duller, dust = brighter; jitter so grains don't all sit on
+    // one pitch (varying the centre frequency stands in for per-grain detune)
+    f.frequency.value = (1700 - sz * 1150) * (0.85 + Math.random() * 0.3);
+    f.Q.value = 0.9;
+    const g = AC.createGain();
+    const vol = 0.02 + sz * 0.10;           // SIZE sets the loudness
+    g.gain.setValueAtTime(0.0001, t0);      // exponential ramps can't leave 0
+    g.gain.exponentialRampToValueAtTime(vol, t0 + 0.004);  // sharp grit onset
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);  // quick decay
+    src.connect(f); f.connect(g); g.connect(sfxGain);
+    const bufDur = dirtNoiseBuf.duration || 0.5;
+    src.start(t0, Math.max(0, Math.random() * (bufDur - 0.12))); // random slice
+    src.stop(t0 + dur + 0.05);
   }
 
   // the perfect-run pacer's posture shot: a sharp broadband crack over a short
@@ -1075,24 +1118,28 @@
     return (level.name + ' ' + tag).replace(/[^\w \-.]/g, '') + REPLAY.EXT;
   }
 
-  // S on the crash/finish screen: write the recorded run to disk
+  // S on the crash/finish screen (and the editor test-ride end screen):
+  // write the recorded run to disk
   async function saveReplay() {
     if (saveBusy || !REPLAY.hasRun()) return;
     // the victory screens hold the last map's finished tape; only the
-    // crash screen saves a crash
-    const outcome = state === 'dead' ? 'crashed' : 'finished';
+    // crash screen saves a crash. A test ride saves the working map's
+    // tape — it belongs to no track, so it banks no track/index metadata.
+    const testing = state === 'editorTestEnd';
+    const outcome = testing ? testOutcome
+      : (state === 'dead' ? 'crashed' : 'finished');
     saveBusy = true;
     saveNote = 'Saving...';
     try {
       const text = REPLAY.serialize({
         level: currentRaw,
-        label: mapLabel(),
+        label: testing ? level.name : mapLabel(),
         outcome,
         time,
         style: stylePts,
         skin: BIKE_SKIN, // the cosmetic tier worn for this run
-        trackId: currentTrack ? currentTrack.id : null,
-        levelIndex,
+        trackId: testing ? null : (currentTrack ? currentTrack.id : null),
+        levelIndex: testing ? 0 : levelIndex,
       });
       const name = replayFileName(outcome);
       if (REPLAY.fsSupported) {
@@ -1602,6 +1649,7 @@
         if (e.key === 'Enter') { reset(); return; } // instant retry while iterating
         break;
       case 'editorTestEnd':
+        if (e.key === 's' || e.key === 'S') { saveReplay(); return; }
         if (e.key === 'Escape') { endEditorTest(); return; }
         if (e.key === 'Enter') { reset(); state = 'editorTest'; }
         return;
@@ -1861,6 +1909,7 @@
         if (TOUCH.hit(k.restart, x, y)) { reset(); return; }
         return;
       case 'editorTestEnd':
+        if (TOUCH.hit(k.save, x, y)) { saveReplay(); return; }
         if (TOUCH.hit(k.pause, x, y)) { endEditorTest(); return; }
         if (performance.now() < tapGuardUntil) return;
         reset();
@@ -2175,7 +2224,7 @@
         exhaust.push({
           x: tip.x + rnd(-0.05, 0.05), y: tip.y + rnd(-0.05, 0.05),
           vx: cvx + dx * out + rnd(-0.4, 0.4), vy: cvy + dy * out - rnd(0.3, 0.8),
-          age: 0, life: rnd(0.6, 1.0), r0: rnd(0.18, 0.30), r1: rnd(0.8, 1.35),
+          age: 0, life: rnd(1.2, 2.0), r0: rnd(0.18, 0.30), r1: rnd(0.8, 1.35),
           alpha: 1, mirage: true, seed: Math.random() * 6.28,
           tint: sk.mirageTint || '150,200,255',
         });
@@ -2216,6 +2265,183 @@
       s.vy *= 1 - 1.6 * dt;
     }
     if (exhaust.length) exhaust = exhaust.filter(s => s.age < s.life);
+  }
+
+  // ---------- kicked-up dirt ----------
+  // A wheel throws dirt when it LOADS the ground — driving it under power, biting
+  // it under brakes, slipping (a wheelspin or a spun-up wheel syncing on touchdown)
+  // or SLAMMING down hard. It does NOT throw dirt merely by rolling over the ground:
+  // a clean coast, freewheeling with no power on, kicks up nothing however fast it's
+  // going (just like real life). Cosmetic only (never recorded, free to use
+  // Math.random, never touches the sim), so replays stay deterministic. The sim
+  // publishes inert per-wheel values: `grindSpeed` (bulk travel over the ground),
+  // `grind` (slip), `grindImpact` (the normal slam) and the surface normal + throw
+  // direction; the load comes from `bike.engineLoad` (smoothed throttle) and the
+  // brake input. The spray amount tracks the physics: a sustained RATE from travel
+  // SCALED BY how hard the tyre is loading the ground (plus any slip), and an instant
+  // BURST on a hard landing. Colour comes from the theme's ground palette so a clod
+  // looks like the track's own dirt.
+  const DIRT_MIN = 0.6;   // ground-work speed (m/s) below which the tyre stays clean
+                          // — work = loaded travel + slip, so an unloaded coast reads 0
+  const DIRT_FULL = 16;   // ground-work speed for a full-strength spray (it saturates
+                          // here so a flat-out roost doesn't run away)
+  const DIRT_RATE = 55;   // sustained clods/sec per wheel at full strength
+  const DIRT_BURST = 30;  // most clods one landing slam can throw at once
+  const DIRT_BURST_K = 9; // how readily the slam (impulse) bursts into clods
+  const DIRT_MAX = 240;   // hard cap so a long skid can't grow the array forever
+  const DIRT_TICK_MAX = 6; // most grit-grain SFX to fire in one frame (a burst spawns
+                           // up to 30 clods at once; only this many tick, spread out)
+
+  function emitDirt(dt) {
+    const pal = (patterns[level.theme] || patterns.meadow).dirt;
+    if (!pal || !pal.length) return;
+    const rnd = (a, b) => a + Math.random() * (b - a);
+    // how hard the bike is loading the ground right now: the engine driving under
+    // power (smoothed throttle, 0 when coasting) or the brake biting. Drive is the
+    // REAR wheel's job; both wheels feel the brake. This is the "pressure on the
+    // ground" gate — with it at 0 (a freewheeling coast), travel does no work.
+    const drive = bike.engineLoad || 0;
+    const braking = (simInput && simInput.brake && !bike.dead) ? 1 : 0;
+    let ticks = 0; // grit-grain SFX fired this frame, shared across both wheels
+    for (const w of bike.wheels) {
+      if (!w.onGround) continue;
+      const load = Math.max(w === bike.wheels[bike.rearIndex] ? drive : 0, braking);
+      // ground work that throws grit: the tyre's bulk travel over the ground, but
+      // only counted while it's LOADING the ground (travel * load), plus any outright
+      // slip on top (a wheelspin or a spun-up wheel grinding as it lands). A clean
+      // coast is travel with load 0 and ~no slip, so it does no work and stays quiet.
+      const work = (w.grindSpeed || 0) * load + (w.grind || 0);
+      const impact = w.grindImpact || 0;
+      const force = Math.min(1, work / DIRT_FULL);
+      let n = 0;
+      // sustained spray, the rate set by the ground work...
+      if (work >= DIRT_MIN) {
+        dirtAcc += force * DIRT_RATE * dt;
+        while (dirtAcc >= 1) { dirtAcc -= 1; n++; }
+      }
+      // ...plus a one-shot burst the frame a wheel slams down hard (the weight
+      // behind it), strongest when it's also working the ground (a gassed landing).
+      // Fires on any hard slam, even a dead-vertical drop onto flat ground.
+      if (impact > 0.3) n += Math.round(Math.min(DIRT_BURST, impact * (0.4 + force) * DIRT_BURST_K));
+      if (dirt.length + n > DIRT_MAX) n = DIRT_MAX - dirt.length;
+      if (n <= 0) { if (dirt.length >= DIRT_MAX) dirtAcc = 0; continue; }
+      // spawn at the contact patch: the bottom of the tyre along the support normal
+      const cx = w.pos.x - (w.grindNX || 0) * PHYS.wheelR;
+      const cy = w.pos.y - (w.grindNY || 0) * PHYS.wheelR;
+      for (let i = 0; i < n; i++) {
+        // fling along the throw direction (rooster tail), lofted up off the surface
+        let ex = (w.grindTX || 0) + (w.grindNX || 0) * rnd(0.6, 1.4);
+        let ey = (w.grindTY || 0) + (w.grindNY || 0) * rnd(0.6, 1.4);
+        const el = Math.hypot(ex, ey) || 1; ex /= el; ey /= el;
+        const ang = rnd(-0.6, 0.6), cs = Math.cos(ang), sn = Math.sin(ang);
+        const dx = ex * cs - ey * sn, dy = ex * sn + ey * cs;
+        // harder ground work flings grit faster and farther
+        const sp = (0.5 + force) * rnd(2, 5) + work * 0.12;
+        const c = pal[Math.floor(Math.random() * pal.length)];
+        const sh = rnd(0.8, 1.15);   // per-clod brightness jitter
+        const tint = Math.min(255, Math.round(c[0] * sh)) + ',' +
+                     Math.min(255, Math.round(c[1] * sh)) + ',' +
+                     Math.min(255, Math.round(c[2] * sh));
+        const r = rnd(0.06, 0.15) * (0.7 + force);
+        dirt.push({
+          x: cx + rnd(-0.06, 0.06), y: cy + rnd(-0.06, 0.06),
+          vx: bike.vel.x * 0.2 + dx * sp + rnd(-0.5, 0.5),
+          vy: bike.vel.y * 0.2 + dy * sp + rnd(-0.5, 0.5),
+          age: 0, life: rnd(0.4, 0.95), r,
+          tint, alpha: rnd(0.75, 1),
+        });
+        // a tiny grit tick per clod, volume scaled by its size — capped per frame
+        // and staggered a few ms apart so a burst patters instead of fusing to a click
+        if (ticks < DIRT_TICK_MAX) { dirtTick(r, ticks * 0.005); ticks++; }
+      }
+    }
+  }
+
+  function ageDirt(dt) {
+    // clods fall along the bike's gravity (down normally; follows a flip/wall
+    // ride), at a fraction of g so light grit hangs a touch before settling
+    const gx = PHYS.g * 0.6 * (bike.gravDir ? bike.gravDir.x : 0);
+    const gy = PHYS.g * 0.6 * (bike.gravDir ? bike.gravDir.y : 1);
+    for (const d of dirt) {
+      d.age += dt;
+      d.x += d.vx * dt;
+      d.y += d.vy * dt;
+      d.vx += gx * dt;
+      d.vy += gy * dt;
+      d.vx *= 1 - 1.5 * dt;        // air drag eases the arc
+      d.vy *= 1 - 1.5 * dt;
+    }
+    if (dirt.length) dirt = dirt.filter(d => d.age < d.life);
+  }
+
+  // ---------- landing air-puff ----------
+  // A soft burst of dust bloomed from the contact patch the instant a wheel plants
+  // after being airborne — air shoved out from under the tyre as it slams home. Fired
+  // from the per-substep touchdown catch in simFrame (the same gate as the thud and
+  // the squash pulse), so it only fires on a genuine air→ground landing, never while
+  // rolling. Tiny plants are skipped (PUFF_MIN); everything above bursts dust scaled
+  // to how hard it hit. Cosmetic only (never recorded, free to use Math.random), so
+  // replays stay deterministic. `power` is the landing's 0..1 strength (see simFrame).
+  const PUFF_MIN = 0.12;  // landing strength below which we skip the puff (soft plant)
+  const PUFF_BURST = 5;   // extra puffs at full-power on top of the 2 a landing always gets
+  const PUFF_MAX = 60;    // hard cap on live puffs
+
+  function emitLandingPuff(w, power, nx, ny) {
+    if (power < PUFF_MIN) return;          // a feather-soft plant raises no dust
+    const rnd = (a, b) => a + Math.random() * (b - a);
+    // contact patch: the bottom of the tyre along the support normal (points up off
+    // the ground); fall back to the floor normal (-gravity) if no contact normal yet
+    let sl = Math.hypot(nx, ny);
+    if (sl < 1e-3) { nx = -bike.gravDir.x; ny = -bike.gravDir.y; sl = 1; }
+    nx /= sl; ny /= sl;
+    const cx = w.pos.x - nx * PHYS.wheelR;
+    const cy = w.pos.y - ny * PHYS.wheelR;
+    const tx = -ny, ty = nx;               // surface tangent (the puff bursts sideways)
+    // pale, dusty tint pulled from the theme ground but washed toward white so it
+    // reads as airborne dust rather than a solid clod
+    const pal = (patterns[level.theme] || patterns.meadow).dirt;
+    const base = (pal && pal.length) ? pal[Math.floor(Math.random() * pal.length)]
+                                     : [150, 140, 120];
+    const tint = Math.round(base[0] * 0.45 + 140) + ',' +
+                 Math.round(base[1] * 0.45 + 140) + ',' +
+                 Math.round(base[2] * 0.45 + 140);
+    const count = 2 + Math.round(power * PUFF_BURST); // harder hit → fatter bloom
+    for (let i = 0; i < count && puffs.length < PUFF_MAX; i++) {
+      // burst out along the surface (alternating both ways) with a little lift, the
+      // spread and size both growing with the impact
+      const side = (i % 2 === 0) ? 1 : -1;
+      const sp = (0.4 + power) * rnd(1.0, 2.6);
+      const lift = rnd(0.2, 0.7);
+      const ox = tx * side * rnd(0.5, 1) + nx * lift;
+      const oy = ty * side * rnd(0.5, 1) + ny * lift;
+      puffs.push({
+        x: cx + rnd(-0.05, 0.05), y: cy + rnd(-0.05, 0.05),
+        vx: bike.vel.x * 0.15 + ox * sp + rnd(-0.3, 0.3),
+        vy: bike.vel.y * 0.15 + oy * sp + rnd(-0.3, 0.3),
+        age: 0, life: rnd(0.3, 0.5) + power * 0.25,
+        r0: rnd(0.07, 0.12) * (0.6 + power),
+        r1: (rnd(0.30, 0.48) + power * 0.3) * (0.7 + power),
+        alpha: rnd(0.22, 0.38) * (0.55 + 0.45 * power), // denser dust on a harder slam
+        tint,
+      });
+    }
+  }
+
+  function agePuffs(dt) {
+    // dust billows out off the impact, then air drag stalls it to a hanging cloud;
+    // a faint settle along gravity, far lighter than the dirt clods (it's airborne)
+    const gx = PHYS.g * 0.12 * (bike.gravDir ? bike.gravDir.x : 0);
+    const gy = PHYS.g * 0.12 * (bike.gravDir ? bike.gravDir.y : 1);
+    for (const p of puffs) {
+      p.age += dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vx += gx * dt;
+      p.vy += gy * dt;
+      p.vx *= 1 - 3.2 * dt;        // heavy drag: the burst spreads then hangs
+      p.vy *= 1 - 3.2 * dt;
+    }
+    if (puffs.length) puffs = puffs.filter(p => p.age < p.life);
   }
 
   // One object radius for every pickup, matching Elasto Mania, where the apple,
@@ -2271,9 +2497,11 @@
       return;
     }
     if (state === 'editorTest') {
-      // a test ride proves the map, it banks nothing
+      // a test ride proves the map, it banks nothing — but its tape can
+      // still be saved off the end screen
       testOutcome = 'finished';
       state = 'editorTestEnd';
+      saveNote = 'S: save replay';
       tapGuardUntil = performance.now() + 600;
       blip(660, 0.12);
       setTimeout(() => blip(880, 0.12), 130);
@@ -2328,6 +2556,7 @@
     } else if (state === 'editorTest') {
       testOutcome = 'crashed';
       state = 'editorTestEnd';
+      saveNote = 'S: save replay';
       tapGuardUntil = performance.now() + 600;
     } else {
       state = 'dead';
@@ -2417,6 +2646,10 @@
           wheelHit(power);
           // same gate as the thud sound: punch a squash pulse into the tyre
           w.sqImpact = Math.max(w.sqImpact || 0, power * SQ_IMPACT_GAIN);
+          // and bloom a puff of dust from the contact patch, scaled to the slam
+          // (the freshly-resolved contact normal points up off the ground)
+          emitLandingPuff(w, power, w.grindNX || w.contactNX || 0,
+                                    w.grindNY || w.contactNY || 0);
         }
         wasGround[k] = w.onGround;
       });
@@ -2478,6 +2711,7 @@
     updateRiderJostle(FDT);
     updateWheelSquash(FDT);
     emitExhaust(FDT);
+    emitDirt(FDT);
   }
 
   function frame(now) {
@@ -2557,7 +2791,7 @@
         updateCamera(FDT);
         // toasts keep rising over the crash/finish screens, but a pause
         // freezes them along with everything else; the smoke drifts on too
-        if (state !== 'paused') { agePopups(FDT); ageExhaust(FDT); }
+        if (state !== 'paused') { agePopups(FDT); ageExhaust(FDT); ageDirt(FDT); agePuffs(FDT); }
       }
     }
     updateHover();
@@ -2723,6 +2957,8 @@
     // EXACT visible world rect (no padding) that maps the canvas onto itself 1:1
     const exhaustView = { x: cam.x - W / 2 / Z, y: cam.y - H / 2 / Z, w: W / Z, h: H / Z };
     drawExhaust(ctx, exhaust, exhaustView);
+    drawPuffs(ctx, puffs);   // landing dust, behind the flung clods
+    drawDirt(ctx, dirt);
     drawBike(ctx, bike, !!headBody, false, theme.dark, rt);
     if (headBody) drawHead(ctx, headBody.x, headBody.y, bike.facing, headBody.rot);
     drawDoodadLayer(ctx, level.doodads, 'front', rt);

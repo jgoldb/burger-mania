@@ -5,6 +5,7 @@
   "description": "Burger Mania — an Elasto Mania–style motorbike game. No build step; levels load from levels/*.bmm.",
   "scripts": {
     "start": "node tools/serve.js",
-    "serve": "node tools/serve.js"
+    "serve": "node tools/serve.js",
+    "test": "node test/elma_fidelity.js && node test/gravity_check.js && node test/nut_check.js && node test/replay_check.js"
   }
 }
