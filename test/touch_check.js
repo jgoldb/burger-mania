@@ -153,9 +153,9 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
   pumpFrames(3, 1 / 60);
   tap(400, 300);                             // skip intro -> menu
   pumpFrames(12, 1 / 60);                    // let menuT pass the hover gate
-  if (!lastFrameTexts().some(t => t === 'Play')) bad('menu did not appear after taps');
+  if (!lastFrameTexts().some(t => t === 'PLAY')) bad('menu did not appear after taps');
 
-  // tap Play (menuRects: 800x600, first row centred at y=376)
+  // tap the PLAY hero (mainMenuRects: 800x600, the wide top slab spans y~336-398)
   tap(400, 376);
   pumpFrames(12, 1 / 60);
   let texts = lastFrameTexts();
@@ -167,7 +167,7 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
   // corner BACK button returns to the menu, then go forward again
   tap(64, 35);
   pumpFrames(12, 1 / 60);
-  if (!lastFrameTexts().some(t => t === 'Play')) bad('corner back button did not return to menu');
+  if (!lastFrameTexts().some(t => t === 'PLAY')) bad('corner back button did not return to menu');
   tap(400, 376);                             // Play
   pumpFrames(12, 1 / 60);
   tap(400, 230);                             // Beginner (difficulty rows start at y=204)
@@ -232,7 +232,7 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
   touchUp('slider');
   pumpFrames(1, 1 / 60);
   if (!lastFrameTexts().some(t => t === '50%')) bad('slider drag did not land on 50%');
-  tap(400, 466);                             // Back -> pause menu
+  tap(64, 35);                               // corner Back -> pause menu
   pumpFrames(3, 1 / 60);
   if (!lastFrameTexts().some(t => t.includes('PAUSED'))) bad('audio Back did not return to pause');
 

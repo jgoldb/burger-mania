@@ -2743,13 +2743,16 @@ function drawWorld(ctx, level, pat, view, t, actor, bg) {
     ? level.groundY - pat.groundY : 0;
 
   // polygons left out of the BACK terrain: invisible ones (level.invisible) keep
-  // their collision but draw nothing, and foreground ones (level.frontPolys) are
-  // drawn later by drawForeground, over the rider. Both are skipped from the back
-  // fill clip (so they cut no island/hole) and the outline below; their geometry
-  // still rides the sim. Front polys' grass is in level.frontGrass, not here.
+  // their collision but draw nothing, and foreground ones (level.frontPolys) plus
+  // blend ones (level.blendPolys) are drawn later by drawForeground, over the
+  // rider. All are skipped from the back fill clip (so they cut no island/hole)
+  // and the outline below; their geometry still rides the sim. Front/blend polys'
+  // grass is in level.frontGrass, not here.
   const skip = (level.invisible && level.invisible.length) ||
-               (level.frontPolys && level.frontPolys.length)
-    ? new Set([...(level.invisible || []), ...(level.frontPolys || [])]) : null;
+               (level.frontPolys && level.frontPolys.length) ||
+               (level.blendPolys && level.blendPolys.length)
+    ? new Set([...(level.invisible || []), ...(level.frontPolys || []),
+               ...(level.blendPolys || [])]) : null;
   const backPoly = pi => !skip || !skip.has(pi);
 
   // the playable inside: gradient sky, distant silhouettes behind the
@@ -2795,25 +2798,36 @@ function drawWorld(ctx, level, pat, view, t, actor, bg) {
   for (const e of level.glassTops || []) drawObsidianEdge(ctx, e, t);
 }
 
-// The foreground terrain pass: polygons flagged level.frontPolys are drawn here,
-// AFTER the rider and the doodads, so the rider passes behind them (an occluder).
-// They're filled with the same ground texture + outline + grass as back terrain,
-// so they read as solid foreground rock — pair one with noCollide walls and the
-// rider can ride straight through it while staying hidden behind it. Called by
-// game.js (in play) and the editor after the actors; a no-op when none are set.
+// The foreground terrain pass: polygons flagged level.frontPolys (and the
+// seamless level.blendPolys) are drawn here, AFTER the rider and the doodads,
+// so the rider passes behind them (an occluder). Front polys get the full
+// terrain treatment (ground texture + outline + grass), reading as a solid
+// foreground rock chunk stamped over the scene. Blend polys get the ground
+// texture ONLY — no outline, no grass, and a nonzero (not evenodd) union fill
+// so a patchwork of overlapping blend polys merges into one continuous mass.
+// Because the ground texture is anchored in world space, a blend poly's fill
+// lines up exactly with the terrain beneath it, so with its outline suppressed
+// it reads as one continuous polygon rather than a separate shape sitting on
+// top — the clean way to stitch a foreground shape out of several polygons.
+// Pair either with noCollide walls and the rider can ride straight through
+// while staying hidden behind it. Called by game.js (in play) and the editor
+// after the actors; a no-op when neither list is set.
 function drawForeground(ctx, level, pat, view, t) {
-  const front = level.frontPolys;
-  if (!front || !front.length) return;
+  const front = level.frontPolys || [];
+  const blend = level.blendPolys || [];
+  if (!front.length && !blend.length) return;
   t = t || 0;
   const invisible = level.invisible && level.invisible.length
     ? new Set(level.invisible) : null;
-  // an invisible flag wins over the front layer (draw nothing), so skip those
-  const shown = front.filter(pi => !(invisible && invisible.has(pi)));
-  if (!shown.length) return;
+  // an invisible flag wins over either layer (draw nothing), so skip those
+  const vis = pi => !(invisible && invisible.has(pi));
+  const shownBlend = blend.filter(vis);
+  const shownFront = front.filter(vis);
+  if (!shownBlend.length && !shownFront.length) return;
   const vw = view.x1 - view.x0, vh = view.y1 - view.y0;
-  const trace = () => {
+  const trace = list => {
     ctx.beginPath();
-    for (const pi of shown) {
+    for (const pi of list) {
       const poly = level.polygons[pi];
       if (!poly) continue;
       ctx.moveTo(poly[0][0], poly[0][1]);
@@ -2821,17 +2835,29 @@ function drawForeground(ctx, level, pat, view, t) {
       ctx.closePath();
     }
   };
-  // fill the front polygons with the ground texture (evenodd: a nested front
-  // poly cuts a hole), then outline them, then their grass / glass tops
-  ctx.save();
-  trace();
-  ctx.clip('evenodd');
-  fillGround(ctx, pat, view.x0, view.y0, vw, vh);
-  ctx.restore();
-  trace();
-  ctx.strokeStyle = pat.outline;
-  ctx.lineWidth = 0.07;
-  ctx.stroke();
+  // blend polys first, UNDER the outlined front polys: pure seamless ground fill
+  // (nonzero winding, so overlaps stay solid and union instead of cutting holes),
+  // no outline / grass, so they vanish into the terrain they cover
+  if (shownBlend.length) {
+    ctx.save();
+    trace(shownBlend);
+    ctx.clip();
+    fillGround(ctx, pat, view.x0, view.y0, vw, vh);
+    ctx.restore();
+  }
+  // front polys: fill with the ground texture (evenodd: a nested front poly cuts
+  // a hole), then outline them, then their grass / glass tops
+  if (shownFront.length) {
+    ctx.save();
+    trace(shownFront);
+    ctx.clip('evenodd');
+    fillGround(ctx, pat, view.x0, view.y0, vw, vh);
+    ctx.restore();
+    trace(shownFront);
+    ctx.strokeStyle = pat.outline;
+    ctx.lineWidth = 0.07;
+    ctx.stroke();
+  }
   for (const e of level.frontGrass || []) pat.edge(ctx, e, pat, t);
   for (const e of level.frontGlassTops || []) drawObsidianEdge(ctx, e, t);
 }
@@ -3181,6 +3207,93 @@ function drawBurger(ctx, x, y, t) {
   ctx.beginPath();
   ctx.ellipse(Math.sin(spin * 0.9) * 0.3 - 0.1, -0.67, 0.09, 0.045, -0.5, 0, Math.PI * 2);
   ctx.fill();
+
+  ctx.restore();
+}
+
+// The defibrillator pickup: an AED unit (a one-up that adds a life). Hovers and
+// rocks like a burger so it reads as a collectible, but wears a distinct
+// electric-blue aura, two paddle pads on curly cords, a green "ready" LED that
+// blinks, and the universal heart-with-a-lightning-bolt emblem on its face. The
+// aura/LED pulse off the render clock so it reads as a charged, live device.
+function drawDefib(ctx, x, y, t) {
+  t = t || 0;
+  const phase = x * 1.3;
+  const pulse = 0.5 + 0.5 * Math.sin(t * 5 + phase);   // the charged breathing
+  ctx.save();
+  ctx.translate(x, y + Math.sin(t * 2 + phase) * 0.05); // hover-bob
+  ctx.rotate(Math.sin(t * 1.3 + phase) * 0.05);         // gentle rock
+  ctx.scale(0.6, 0.6);
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+
+  // electric aura behind the unit, breathing with the charge
+  const ag = ctx.createRadialGradient(0, 0, 0.1, 0, 0, 1.05);
+  ag.addColorStop(0, `rgba(120,228,255,${0.30 + 0.20 * pulse})`);
+  ag.addColorStop(0.55, `rgba(70,150,255,${0.10 + 0.08 * pulse})`);
+  ag.addColorStop(1, 'rgba(70,150,255,0)');
+  ctx.fillStyle = ag;
+  ctx.beginPath(); ctx.arc(0, 0, 1.05, 0, Math.PI * 2); ctx.fill();
+
+  // two paddle pads up top on curly cords, one each side
+  for (const sx of [-1, 1]) {
+    ctx.strokeStyle = '#1c1c24'; ctx.lineWidth = 0.06;
+    ctx.beginPath();
+    ctx.moveTo(sx * 0.28, -0.36);
+    ctx.bezierCurveTo(sx * 0.52, -0.52, sx * 0.66, -0.58, sx * 0.56, -0.74);
+    ctx.stroke();
+    ctx.save();
+    ctx.translate(sx * 0.56, -0.84);
+    ctx.fillStyle = '#e8951a';                        // orange paddle handle
+    roundRectPath(ctx, -0.17, -0.1, 0.34, 0.22, 0.05); ctx.fill();
+    ctx.fillStyle = '#cdd4db';                        // brushed-metal contact pad
+    ctx.beginPath(); ctx.ellipse(0, 0.14, 0.16, 0.07, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+
+  // the case: a rounded box, red lid over a cream lower shell
+  roundRectPath(ctx, -0.5, -0.42, 1.0, 0.86, 0.13);
+  const g = ctx.createLinearGradient(0, -0.42, 0, 0.44);
+  g.addColorStop(0, '#ef4a45');
+  g.addColorStop(0.44, '#cf2a26');
+  g.addColorStop(0.45, '#f5f0e7');
+  g.addColorStop(1, '#ccc2b1');
+  ctx.fillStyle = g; ctx.fill();
+  ctx.lineWidth = 0.04; ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.stroke();
+  // a seam between lid and shell
+  ctx.strokeStyle = 'rgba(0,0,0,0.22)'; ctx.lineWidth = 0.02;
+  ctx.beginPath(); ctx.moveTo(-0.48, -0.02); ctx.lineTo(0.48, -0.02); ctx.stroke();
+
+  // the blinking "ready" LED on the lid
+  ctx.fillStyle = pulse > 0.5 ? '#7dff6b' : '#2d6a2b';
+  ctx.beginPath(); ctx.arc(0.36, -0.27, 0.05, 0, Math.PI * 2); ctx.fill();
+
+  // heart + lightning-bolt emblem on the cream face (the AED symbol)
+  ctx.save();
+  ctx.translate(0, 0.18);
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath(); ctx.arc(-0.1, -0.05, 0.12, 0, Math.PI * 2);   // left lobe
+  ctx.arc(0.1, -0.05, 0.12, 0, Math.PI * 2); ctx.fill();         // right lobe
+  ctx.beginPath();                                               // lobes down to a tip
+  ctx.moveTo(-0.205, -0.02); ctx.lineTo(0.205, -0.02); ctx.lineTo(0, 0.22);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#ffd21a';                                     // bolt cut through it
+  ctx.beginPath();
+  ctx.moveTo(0.07, -0.14); ctx.lineTo(-0.1, 0.04); ctx.lineTo(0.0, 0.04);
+  ctx.lineTo(-0.06, 0.2); ctx.lineTo(0.13, -0.01); ctx.lineTo(0.02, -0.01);
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+
+  // a stray spark crackling off a paddle now and then (clock-driven, no RNG so
+  // the editor and play read alike)
+  if (Math.sin(t * 9 + phase * 2) > 0.85) {
+    ctx.strokeStyle = 'rgba(190,245,255,0.9)'; ctx.lineWidth = 0.03;
+    const sx = Math.sin(t * 3) > 0 ? 1 : -1;
+    ctx.beginPath();
+    ctx.moveTo(sx * 0.56, -0.7);
+    ctx.lineTo(sx * 0.62, -0.6); ctx.lineTo(sx * 0.5, -0.55); ctx.lineTo(sx * 0.6, -0.46);
+    ctx.stroke();
+  }
 
   ctx.restore();
 }
@@ -5158,6 +5271,212 @@ function drawBike(ctx, bike, headless, back, lamps, t) {
   }
 }
 
+// how long one defibrillator jolt animation runs (seconds). game.js ages each
+// active zap by this and culls it; here it sets the arc fade and x-ray windows.
+const ZAP_DUR = 0.85;
+
+// The defibrillator shock, drawn in WORLD space over the rider for `age`
+// seconds after a defib is grabbed (game.js keeps the live zaps and their ages).
+// Three layers, all cosmetic: a charged electric-blue bloom, jagged lightning
+// arcs crackling around the body, and — in three brief flashes — the rider
+// lit up as an x-ray skeleton, as if the current shows his bones. The skeleton
+// is built on the SAME local-frame anchors drawBike uses for the rider, so it
+// lands on the body wherever the bike is tilted or facing.
+function drawElectrocution(ctx, bike, age, t) {
+  if (age >= ZAP_DUR) return;
+  // local-frame → world, mirroring drawBike's L() (turn squash + hop included)
+  const p = Math.min(1, (bike.turnT == null ? 1 : bike.turnT) / 0.28);
+  const m = bike.facing * Math.sin((p - 0.5) * Math.PI);
+  const hop = Math.sin(p * Math.PI) * 0.14;
+  const cos = Math.cos(bike.angle), sin = Math.sin(bike.angle);
+  const L = (lx, ly) => {
+    lx *= m; ly -= hop;
+    return { x: bike.pos.x + lx * cos - ly * sin, y: bike.pos.y + lx * sin + ly * cos };
+  };
+  // rider skeleton anchors (same points drawBike leans the body on)
+  const head = L(PHYS.headX, PHYS.headY);
+  const neck = L(-0.10, -0.86);
+  const shoulder = L(-0.13, -0.78);
+  const hip = L(-0.30, -0.46);
+  const knee = L(0.16, -0.28);
+  const foot = L(0.04, 0.04);
+  const elbow = L(0.16, -0.56);
+  const hand = L(0.50, -0.55);
+  const centre = L(-0.05, -0.55);
+
+  const fade = Math.max(0, 1 - age / ZAP_DUR);       // overall ramp-out
+  const flick = 0.55 + 0.45 * Math.sin(age * 70);    // fast electric flicker
+  const intensity = fade * (0.55 + 0.45 * flick);
+
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  // 1) the charged bloom around the whole rider
+  const br = 1.0 + 0.25 * flick;
+  const bg = ctx.createRadialGradient(centre.x, centre.y, 0.15, centre.x, centre.y, br);
+  bg.addColorStop(0, `rgba(210,250,255,${0.45 * intensity})`);
+  bg.addColorStop(0.4, `rgba(110,200,255,${0.30 * intensity})`);
+  bg.addColorStop(1, 'rgba(80,150,255,0)');
+  ctx.fillStyle = bg;
+  ctx.beginPath(); ctx.arc(centre.x, centre.y, br, 0, Math.PI * 2); ctx.fill();
+
+  // a jagged bolt between two world points: a wide soft-blue glow stroke under a
+  // thin white-hot core, the midpoints kicked sideways so it forks like real
+  // electricity. `seed` varies the kinks frame to frame so the arc crackles.
+  const bolt = (a, b, seed, amp) => {
+    const segs = 5;
+    const nx = -(b.y - a.y), ny = b.x - a.x;          // unit normal across the span
+    const nl = Math.hypot(nx, ny) || 1;
+    const ux = nx / nl, uy = ny / nl;
+    const pts = [];
+    for (let i = 0; i <= segs; i++) {
+      const f = i / segs;
+      const j = (i === 0 || i === segs) ? 0
+        : Math.sin(seed * 12.9898 + i * 4.1 + age * 55) * amp * (0.5 + Math.sin(f * Math.PI));
+      pts.push({ x: a.x + (b.x - a.x) * f + ux * j, y: a.y + (b.y - a.y) * f + uy * j });
+    }
+    const stroke = (w, col) => {
+      ctx.strokeStyle = col; ctx.lineWidth = w;
+      ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.stroke();
+    };
+    stroke(0.09, `rgba(90,190,255,${0.5 * intensity})`);  // glow halo
+    stroke(0.03, `rgba(235,252,255,${0.95 * intensity})`); // white-hot core
+  };
+
+  // a crackling ring of current crawling around a wheel: a jagged loop hugging
+  // the tyre at its radius (the kinks swimming with `age`), plus a couple of
+  // sparks jumping off the rim. Centred on the wheel's world position so it
+  // tracks the spinning tyre.
+  const wheelRing = (c, seed) => {
+    const r = PHYS.wheelR;
+    const N = 16;
+    const pts = [];
+    for (let i = 0; i <= N; i++) {
+      const a = (i / N) * Math.PI * 2;
+      const jr = r + Math.sin(seed * 7.7 + i * 2.3 + age * 50) * 0.07;
+      pts.push({ x: c.x + Math.cos(a) * jr, y: c.y + Math.sin(a) * jr });
+    }
+    const ring = (w, col) => {
+      ctx.strokeStyle = col; ctx.lineWidth = w;
+      ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.stroke();
+    };
+    ring(0.08, `rgba(90,190,255,${0.45 * intensity})`);
+    ring(0.028, `rgba(235,252,255,${0.9 * intensity})`);
+    // sparks leaping off the rim, swept around so they chase the wheel
+    for (let s = 0; s < 3; s++) {
+      const a = age * 8 + s * 2.1 + seed;
+      const a0 = { x: c.x + Math.cos(a) * r, y: c.y + Math.sin(a) * r };
+      const a1 = { x: c.x + Math.cos(a) * (r + 0.24), y: c.y + Math.sin(a) * (r + 0.24) };
+      bolt(a0, a1, seed * 3 + s, 0.1);
+    }
+  };
+
+  // 2) arcs leaping between body parts and out into the air around the rider
+  ctx.globalCompositeOperation = 'lighter';
+  bolt(head, shoulder, 1, 0.14);
+  bolt(shoulder, hip, 2, 0.12);
+  bolt(hip, knee, 3, 0.12);
+  bolt(knee, foot, 4, 0.12);
+  bolt(shoulder, hand, 5, 0.16);
+
+  // the current runs down through the chassis + suspension into both wheels,
+  // then crackles around the tyres. swPivot / forkTop / shock anchors mirror
+  // drawBike's suspension geometry; the wheel positions are the live world ones.
+  const rw = bike.wheels[bike.rearIndex].pos;
+  const fw = bike.wheels[1 - bike.rearIndex].pos;
+  const swPivot = L(-0.16, 0.04);   // swingarm pivot
+  const forkTop = L(0.50, -0.39);   // top of the front forks
+  const shockA = L(-0.34, -0.40);   // rear shock spring, top
+  const shockB = L(-0.26, 0.02);    // rear shock spring, bottom
+  bolt(hip, swPivot, 10, 0.1);      // body down into the swingarm pivot
+  bolt(swPivot, rw, 11, 0.12);      // along the swingarm to the rear wheel
+  bolt(shockA, shockB, 12, 0.06);   // arcing across the rear shock
+  bolt(foot, forkTop, 13, 0.1);     // down the front of the frame
+  bolt(forkTop, fw, 14, 0.12);      // down the forks to the front wheel
+  wheelRing(rw, 21);
+  wheelRing(fw, 37);
+
+  // a few outward forks crackling off the silhouette into open air
+  const outs = [head, hand, knee, hip];
+  for (let i = 0; i < outs.length; i++) {
+    const o = outs[i];
+    const ang = age * 9 + i * 1.9;
+    const tip = { x: o.x + Math.cos(ang) * 0.5, y: o.y + Math.sin(ang) * 0.5 };
+    bolt(o, tip, 6 + i, 0.14);
+  }
+  ctx.globalCompositeOperation = 'source-over';
+
+  // 3) the x-ray skeleton, flashed on in three brief windows so the rider
+  // "blinks" to bones rather than wearing them the whole time
+  const xray = (age >= 0.04 && age < 0.12) ||
+               (age >= 0.24 && age < 0.32) ||
+               (age >= 0.46 && age < 0.54);
+  if (xray) {
+    ctx.save();
+    // a dim film behind the bones so they read as a bright x-ray exposure
+    const fr = 0.95;
+    const fg = ctx.createRadialGradient(centre.x, centre.y, 0.1, centre.x, centre.y, fr);
+    fg.addColorStop(0, 'rgba(8,16,40,0.7)');
+    fg.addColorStop(1, 'rgba(8,16,40,0)');
+    ctx.fillStyle = fg;
+    ctx.beginPath(); ctx.arc(centre.x, centre.y, fr, 0, Math.PI * 2); ctx.fill();
+
+    ctx.globalCompositeOperation = 'lighter';
+    const bone = '#dff1ff';
+    const seg = (a, b, w) => {
+      ctx.strokeStyle = bone; ctx.lineWidth = w;
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    };
+    const joint = (pt, r) => {
+      ctx.fillStyle = bone;
+      ctx.beginPath(); ctx.arc(pt.x, pt.y, r, 0, Math.PI * 2); ctx.fill();
+    };
+    // spine, limbs
+    seg(neck, hip, 0.06);
+    seg(shoulder, elbow, 0.055); seg(elbow, hand, 0.05);
+    seg(hip, knee, 0.06); seg(knee, foot, 0.055);
+    // ribcage: a few curved ribs sweeping off the spine
+    ctx.strokeStyle = bone; ctx.lineWidth = 0.03;
+    for (let r = 0; r < 3; r++) {
+      const f = 0.18 + r * 0.16;
+      const sp = { x: neck.x + (hip.x - neck.x) * f, y: neck.y + (hip.y - neck.y) * f };
+      const rib = 0.16 - r * 0.02;
+      for (const dir of [-1, 1]) {
+        // ribs bow outward along the body's local "across" axis (the tilt normal)
+        ctx.beginPath();
+        ctx.moveTo(sp.x, sp.y);
+        ctx.quadraticCurveTo(sp.x - sin * rib * dir, sp.y + cos * rib * dir,
+          sp.x - sin * rib * dir - cos * 0.03, sp.y + cos * rib * dir - sin * 0.03);
+        ctx.stroke();
+      }
+    }
+    // pelvis + joints
+    joint(hip, 0.07); joint(shoulder, 0.055); joint(knee, 0.05);
+    joint(elbow, 0.04); joint(hand, 0.045); joint(foot, 0.05);
+    // skull: a glowing dome with two dark eye sockets and a jaw line
+    ctx.fillStyle = bone;
+    ctx.beginPath(); ctx.arc(head.x, head.y, 0.2, 0, Math.PI * 2); ctx.fill();
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = 'rgba(10,20,45,0.85)';
+    for (const ex of [-1, 1]) {
+      // L already mirrors x by facing, so two symmetric offsets give the sockets
+      const e = L(PHYS.headX + ex * 0.07, PHYS.headY - 0.01);
+      ctx.beginPath(); ctx.ellipse(e.x, e.y, 0.045, 0.055, bike.angle, 0, Math.PI * 2); ctx.fill();
+    }
+    const jaw = L(PHYS.headX, PHYS.headY + 0.12);
+    ctx.strokeStyle = 'rgba(10,20,45,0.7)'; ctx.lineWidth = 0.02;
+    ctx.beginPath(); ctx.arc(jaw.x, jaw.y, 0.08, 0.1 * Math.PI, 0.9 * Math.PI); ctx.stroke();
+    ctx.restore();
+  }
+
+  ctx.restore();
+}
+
 // exhaust puffs (see game.js), drawn behind the bike so they trail off. Three
 // kinds, flagged on the puff:
 //  • smoke  — soft growing grey discs (tiers 0/1), richer/darker under load
@@ -5318,6 +5637,64 @@ function drawStylePopup(ctx, x, y, text, age, zoom) {
   ctx.restore();
 }
 
+// how long a defibrillator "+1 LIFE" toast floats (seconds) — a touch longer
+// than a style toast so the life gain lingers. game.js ages/culls by this.
+const LIFE_POPUP_DUR = 1.2;
+
+// The defibrillator's floating combat text — deliberately UNLIKE the yellow
+// style "+N" toast: an electric white-to-cyan fill with a blue glow, a heavier
+// jittering outline that twitches like live current early on, and a little
+// lightning bolt on each side. Reads instantly as "you gained a life", not points.
+function drawLifePopup(ctx, x, y, text, age, zoom) {
+  if (age >= LIFE_POPUP_DUR) return;
+  const pop = easeOutBack(Math.min(1, age / 0.18));
+  const fade = Math.min(1, (LIFE_POPUP_DUR - age) / 0.3);
+  // the current twitch: a fast shiver that dies off over the first ~0.25s
+  const jit = Math.max(0, 1 - age / 0.25);
+  const jx = Math.sin(age * 90) * 0.06 * zoom * jit;
+  const jy = Math.cos(age * 77) * 0.05 * zoom * jit;
+  const px = Math.max(20, Math.round(zoom * 0.72));
+  ctx.save();
+  ctx.translate(x + jx, y + jy);
+  ctx.scale(pop, pop);
+  ctx.globalAlpha = Math.max(0, fade);
+  ctx.font = `bold ${px}px "Consolas","Courier New",monospace`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.lineJoin = 'round';
+  // blue electric bloom behind the lettering
+  ctx.shadowColor = 'rgba(90,200,255,0.95)';
+  ctx.shadowBlur = Math.max(6, zoom * 0.4);
+  // dark navy outline so the bright fill pops over any terrain
+  ctx.lineWidth = Math.max(3, zoom * 0.13);
+  ctx.strokeStyle = 'rgba(8,28,60,0.9)';
+  ctx.strokeText(text, 0, 0);
+  ctx.shadowBlur = 0;
+  // white-hot top fading to cyan, the charged look
+  const grad = ctx.createLinearGradient(0, -px * 0.5, 0, px * 0.5);
+  grad.addColorStop(0, '#ffffff');
+  grad.addColorStop(0.5, '#bff2ff');
+  grad.addColorStop(1, '#39c6ff');
+  ctx.fillStyle = grad;
+  ctx.fillText(text, 0, 0);
+  // a little lightning bolt flanking each side of the text
+  const tw = ctx.measureText(text).width;
+  ctx.fillStyle = '#ffe14a';
+  for (const dir of [-1, 1]) {
+    const bx = dir * (tw / 2 + px * 0.42);
+    ctx.beginPath();
+    ctx.moveTo(bx + px * 0.06, -px * 0.34);
+    ctx.lineTo(bx - px * 0.1, px * 0.04);
+    ctx.lineTo(bx + px * 0.02, px * 0.04);
+    ctx.lineTo(bx - px * 0.04, px * 0.36);
+    ctx.lineTo(bx + px * 0.14, -px * 0.02);
+    ctx.lineTo(bx + px * 0.02, -px * 0.02);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
 // the floating crash/finish panel. The sub line carries time/style and a
 // what-to-do hint, which is long, so it wraps to as many lines as it needs
 // and the panel grows upward from a fixed bottom — keeping the touch SAVE
@@ -5381,7 +5758,7 @@ function drawReady(ctx, W, H, mapLabel, touch) {
   ] : [
     'Collect every triple cheeseburger, then ride to the popcorn.', '',
     'UP gas   DOWN brake   LEFT / RIGHT rotate',
-    'SPACE turn around   ESC pause   M sound',
+    'SPACE turn around   ESC pause   M sound   H hud',
   ];
   let instrPx = 16, lineH = 23;
   ctx.font = instrPx + mono;
@@ -5732,17 +6109,46 @@ function drawMenuBackdrop(ctx, W, H, t, pat, showAstro) {
 // Rows are 56 tall with an 18 gap where there's room, but shrink to fit so
 // a tall stack (e.g. the 4-item menu) never runs off a short phone; only if
 // even the floor height overruns do we slide the stack up to avoid a clip.
+//
+// On a short, wide screen (a landscape phone — which is how the game is held)
+// a tall single column gets squashed, so we spend the horizontal room instead:
+// the buttons spill into 2+ columns, filled top-to-bottom column by column so
+// Up/Down still walks them in reading order. Portrait keeps the plain stack.
 function menuRects(W, H, n, y0) {
-  const bw = Math.min(300, safeBandW(W) * 0.7);
-  const x = safeCenterX(W, bw);
   const m = Math.max(12, H * 0.04) + SAFE.bottom;
   const avail = H - y0 - m;                       // room below the start
-  let bh = Math.max(28, Math.min(56, avail / (n + (n - 1) * 0.32)));
+  const bandW = safeBandW(W);
+  const colGap = 16;
+
+  // how short a row may get before we'd rather spill into another column;
+  // tuned so a 5-item menu is two columns on a typical landscape phone and
+  // only the very shortest screens need a third
+  const CRAMPED = 36;
+  // a column this narrow still fits the longest label ("Map Editor")
+  const minColW = 150;
+  const fit = Math.max(1, Math.floor((bandW + colGap) / (minColW + colGap)));
+  const rowH = c => { const r = Math.ceil(n / c); return avail / (r + (r - 1) * 0.32); };
+
+  let cols = 1;
+  if (W > H) while (cols < Math.min(n, fit) && rowH(cols) < CRAMPED) cols++;
+  const rows = Math.ceil(n / cols);
+  cols = Math.ceil(n / rows);                      // drop any column left empty
+
+  // single column keeps the old narrow width; columns share the fuller band
+  const usableW = cols === 1 ? bandW * 0.7 : bandW * 0.94;
+  const bw = Math.min(300, (usableW - (cols - 1) * colGap) / cols);
+  const x0 = SAFE.left + (bandW - (cols * bw + (cols - 1) * colGap)) / 2;
+
+  const bh = Math.max(28, Math.min(56, rowH(cols)));
   const gap = bh * 0.32;
-  const total = n * bh + (n - 1) * gap;
+  const total = rows * bh + (rows - 1) * gap;
   const top = total > avail ? Math.max(m, H - m - total) : y0;
+
   const rects = [];
-  for (let i = 0; i < n; i++) rects.push({ x, y: top + i * (bh + gap), w: bw, h: bh });
+  for (let i = 0; i < n; i++) {
+    const col = Math.floor(i / rows), row = i % rows;
+    rects.push({ x: x0 + col * (bw + colGap), y: top + row * (bh + gap), w: bw, h: bh });
+  }
   return rects;
 }
 
@@ -5762,15 +6168,27 @@ function drawButtons(ctx, rects, items, sel, hover, alpha) {
       ctx.scale(1.06, 1.06);
       ctx.translate(-(r.x + r.w / 2), -(r.y + r.h / 2));
     }
-    ctx.fillStyle = hot ? 'rgba(70,34,10,0.92)' : 'rgba(20,12,6,0.82)';
-    roundRectPath(ctx, r.x, r.y, r.w, r.h, 12);
-    ctx.fill();
-    ctx.lineWidth = hot ? 3 : 2;
-    ctx.strokeStyle = hot ? '#f9c623' : 'rgba(249,198,35,0.45)';
-    ctx.stroke();
+    if (it.hero) {
+      // the primary call-to-action: a warm amber slab with dark lettering,
+      // so it reads as the main button above the smaller grid beneath it
+      ctx.fillStyle = hot ? '#ffd64a' : '#f4b81d';
+      roundRectPath(ctx, r.x, r.y, r.w, r.h, 14);
+      ctx.fill();
+      ctx.lineWidth = hot ? 3.5 : 2.5;
+      ctx.strokeStyle = hot ? '#fff2bd' : 'rgba(120,68,8,0.6)';
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = hot ? 'rgba(70,34,10,0.92)' : 'rgba(20,12,6,0.82)';
+      roundRectPath(ctx, r.x, r.y, r.w, r.h, 12);
+      ctx.fill();
+      ctx.lineWidth = hot ? 3 : 2;
+      ctx.strokeStyle = hot ? '#f9c623' : 'rgba(249,198,35,0.45)';
+      ctx.stroke();
+    }
     const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
     const innerW = r.w - 24; // keep the lettering off the rounded corners
-    ctx.fillStyle = hot ? '#ffe27a' : (it.color || '#f0e8da');
+    ctx.fillStyle = it.hero ? (hot ? '#3a1a02' : '#43230b')
+      : hot ? '#ffe27a' : (it.color || '#f0e8da');
     if (it.sub) {
       // size and stack label/sub relative to the row so two-line buttons
       // stay inside even when the row is shrunk on a short screen
@@ -5780,7 +6198,9 @@ function drawButtons(ctx, rects, items, sel, hover, alpha) {
       fitFont(ctx, it.sub, innerW, Math.min(13, r.h * 0.28), '', 9);
       ctx.fillText(it.sub, cx, cy + r.h * 0.22);
     } else {
-      fitFont(ctx, it.label, innerW, Math.min(24, r.h * 0.5), 'bold', 12);
+      // the hero gets a bigger cap so PLAY stands tall in its wide slab (its
+      // taller desktop slab lets the cap actually take effect)
+      fitFont(ctx, it.label, innerW, Math.min(it.hero ? 44 : 24, r.h * 0.5), 'bold', 12);
       ctx.fillText(it.label, cx, cy + 1);
     }
     ctx.restore();
@@ -5788,10 +6208,138 @@ function drawButtons(ctx, rects, items, sel, hover, alpha) {
   ctx.restore();
 }
 
-function drawMenu(ctx, W, H, alpha, items, sel, hover) {
+// An explicit Back button tucked into the top-left corner of the menu
+// sub-screens (Choose Difficulty, Best Records, Replays). It sits exactly
+// where the touch overlay used to draw its own BACK, so it reads the same on
+// every device; menuBackRect is shared by the draw and the hit-test (game.js).
+function menuBackRect(W, H) {
+  return { x: 12 + SAFE.left, y: 12 + SAFE.top, w: 104, h: 46 };
+}
+
+function drawMenuBack(ctx, W, H, alpha, hot) {
+  const r = menuBackRect(W, H);
+  ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  const rects = menuRects(W, H, items.length, H * 0.58);
-  drawButtons(ctx, rects, items, sel, hover, alpha);
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = hot ? 'rgba(70,34,10,0.92)' : 'rgba(20,12,6,0.82)';
+  roundRectPath(ctx, r.x, r.y, r.w, r.h, 12);
+  ctx.fill();
+  ctx.lineWidth = hot ? 3 : 2;
+  ctx.strokeStyle = hot ? '#f9c623' : 'rgba(249,198,35,0.45)';
+  ctx.stroke();
+  // ◀ chevron, then the label
+  const cy = r.y + r.h / 2;
+  ctx.fillStyle = hot ? '#ffe27a' : '#f0e8da';
+  ctx.beginPath();
+  ctx.moveTo(r.x + 24, cy - 7);
+  ctx.lineTo(r.x + 16, cy);
+  ctx.lineTo(r.x + 24, cy + 7);
+  ctx.closePath();
+  ctx.fill();
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.font = 'bold 16px "Consolas","Courier New",monospace';
+  ctx.fillText('Back', r.x + 40, cy + 1);
+  ctx.restore();
+}
+
+// one arrow button of a left/right selector (the Best Records track picker).
+// dir = -1 draws a ◀ (previous), +1 a ▶ (next); hot lights it on hover.
+// disabled greys it out (no track that way — the selector doesn't wrap).
+function drawSelectorArrow(ctx, r, alpha, hot, dir, disabled) {
+  hot = hot && !disabled;
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = alpha * (disabled ? 0.35 : 1);
+  ctx.fillStyle = hot ? 'rgba(70,34,10,0.92)' : 'rgba(20,12,6,0.82)';
+  roundRectPath(ctx, r.x, r.y, r.w, r.h, 10);
+  ctx.fill();
+  ctx.lineWidth = hot ? 3 : 2;
+  ctx.strokeStyle = hot ? '#f9c623' : 'rgba(249,198,35,0.45)';
+  ctx.stroke();
+  const cx = r.x + r.w / 2, cy = r.y + r.h / 2, s = r.w * 0.2;
+  ctx.fillStyle = hot ? '#ffe27a' : '#f0e8da';
+  ctx.beginPath();
+  if (dir < 0) {
+    ctx.moveTo(cx + s * 0.6, cy - s); ctx.lineTo(cx - s * 0.7, cy); ctx.lineTo(cx + s * 0.6, cy + s);
+  } else {
+    ctx.moveTo(cx - s * 0.6, cy - s); ctx.lineTo(cx + s * 0.7, cy); ctx.lineTo(cx - s * 0.6, cy + s);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+// Main-menu layout: "Play" is a wide hero slab across the top, the remaining
+// items fill a grid beneath it (two columns on a landscape phone, a single
+// column where there's vertical room). Returns rects in items order — index 0
+// is the hero — so hit-testing (game.js) and drawing stay in lockstep.
+function mainMenuRects(W, H, n) {
+  const m = Math.max(12, H * 0.04) + SAFE.bottom;
+  const bandW = safeBandW(W);
+  const y0 = H * 0.56;                         // sits just below the two-line title
+  const avail = H - y0 - m;
+  // PLAY is the hero slab; give it a noticeably bigger reach on desktop, where
+  // there's mouse + screen room, than on a cramped phone (touch device)
+  const mobile = (typeof TOUCH !== 'undefined') && TOUCH.active;
+  const heroH = mobile ? Math.max(40, Math.min(62, avail * 0.28))
+                       : Math.max(40, Math.min(110, avail * 0.42));
+  const heroGap = Math.max(12, heroH * 0.3);
+
+  // the grid carries everything but Play. On a phone the hero spans the grid's
+  // full width; on desktop it widens into a broad banner above the grid.
+  const grid = menuRects(W, H, n - 1, y0 + heroH + heroGap);
+  const left = Math.min(...grid.map(r => r.x));
+  const right = Math.max(...grid.map(r => r.x + r.w));
+  let hx = left, hw = right - left;
+  if (!mobile) {
+    hw = Math.max(hw, Math.min(760, bandW * 0.8));
+    hx = safeCenterX(W, hw);
+  }
+  return [{ x: hx, y: y0, w: hw, h: heroH }, ...grid];
+}
+
+function drawMainMenu(ctx, W, H, alpha, items, sel, hover, skip) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  const rects = mainMenuRects(W, H, items.length);
+  // Play (index 0) is the hero: a wide amber slab with a shouted PLAY label
+  const disp = items.map((it, i) =>
+    (i === 0 ? { label: String(it).toUpperCase(), hero: true } : it));
+  drawButtons(ctx, rects, disp, sel, hover, alpha);
+  if (skip && skip.show) drawSkipChip(ctx, W, H, alpha, !!skip.hot);
+}
+
+// The dev-only level-skip control. It is NOT a real menu button: it's tucked
+// just above the version build stamp (bottom-left) and wears a dashed,
+// red-tinted "dev tool" look so it reads as diagnostic chrome, not chrome the
+// player is meant to use. skipChipRect is shared by the draw and the hit-test.
+function skipChipRect(W, H) {
+  const h = 22, w = 64;
+  // stack it directly above the "vN" stamp, left-aligned with it
+  const x = SAFE.left + 12;
+  const y = H - SAFE.bottom - 12 - 13 - 8 - h; // tag baseline − text − gap − chip
+  return { x, y, w, h };
+}
+
+function drawSkipChip(ctx, W, H, alpha, hot) {
+  const r = skipChipRect(W, H);
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = hot ? 'rgba(120,30,28,0.9)' : 'rgba(44,18,16,0.72)';
+  roundRectPath(ctx, r.x, r.y, r.w, r.h, 5);
+  ctx.fill();
+  ctx.setLineDash([4, 3]);                     // dashed = "this is a dev tool"
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = hot ? '#ff8a6a' : 'rgba(255,120,90,0.7)';
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = hot ? '#ffe0d6' : 'rgba(255,176,158,0.92)';
+  ctx.font = 'bold 12px "Consolas","Courier New",monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('» SKIP', r.x + r.w / 2, r.y + r.h / 2 + 0.5);
+  ctx.restore();
 }
 
 // small build stamp tucked into the bottom-left corner of the menu so the
@@ -5805,9 +6353,9 @@ function drawCornerTag(ctx, W, H, text) {
   ctx.textBaseline = 'alphabetic';
   ctx.font = '13px "Consolas","Courier New",monospace';
   const x = SAFE.left + 12, y = H - SAFE.bottom - 12;
-  ctx.fillStyle = 'rgba(20,12,6,0.6)';
+  ctx.fillStyle = 'rgba(20,12,6,0.85)';
   ctx.fillText(text, x + 1, y + 1);
-  ctx.fillStyle = 'rgba(240,232,218,0.55)';
+  ctx.fillStyle = 'rgba(244,238,224,0.92)';
   ctx.fillText(text, x, y);
   ctx.restore();
 }
@@ -5815,7 +6363,7 @@ function drawCornerTag(ctx, W, H, text) {
 // the same track picker drives "Play" (title 'CHOOSE DIFFICULTY') and the
 // Best Records screen (title 'BEST RECORDS'); tracks with no maps yet show
 // disabled either way
-function drawDifficulty(ctx, W, H, alpha, tracks, sel, hover, touch, title) {
+function drawDifficulty(ctx, W, H, alpha, tracks, sel, hover, touch, title, backHot) {
   title = title || 'CHOOSE DIFFICULTY';
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.save();
@@ -5840,18 +6388,7 @@ function drawDifficulty(ctx, W, H, alpha, tracks, sel, hover, touch, title) {
   const rects = menuRects(W, H, tracks.length, H * 0.34);
   drawButtons(ctx, rects, items, sel, hover, alpha);
 
-  // touch devices get an on-screen back button instead of the Esc hint
-  if (!touch) {
-    const last = rects[rects.length - 1];
-    ctx.save();
-    ctx.globalAlpha = alpha;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = 'rgba(40,20,8,0.85)';
-    ctx.font = '15px "Consolas","Courier New",monospace';
-    ctx.fillText('Esc to go back', W / 2, last.y + last.h + 34);
-    ctx.restore();
-  }
+  drawMenuBack(ctx, W, H, alpha, backHot);
 }
 
 // the rider slumped over his bike, head hanging low — shown on the
@@ -6725,19 +7262,28 @@ function drawVictoryFade(ctx, W, H, alpha, o) {
 
 // The Best Records scorecard's single Back button, pinned low so the table
 // above it has room. Shared with game.js for hit-testing.
+// The track selector on the Best Records screen: a ◀ / ▶ pair flanking the
+// current track's name, tucked just under the title. Index 0 = previous track,
+// 1 = next. Shared by the draw and the hit-test (game.js).
 function recordsRects(W, H) {
-  const bw = Math.min(300, safeBandW(W) * 0.7);
-  const x = safeCenterX(W, bw);
-  const m = Math.max(12, H * 0.04) + SAFE.bottom;
-  const h = Math.max(34, Math.min(48, H * 0.1));
-  return [{ x, y: H - m - h, w: bw, h }];
+  const a = Math.max(30, Math.min(40, H * 0.075));
+  const labelW = Math.min(220, safeBandW(W) * 0.46);
+  const gap = 12;
+  const groupW = labelW + 2 * (a + gap);
+  const x = safeCenterX(W, groupW);
+  const y = H * 0.12 + 34;
+  return [
+    { x, y, w: a, h: a },                  // ◀ previous track
+    { x: x + groupW - a, y, w: a, h: a },  // ▶ next track
+  ];
 }
 
-// The Best Records screen for one track: the player's all-time best time and
-// style for every map, in the same scorecard the victory feast shows (no stars
-// here — every figure already IS the all-time best). The backdrop is drawn by
-// the caller, like the difficulty screen.
-// o: { label, names, results, sel, hover, touch }
+// The Best Records screen: a ◀/▶ track selector under the title, then the
+// player's all-time best time and style for every map of the selected track,
+// in the same scorecard the victory feast shows (no stars here — every figure
+// already IS the all-time best). The backdrop and corner Back are shared with
+// the difficulty screen.
+// o: { label, color, names, results, hover, touch, backHot }
 function drawRecords(ctx, W, H, alpha, o) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.save();
@@ -6749,46 +7295,60 @@ function drawRecords(ctx, W, H, alpha, o) {
   ctx.fillText('BEST RECORDS', W / 2 + 3, H * 0.12 + 3);
   ctx.fillStyle = '#f9c623';
   ctx.fillText('BEST RECORDS', W / 2, H * 0.12);
-  if (o.label) {
-    fitFont(ctx, o.label + ' track', safeBandW(W) * 0.9, 18, 'bold', 11);
-    ctx.fillStyle = '#f0e8da';
-    ctx.fillText(o.label + ' track', W / 2, H * 0.12 + 38);
-  }
+  ctx.restore();
+
+  // ---- track selector (the arrows grey out at the ends; it doesn't wrap) ----
+  const rects = recordsRects(W, H);
+  const prev = rects[0], next = rects[1];
+  drawSelectorArrow(ctx, prev, alpha, o.hover === 0, -1, !o.canPrev);
+  drawSelectorArrow(ctx, next, alpha, o.hover === 1, 1, !o.canNext);
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const labelW = next.x - (prev.x + prev.w) - 16;
+  const labelCy = prev.y + prev.h / 2 + 1;
+  fitFont(ctx, o.label || '', labelW, 22, 'bold', 12);
+  // a dark drop-shadow keeps the track-coloured name legible on the meadow
+  ctx.fillStyle = 'rgba(40,16,4,0.85)';
+  ctx.fillText(o.label || '', W / 2 + 2, labelCy + 2);
+  ctx.fillStyle = o.color || '#f0e8da';
+  ctx.fillText(o.label || '', W / 2, labelCy);
   ctx.restore();
 
   const names = o.names || [], results = o.results || [];
-  const complete = names.length > 0 && names.every((_, i) => results[i]);
-  const rows = names.length + 1 + (complete ? 1 : 0); // + header (+ total)
-  const rects = recordsRects(W, H);
+  const m = Math.max(12, H * 0.04) + SAFE.bottom + 8; // a little breathing room at the foot
+  const top = Math.max(H * 0.27, prev.y + prev.h + 16);
 
-  // a centred card between the title and the Back button. Sizing mirrors the
-  // victory scorecard: rows shrink to fit, with a smaller floor on a short
-  // landscape phone so a full 12-row track still fits above the button.
-  const short = W > H && H < 520;
-  const top = Math.max(H * 0.24, H * 0.12 + 56);
-  const pw = Math.min(safeBandW(W) * 0.88, 600);
-  const px = safeCenterX(W, pw);
-  const availH = (rects[0].y - 14) - top;
-  const rowH = Math.max(short ? 9 : 13, Math.min(27, (availH - 24) / (rows + 1.1)));
-  const fs = Math.max(short ? 9 : 10, Math.round(rowH * 0.62));
-  const ph = Math.min(availH, rowH * (rows + 1.1) + 24);
-  ctx.save();
-  ctx.globalAlpha = alpha;
-  drawScorecard(ctx, { x: px, y: top, w: pw, h: ph }, rowH, fs, names, results);
-  ctx.restore();
-
-  drawButtons(ctx, rects, ['Back'], o.sel, o.hover, alpha);
-  if (!o.touch) {
+  if (!names.length) {
+    // a track with no maps yet — nothing banked to show
     ctx.save();
     ctx.globalAlpha = alpha;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillStyle = 'rgba(40,20,8,0.85)';
-    ctx.font = '15px "Consolas","Courier New",monospace';
-    ctx.fillText('Esc to go back', W / 2,
-      Math.min(rects[0].y + rects[0].h + 24, H - SAFE.bottom - 8));
+    ctx.fillStyle = 'rgba(240,232,218,0.7)';
+    fitFont(ctx, 'No records yet - coming soon', safeBandW(W) * 0.8, 20, '', 12);
+    ctx.fillText('No records yet - coming soon', W / 2, (top + H - m) / 2);
+    ctx.restore();
+  } else {
+    // sizing mirrors the victory scorecard: rows shrink to fit, with a smaller
+    // floor on a short landscape phone so a full 12-row track still fits.
+    const complete = names.every((_, i) => results[i]);
+    const rows = names.length + 1 + (complete ? 1 : 0); // + header (+ total)
+    const short = W > H && H < 520;
+    const pw = Math.min(safeBandW(W) * 0.88, 600);
+    const px = safeCenterX(W, pw);
+    const availH = (H - m) - top;
+    const rowH = Math.max(short ? 9 : 13, Math.min(27, (availH - 24) / (rows + 1.1)));
+    const fs = Math.max(short ? 9 : 10, Math.round(rowH * 0.62));
+    const ph = Math.min(availH, rowH * (rows + 1.1) + 24);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    drawScorecard(ctx, { x: px, y: top, w: pw, h: ph }, rowH, fs, names, results);
     ctx.restore();
   }
+
+  drawMenuBack(ctx, W, H, alpha, o.backHot);
 }
 
 function drawPause(ctx, W, H, items, sel, hover) {
@@ -6800,10 +7360,12 @@ function drawPause(ctx, W, H, items, sel, hover) {
   // have shrunk or slid up on a short screen — so derive it from the rects
   // rather than a fixed fraction, keeping the title clear of the buttons
   const rects = menuRects(W, H, items.length, H * 0.46);
-  const first = rects[0], last = rects[rects.length - 1];
+  const first = rects[0];
+  // the stack may now be a grid, so the lowest edge isn't the last rect
+  const lowest = Math.max(...rects.map(r => r.y + r.h));
   const pw = Math.min(W * 0.7, 460);
   const top = Math.max(8, first.y - 66);
-  const bottom = Math.min(H - 8, last.y + last.h + 22);
+  const bottom = Math.min(H - 8, lowest + 22);
   ctx.fillStyle = 'rgba(20,12,6,0.85)';
   roundRectPath(ctx, (W - pw) / 2, top, pw, bottom - top, 16);
   ctx.fill();
@@ -6821,14 +7383,15 @@ function drawPause(ctx, W, H, items, sel, hover) {
 // shared by drawing and hit-testing (like menuRects): three slider rows
 // plus a Back button. Each row rect is the hover/click target and its
 // `bar` is the slider track inside it.
+// the three volume sliders. The screen's Back is the shared corner button
+// (drawMenuBack), so — unlike before — no Back row is appended here.
 function audioRects(W, H) {
   const bw = Math.min(520, safeBandW(W) * 0.86);
   const x = safeCenterX(W, bw);
   const m = Math.max(12, H * 0.04) + SAFE.bottom;
   const top = SAFE.top + H * (H < 360 ? 0.20 : H < 430 ? 0.24 : 0.30); // higher on short screens
-  const backH = Math.min(56, Math.max(44, H * 0.1));
-  const reserve = backH + 46;              // gap to Back + the hint line below
-  // shrink the three slider rows so they plus the Back button and hint fit
+  const reserve = 46;                       // room for the hint line below
+  // shrink the three slider rows so they plus the hint fit on a short screen
   const bh = Math.max(46, Math.min(68, (H - top - m - reserve - 2 * 12) / 3));
   const gap = Math.max(10, Math.min(16, bh * 0.2));
   let y = top;
@@ -6838,8 +7401,6 @@ function audioRects(W, H) {
       bar: { x: x + 24, y: y + bh - 15, w: bw - 48, h: 8 } });
     y += bh + gap;
   }
-  const backW = Math.min(240, safeBandW(W) * 0.7);
-  rects.push({ x: safeCenterX(W, backW), y: y + 6, w: backW, h: backH }); // Back
   return rects;
 }
 
@@ -6855,7 +7416,6 @@ function drawAudio(ctx, W, H, alpha, o) {
     ctx.fillRect(0, 0, W, H);
   }
   const rects = audioRects(W, H);
-  const back = rects[rects.length - 1];
 
   ctx.save();
   ctx.globalAlpha = alpha;
@@ -6908,8 +7468,7 @@ function drawAudio(ctx, W, H, alpha, o) {
   });
   ctx.restore();
 
-  drawButtons(ctx, [back], ['Back'],
-    o.sel === 3 ? 0 : -1, o.hover === 3 ? 0 : -1, alpha);
+  drawMenuBack(ctx, W, H, alpha, o.backHot);
 
   ctx.save();
   ctx.globalAlpha = alpha;
@@ -6917,9 +7476,10 @@ function drawAudio(ctx, W, H, alpha, o) {
   ctx.textBaseline = 'middle';
   ctx.fillStyle = o.dim ? 'rgba(240,232,218,0.75)' : 'rgba(40,20,8,0.85)';
   const hint = o.touch ? 'Drag the sliders - tap Back when done'
-    : 'Arrows adjust - M mutes - Esc to go back';
+    : 'Arrows adjust - M mutes';
   fitFont(ctx, hint, safeBandW(W) * 0.92, 15, '', 11);
-  ctx.fillText(hint, W / 2, Math.min(back.y + back.h + 22, H - SAFE.bottom - 10));
+  const lastBar = rects[rects.length - 1];
+  ctx.fillText(hint, W / 2, Math.min(lastBar.y + lastBar.h + 26, H - SAFE.bottom - 10));
   ctx.restore();
 }
 
@@ -6943,7 +7503,7 @@ function replayRects(W, H, n, y0) {
 
 // items render through drawButtons; the list shows a REPLAY_VIS-row
 // window and `scroll` is the index of the first visible item
-function drawReplays(ctx, W, H, alpha, items, sel, scroll, hover, note, touch) {
+function drawReplays(ctx, W, H, alpha, items, sel, scroll, hover, note, touch, backHot) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.save();
   ctx.globalAlpha = alpha;
@@ -6977,12 +7537,9 @@ function drawReplays(ctx, W, H, alpha, items, sel, scroll, hover, note, touch) {
     ctx.font = '15px "Consolas","Courier New",monospace';
     ctx.fillText(note, W / 2, H * 0.90);
   }
-  if (!touch) {
-    ctx.fillStyle = 'rgba(40,20,8,0.85)';
-    ctx.font = '15px "Consolas","Courier New",monospace';
-    ctx.fillText('Esc to go back', W / 2, H * 0.95);
-  }
   ctx.restore();
+
+  drawMenuBack(ctx, W, H, alpha, backHot);
 }
 
 // ---------- skip-cheat level picker ----------
@@ -7121,6 +7678,10 @@ function drawMinimap(ctx, W, H, level, o) {
   for (const bu of o.burgers) {
     if (!bu.got) dot(tx(bu.x), ty(bu.y), 2.2, '#f9c623');
   }
+  // defibrillator one-ups read as an electric-blue dot, distinct from burgers
+  for (const d of o.defibs || []) {
+    if (!d.got) dot(tx(d.x), ty(d.y), 2.2, '#56e0ff');
+  }
   for (const n of o.nuts || []) dot(tx(n[0]), ty(n[1]), 2.4, '#b07a32');
   dot(tx(o.goal[0]), ty(o.goal[1]), 2.6, '#c8202a');
 
@@ -7150,19 +7711,30 @@ function lifeHeadBuffer(w, h) {
 // ground shadow that breathes with the bob, and catches a shine that sweeps
 // across every few seconds. `i` phase-offsets each head so a row of them
 // drifts out of lockstep.
-function drawLifeHead(ctx, img, x, y, w, h, t, i) {
+function drawLifeHead(ctx, img, x, y, w, h, t, i, anim) {
   const ph = i * 1.7;
   const bob = Math.sin(t * 1.5 + ph) * h * 0.10;     // vertical drift
   const sway = Math.sin(t * 0.9 + ph * 1.3) * w * 0.04;
   const tilt = Math.sin(t * 1.1 + ph) * 0.05;        // gentle head nod (rad)
   const cx = x + w / 2 + sway, cy = y + h / 2 + bob;
 
+  // entrance for a freshly-gained life (anim 0..1; undefined/>=1 = settled): the
+  // head zaps in — dropping from just above its slot, popping past full size
+  // with an overshoot, fading up from transparent, under a bright electric ring
+  // that flares and dies. So the new head arrives with a jolt, matching the zap.
+  const a = anim == null ? 1 : Math.max(0, Math.min(1, anim));
+  const entering = a < 1;
+  const e = easeOutBack(a);
+  const es = entering ? 0.3 + 0.7 * e : 1;            // small → overshoot → 1
+  const edy = entering ? -(1 - e) * h * 0.7 : 0;      // drops into place
+  const ea = entering ? Math.min(1, a / 0.35) : 1;    // fades in fast
+
   // ground shadow on the resting baseline: bigger/darker when the head dips
-  // toward it, smaller/fainter as it lifts away
+  // toward it, smaller/fainter as it lifts away (faded with the entrance)
   const dip = bob / (h * 0.10);                       // -1 (up) .. 1 (down)
   const ss = 1 + dip * 0.18;
   ctx.save();
-  ctx.fillStyle = `rgba(40,20,8,${0.22 + dip * 0.06})`;
+  ctx.fillStyle = `rgba(40,20,8,${(0.22 + dip * 0.06) * ea})`;
   ctx.beginPath();
   ctx.ellipse(x + w / 2, y + h * 0.99, w * 0.40 * ss, h * 0.10 * ss, 0, 0, Math.PI * 2);
   ctx.fill();
@@ -7201,9 +7773,55 @@ function drawLifeHead(ctx, img, x, y, w, h, t, i) {
   bc.globalCompositeOperation = 'source-over';
 
   ctx.save();
-  ctx.translate(cx, cy);
+  ctx.translate(cx, cy + edy);
   ctx.rotate(tilt);
+  ctx.scale(es, es);
+  ctx.globalAlpha = ea;
   ctx.drawImage(buf, -w / 2, -h / 2, w, h);
+  ctx.restore();
+
+  // the entrance jolt: a bright cyan ring flaring out around the new head plus a
+  // couple of sparks, brightest at the start and gone by the time it settles
+  if (entering) {
+    const flare = 1 - a;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.translate(cx, cy + edy);
+    const rr = h * (0.4 + (1 - flare) * 0.5);
+    ctx.strokeStyle = `rgba(150,230,255,${0.9 * flare})`;
+    ctx.lineWidth = Math.max(1.5, h * 0.06 * flare + 1);
+    ctx.beginPath(); ctx.arc(0, 0, rr, 0, Math.PI * 2); ctx.stroke();
+    ctx.strokeStyle = `rgba(255,255,255,${0.7 * flare})`;
+    for (let s = 0; s < 5; s++) {
+      const ang = s * (Math.PI * 2 / 5) + a * 4;
+      const r0 = rr * 0.7, r1 = rr * (1.05 + 0.25 * Math.sin(a * 30 + s));
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(ang) * r0, Math.sin(ang) * r0);
+      ctx.lineTo(Math.cos(ang) * r1, Math.sin(ang) * r1);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+// HUD lettering has to carry over busy, moving terrain, so each label gets a
+// crisp OUTLINE rather than a diffuse glow: a rounded stroke in the halo ink
+// laid down first, the text fill on top, plus a hair of shadow blur for just a
+// touch of softness right at the edge. Concentrating the halo into a tight
+// stroke (instead of spreading the same alpha across a wide blur) reads as a
+// far harder, more opaque edge. The caller sets font / align / baseline /
+// fillStyle first; this owns the stroke + shadow state and resets it on the way
+// out. `px` is the font size, which the outline weight and softness scale from.
+function glowText(ctx, text, x, y, halo, px) {
+  ctx.save();
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = halo;
+  ctx.lineWidth = Math.max(2, px * 0.16);
+  ctx.shadowColor = halo;
+  ctx.shadowBlur = Math.max(1, px * 0.08);   // just a hair of soft bloom
+  ctx.strokeText(text, x, y);
+  ctx.shadowBlur = 0;                          // keep the fill itself crisp
+  ctx.fillText(text, x, y);
   ctx.restore();
 }
 
@@ -7215,8 +7833,6 @@ function drawHUD(ctx, W, H, o) {
   ctx.textBaseline = 'top';
   const ink = (o.theme && o.theme.hud) || HUD_INK_DARK;
   ctx.fillStyle = ink.text;
-  ctx.shadowColor = ink.halo;
-  ctx.shadowBlur = Math.max(3, Math.round(fs * 0.3));
   // metrics stack as label/value rows; each record-bearing metric (time,
   // style) is followed by an indented "best" row so both records read the
   // same way. Harnesses that pass no style keep the time-only layout
@@ -7225,13 +7841,13 @@ function drawHUD(ctx, W, H, o) {
   const hudX = 14 + SAFE.left;
   const rowY = i => 12 + SAFE.top + fs * 1.3 * i;
   let row = 0;
-  ctx.fillText(`time    ${fmt(o.time)}`, hudX, rowY(row++));
-  ctx.fillText(`  best  ${o.best != null ? fmt(o.best) : '--:--,--'}`, hudX, rowY(row++));
+  glowText(ctx, `time    ${fmt(o.time)}`, hudX, rowY(row++), ink.halo, fs);
+  glowText(ctx, `  best  ${o.best != null ? fmt(o.best) : '--:--,--'}`, hudX, rowY(row++), ink.halo, fs);
   if (hasStyle) {
-    ctx.fillText(`style   ${o.style}`, hudX, rowY(row++));
-    ctx.fillText(`  best  ${o.styleBest != null ? o.styleBest : '---'}`, hudX, rowY(row++));
+    glowText(ctx, `style   ${o.style}`, hudX, rowY(row++), ink.halo, fs);
+    glowText(ctx, `  best  ${o.styleBest != null ? o.styleBest : '---'}`, hudX, rowY(row++), ink.halo, fs);
   }
-  ctx.fillText(`burgers ${o.got}/${o.total}`, hudX, rowY(row++));
+  glowText(ctx, `burgers ${o.got}/${o.total}`, hudX, rowY(row++), ink.halo, fs);
   if (o.lives != null) {
     // one biker head per remaining life, behind a "lives" label that lines
     // up with the value column of the rows above
@@ -7239,23 +7855,28 @@ function drawHUD(ctx, W, H, o) {
     const ih = fs * 1.5, iy = rowY(row);
     // value column matches "time", "best", "burgers" (all 8 monospace chars)
     const hx = hudX + ctx.measureText('burgers ').width;
-    ctx.fillText('lives', hudX, iy + (ih - fs) / 2);
+    glowText(ctx, 'lives', hudX, iy + (ih - fs) / 2, ink.halo, fs);
     // the heads paint their own shadow and shine; no halo on the sprites
-    ctx.shadowBlur = 0;
     const t = o.t || 0;
+    // o.lifeAnim (0..1) animates the NEWEST head zapping in after a defib pickup;
+    // only the last head gets it, and only while it's still < 1
     for (let i = 0; i < o.lives; i++) {
+      const anim = (o.lifeAnim != null && o.lifeAnim < 1 && i === o.lives - 1) ? o.lifeAnim : null;
       if (img && img.complete && img.naturalWidth > 0) {
         const iw = ih * img.naturalWidth / img.naturalHeight;
-        drawLifeHead(ctx, img, hx + i * (iw + 8), iy, iw, ih, t, i);
+        drawLifeHead(ctx, img, hx + i * (iw + 8), iy, iw, ih, t, i, anim);
       } else {
         const bob = Math.sin(t * 1.5 + i * 1.7) * ih * 0.10;
+        const ea = anim == null ? 1 : Math.min(1, anim / 0.35);
+        ctx.save();
+        ctx.globalAlpha = ea;
         ctx.beginPath();
         ctx.arc(hx + i * (ih * 0.8 + 8) + ih * 0.4, iy + ih / 2 + bob, ih * 0.4, 0, Math.PI * 2);
         ctx.fill();
+        ctx.restore();
       }
     }
   }
-  ctx.shadowBlur = 0;
 
   // tiny speedometer in the bottom-right corner of the playfield, only while
   // actually riding (a frozen "0 mph" on the crash/finish/ready screens would
@@ -7270,8 +7891,6 @@ function drawHUD(ctx, W, H, o) {
     ctx.textAlign = 'right';
     ctx.textBaseline = 'bottom';
     ctx.fillStyle = ink.text;
-    ctx.shadowColor = ink.halo;
-    ctx.shadowBlur = Math.max(2, Math.round(sf * 0.3));
     // the bottom-right corner is the gas button's seat on touch, so lift the
     // readout clear of the button band there; otherwise it hugs the corner
     let sy = H - 12 - SAFE.bottom;
@@ -7279,8 +7898,7 @@ function drawHUD(ctx, W, H, o) {
       const bs = Math.max(56, Math.min(Math.min(W, H) * 0.17, 96));
       sy = H - SAFE.bottom - Math.max(10, bs * 0.2) - bs - 8;
     }
-    ctx.fillText(`${mph} mph`, W - 14 - SAFE.right, sy);
-    ctx.shadowBlur = 0;
+    glowText(ctx, `${mph} mph`, W - 14 - SAFE.right, sy, ink.halo, sf);
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
   }
@@ -7295,10 +7913,9 @@ function drawHUD(ctx, W, H, o) {
     ctx.font = `bold ${lf}px "Consolas","Courier New",monospace`;
     ctx.textAlign = 'right';
     ctx.fillStyle = ink.text;
-    ctx.shadowColor = ink.halo;
-    ctx.shadowBlur = Math.max(2, Math.round(lf * 0.3));
-    ctx.fillText(o.mapLabel, m.mx + m.mw, m.my + m.mh + 6);
-    ctx.shadowBlur = 0;
+    // a slightly heavier outline than the left-hand metrics so the label holds
+    // up over the busy minimap edge it sits beneath
+    glowText(ctx, o.mapLabel, m.mx + m.mw, m.my + m.mh + 6, ink.halo, lf * 1.3);
     ctx.textAlign = 'left';
   }
 

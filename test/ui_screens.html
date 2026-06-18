@@ -69,7 +69,9 @@
     const t = params.get('t') ? parseFloat(params.get('t')) : 35.7;
     drawMenuBackdrop(ctx, W, H, t, menuPat, true);
     drawTitleLetters(ctx, W, H, 10);
-    drawMenu(ctx, W, H, 1, ['Play'], 0, -1);
+    drawMainMenu(ctx, W, H, 1, ['Play', 'Records', 'Replays', 'Map Editor', 'Audio'], 0, -1,
+      { show: true, hot: false });           // show the dev Skip chip too
+    drawCornerTag(ctx, W, H, 'v12');
   } else if (ui === 'difficulty') {
     drawMenuBackdrop(ctx, W, H, 2.0, menuPat);
     drawDifficulty(ctx, W, H, 1, TRACKS, 0, -1);

@@ -103,13 +103,17 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   pumpFrames(3, 1 / 60);
   key('Enter');           // intro -> menu
   let texts = frameTexts(3);
-  if (!texts.includes('Play')) bad('menu should show Play button, got: ' + texts.join('|'));
+  if (!texts.includes('PLAY')) bad('menu should show PLAY button, got: ' + texts.join('|'));
   if (texts.includes('SKIP TO MAP')) bad('skip overlay should not be up at the menu');
 
-  // open the picker from the dev-only "Skip" menu item (no track active yet).
-  // It sits just before Audio (the last item), so two ArrowUps wrap onto it.
-  key('ArrowUp'); key('ArrowUp');
-  key('Enter');
+  // open the picker from the dev-only Skip chip — a dashed dev-tool button by
+  // the version stamp, not a real menu item — by clicking it (no track active).
+  const clickChip = () => {
+    const c = skipChipRect(gameCanvas.width, gameCanvas.height);
+    for (const fn of canvasHandlers.click || [])
+      fn({ clientX: c.x + c.w / 2, clientY: c.y + c.h / 2, preventDefault() {} });
+  };
+  clickChip();
   texts = frameTexts(3);
   if (!texts.includes('SKIP TO MAP')) bad('skip overlay heading missing after opening from menu');
   if (playedNow !== 'menu') bad('skip from menu should play menu song, got ' + playedNow);
@@ -126,12 +130,12 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   key('Escape');
   texts = frameTexts(3);
   if (texts.includes('SKIP TO MAP')) bad('Escape should close the skip overlay');
-  if (!texts.includes('Play')) bad('Escape from skip(menu) should return to the menu');
+  if (!texts.includes('PLAY')) bad('Escape from skip(menu) should return to the menu');
   if (playedNow !== 'menu') bad('after Escape should still play menu, got ' + playedNow);
 
-  // re-open and pick map 6 (index 5 = first volcano map). Escape left the
-  // menu selection parked on "Skip", so a plain Enter re-opens the picker.
-  key('Enter');
+  // re-open the picker by clicking the Skip chip again, then pick map 6
+  // (index 5 = first volcano map).
+  clickChip();
   frameTexts(3);
   for (let i = 0; i < 5; i++) key('ArrowDown');
   key('Enter');

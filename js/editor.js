@@ -10,8 +10,10 @@
 // painted on per-edge), `noCollide` [poly, edge] pairs (edges the rider rides
 // straight through — the wall still draws, but doesn't collide),
 // `invisible` [poly] indices (polygons that keep their collision but draw
-// nothing — solid yet unseen), and `frontPolys` [poly] indices (polygons drawn
-// on the foreground layer, over the rider). Maps save to
+// nothing — solid yet unseen), `frontPolys` [poly] indices (polygons drawn on
+// the foreground layer, over the rider), and `blendPolys` [poly] indices (the
+// same foreground layer with no outline + a union fill, so several merge into
+// one seamless mass). Maps save to
 // .bmm files: JSON whose body IS a level entry plus a format header, so a
 // finished map can be saved into levels/tracks/<trackId>/ and added to a track's
 // `files` list in js/levels.js (the game fetches and parses it at boot).
@@ -74,11 +76,13 @@ const EDITOR = (() => {
   // the +Poly tool draws either a normal polygon or an 'invisible' one (full
   // collision, but drawn only here in the editor — see map.invisible)
   let polyMode = 'solid';    // 'solid' | 'invisible'
-  // ...and on either the back or front layer (like a doodad). A 'front' polygon
+  // ...and on the back, front, or blend layer (like a doodad). A 'front' polygon
   // keeps normal collision but draws OVER the rider and the doodads (see
   // map.frontPolys / drawForeground), so pairing one with noCollide walls lets
-  // the rider slip behind it, out of view. Defaults to back (normal terrain).
-  let polyLayer = 'back';    // 'back' (behind the rider) | 'front' (over him)
+  // the rider slip behind it, out of view. A 'blend' polygon is the same
+  // foreground layer with the outline suppressed and a union fill, so several
+  // stitch into one seamless mass (map.blendPolys). Defaults to back (terrain).
+  let polyLayer = 'back';    // 'back' (behind rider) | 'front' (over him) | 'blend' (over him, merged)
   // the +Doodad tool drops the current sprite onto the current layer, both
   // chosen from the tool's palette panel
   let doodadType = DOODADS[0].id;
@@ -144,11 +148,13 @@ const EDITOR = (() => {
       burgers: [[25, -0.7], [45, -0.7]],
       goal: [60, -0.75],
       nuts: [],
+      defibs: [],
       flipBurgers: [],
       glassEdges: [],
       noCollide: [],
       invisible: [],
       frontPolys: [],
+      blendPolys: [],
       doodads: [],
     };
   }
@@ -186,6 +192,9 @@ const EDITOR = (() => {
     // Inert when absent (older maps, shipped levels), so no version bump.
     if (map.groundY != null) L.groundY = round2(map.groundY);
     if (map.nuts.length) L.nuts = map.nuts.map(n => [round2(n[0]), round2(n[1])]);
+    // defibrillator one-ups: additive + inert when absent (like nuts), so a map
+    // without any round-trips byte-identical and no replay/map version bumps
+    if (map.defibs.length) L.defibs = map.defibs.map(d => [round2(d[0]), round2(d[1])]);
     // a gravity burger keeps its direction as a 3rd entry; 'up' (the legacy
     // reverse-gravity burger) is omitted so old maps round-trip byte-identical
     if (map.flipBurgers.length) L.flipBurgers = map.flipBurgers.map(b =>
@@ -196,6 +205,7 @@ const EDITOR = (() => {
     if (map.noCollide.length) L.noCollide = map.noCollide.map(e => [e[0], e[1]]);
     if (map.invisible.length) L.invisible = map.invisible.slice();
     if (map.frontPolys.length) L.frontPolys = map.frontPolys.slice();
+    if (map.blendPolys.length) L.blendPolys = map.blendPolys.slice();
     if (map.doodads.length) {
       L.doodads = map.doodads.map(d => {
         const o = { type: d.type, x: round2(d.x), y: round2(d.y), layer: d.layer };
@@ -278,6 +288,11 @@ const EDITOR = (() => {
     if (d.flipBurgers != null && (!Array.isArray(d.flipBurgers) || !d.flipBurgers.every(isPt))) {
       throw new Error('map upside-down burgers are damaged');
     }
+    // defibrillators are optional point lists too (added after v2), validated
+    // when present
+    if (d.defibs != null && (!Array.isArray(d.defibs) || !d.defibs.every(isPt))) {
+      throw new Error('map defibrillators are damaged');
+    }
     // doodads are optional inert sprites (added after v2); a record needs a
     // string type and finite x/y. Unknown types are kept and simply skipped
     // when drawn, so a map authored in a newer build still loads.
@@ -295,11 +310,13 @@ const EDITOR = (() => {
       burgers: d.burgers.map(b => [Number(b[0]), Number(b[1])]),
       goal: [Number(d.goal[0]), Number(d.goal[1])],
       nuts: Array.isArray(d.nuts) ? d.nuts.map(n => [Number(n[0]), Number(n[1])]) : [],
+      defibs: Array.isArray(d.defibs) ? d.defibs.map(d2 => [Number(d2[0]), Number(d2[1])]) : [],
       flipBurgers: Array.isArray(d.flipBurgers) ? d.flipBurgers.map(b => [Number(b[0]), Number(b[1]), normFlipDir(b[2])]) : [],
       glassEdges: parseGlass(d, polygons),
       noCollide: parseNoCollide(d, polygons),
       invisible: parsePolyIndices(d.invisible, polygons, 'invisible polygons'),
       frontPolys: parsePolyIndices(d.frontPolys, polygons, 'foreground polygons'),
+      blendPolys: parsePolyIndices(d.blendPolys, polygons, 'blend polygons'),
       doodads: Array.isArray(d.doodads) ? d.doodads.map(o =>
         ({ type: String(o.type), x: Number(o.x), y: Number(o.y),
            layer: o.layer === 'front' ? 'front' : 'back',
@@ -340,7 +357,7 @@ const EDITOR = (() => {
   }
 
   // a list of polygon indices (added after v2): the invisible flag and the
-  // foreground-layer flag both take this shape. Absent on older maps -> none;
+  // front/blend layer flags all take this shape. Absent on older maps -> none;
   // validated as in-range polygon indices.
   function parsePolyIndices(arr, polygons, label) {
     if (arr == null) return [];
@@ -518,7 +535,7 @@ const EDITOR = (() => {
       .map(e => (e[0] > pi ? [e[0] - 1, e[1]] : e));
   }
 
-  // a poly-index list (the invisible flag, the foreground-layer flag) renumbers
+  // a poly-index list (the invisible flag, the front/blend layer flags) renumbers
   // when a polygon below it is removed; returns the new list (caller assigns it)
   function remapPolyIndexDelete(list, pi) {
     return list
@@ -595,6 +612,12 @@ const EDITOR = (() => {
     commit(true);
   }
 
+  function addDefib(w) {
+    pushUndo();
+    map.defibs.push([snap(w.x), snap(w.y)]);
+    commit(true);
+  }
+
   function addFlip(w) {
     pushUndo();
     map.flipBurgers.push([snap(w.x), snap(w.y), OBJ_FLIP_DIR[objectKind] || 'up']);
@@ -625,17 +648,20 @@ const EDITOR = (() => {
   // the +Object tool's kind, driven by its palette (placement-only, no undo).
   // Each kind drops into its own map array, so the data model is unchanged.
   function setObjectKind(k) {
-    const KINDS = ['burger', 'flipUp', 'flipDown', 'flipLeft', 'flipRight', 'nut'];
+    const KINDS = ['burger', 'defib', 'flipUp', 'flipDown', 'flipLeft', 'flipRight', 'nut'];
     objectKind = KINDS.indexOf(k) >= 0 ? k : 'burger';
     const dir = OBJ_FLIP_DIR[objectKind];
     note('Object: ' + (dir
       ? 'gravity burger (' + dir + ') - collecting it sets gravity ' + dir
-      : objectKind === 'nut' ? 'nut mound - a lethal hazard' : 'burger'));
+      : objectKind === 'nut' ? 'nut mound - a lethal hazard'
+      : objectKind === 'defib' ? 'defibrillator - collecting it adds a life'
+      : 'burger'));
   }
 
   // drop the armed object at the click (each kind keeps its own undo via its adder)
   function placeObject(w) {
     if (objectKind === 'nut') addNut(w);
+    else if (objectKind === 'defib') addDefib(w);
     else if (OBJ_FLIP_DIR[objectKind]) addFlip(w);
     else addBurger(w);
   }
@@ -658,11 +684,14 @@ const EDITOR = (() => {
   }
 
   // the +Poly tool's layer, driven by its palette toggles (no map data until you
-  // draw). A front polygon draws over the rider; back is normal terrain.
+  // draw). Front draws over the rider as a separate outlined chunk; blend also
+  // draws over the rider but with no outline, merging seamlessly into the terrain
+  // it covers (stitch one shape from several polys); back is normal terrain.
   function setPolyLayer(layer) {
-    polyLayer = layer === 'front' ? 'front' : 'back';
-    note('Polygon layer: ' + (polyLayer === 'front'
-      ? 'front - drawn over the rider (collision unchanged)'
+    polyLayer = layer === 'front' ? 'front' : layer === 'blend' ? 'blend' : 'back';
+    note('Polygon layer: ' + (
+      polyLayer === 'front' ? 'front - drawn over the rider (collision unchanged)'
+      : polyLayer === 'blend' ? 'blend - over the rider, no outline, merged into the terrain it covers'
       : 'back - normal terrain behind the rider'));
   }
 
@@ -701,12 +730,15 @@ const EDITOR = (() => {
     const idx = map.polygons.length - 1;
     if (polyMode === 'invisible') map.invisible.push(idx);
     if (polyLayer === 'front') map.frontPolys.push(idx);
+    else if (polyLayer === 'blend') map.blendPolys.push(idx);
     draft = null;
     commit(true);
     note(polyMode === 'invisible'
       ? 'Invisible polygon added - solid collision, drawn only here in the editor'
       : polyLayer === 'front'
       ? 'Foreground polygon added - drawn over the rider (collision is normal)'
+      : polyLayer === 'blend'
+      ? 'Blend polygon added - merged into the terrain it covers, drawn over the rider'
       : 'Polygon added - one inside the playable area is a solid island');
   }
 
@@ -731,12 +763,13 @@ const EDITOR = (() => {
     }
     pushUndo();
     map.polygons.splice(pi, 1);
-    // glass edges, no-collision edges, the invisible flag and the front-layer
-    // flag all index by polygon, so they shift down past the removed one
+    // glass edges, no-collision edges, the invisible flag and the front/blend
+    // layer flags all index by polygon, so they shift down past the removed one
     map.glassEdges = remapEdgesPolyDelete(map.glassEdges, pi);
     map.noCollide = remapEdgesPolyDelete(map.noCollide, pi);
     map.invisible = remapPolyIndexDelete(map.invisible, pi);
     map.frontPolys = remapPolyIndexDelete(map.frontPolys, pi);
+    map.blendPolys = remapPolyIndexDelete(map.blendPolys, pi);
     sel = null; hov = null;
     commit(true);
     note('Polygon removed');
@@ -779,6 +812,12 @@ const EDITOR = (() => {
       case 'nut':
         pushUndo();
         map.nuts.splice(sel.ni, 1);
+        sel = null;
+        commit(true);
+        return;
+      case 'defib':
+        pushUndo();
+        map.defibs.splice(sel.dfi, 1);
         sel = null;
         commit(true);
         return;
@@ -839,6 +878,12 @@ const EDITOR = (() => {
         const n = map.nuts[p.ni];
         n[0] = round2(n[0] + dx);
         n[1] = round2(n[1] + dy);
+        break;
+      }
+      case 'defib': {
+        const d = map.defibs[p.dfi];
+        d[0] = round2(d[0] + dx);
+        d[1] = round2(d[1] + dy);
         break;
       }
       case 'flip': {
@@ -1120,6 +1165,10 @@ const EDITOR = (() => {
       const n = map.nuts[ni];
       if (Math.hypot(wx - n[0], wy - n[1]) < Math.max(r, 0.55)) return { kind: 'nut', ni };
     }
+    for (let dfi = 0; dfi < map.defibs.length; dfi++) {
+      const d = map.defibs[dfi];
+      if (Math.hypot(wx - d[0], wy - d[1]) < Math.max(r, 0.5)) return { kind: 'defib', dfi };
+    }
     for (let fi = 0; fi < map.flipBurgers.length; fi++) {
       const b = map.flipBurgers[fi];
       if (Math.hypot(wx - b[0], wy - b[1]) < Math.max(r, 0.5)) return { kind: 'flip', fi };
@@ -1390,6 +1439,9 @@ const EDITOR = (() => {
         break;
       case 'nut':
         map.nuts[p.ni] = [snap(w.x), snap(w.y)];
+        break;
+      case 'defib':
+        map.defibs[p.dfi] = [snap(w.x), snap(w.y)];
         break;
       case 'flip':
         map.flipBurgers[p.fi] = [snap(w.x), snap(w.y), map.flipBurgers[p.fi][2] || 'up'];
@@ -1662,6 +1714,7 @@ const EDITOR = (() => {
     drawGrid(ctx, view);
     drawDoodadLayer(ctx, map.doodads, 'back', rt);   // scenery behind the actors
     for (const n of map.nuts) drawNutMound(ctx, n[0], n[1], rt);
+    for (const d of map.defibs) drawDefib(ctx, d[0], d[1], rt);
     for (const b of map.burgers) drawBurger(ctx, b[0], b[1], rt);
     // gravity burgers draw identically to normal ones in play; here in the editor
     // a directional badge marks them and shows which way they set gravity
@@ -1904,11 +1957,18 @@ const EDITOR = (() => {
       const polySel = sel && sel.kind === 'poly' && sel.pi === pi;
       const invis = map.invisible.includes(pi);
       const front = map.frontPolys.includes(pi);
+      const blend = map.blendPolys.includes(pi);
       ctx.save();
       if (invis && !polySel) {
         // an invisible polygon draws nothing in play — here a dashed violet
         // outline marks the solid-but-unseen region so the author can edit it
         ctx.strokeStyle = 'rgba(206,128,236,0.9)';
+        ctx.setLineDash([8 / zoom, 5 / zoom]);
+        ctx.lineWidth = 2 / zoom;
+      } else if (blend && !polySel) {
+        // a blend polygon draws over the rider with no outline, merged into the
+        // terrain — a dashed teal outline marks its (otherwise seamless) shape
+        ctx.strokeStyle = 'rgba(120,220,200,0.9)';
         ctx.setLineDash([8 / zoom, 5 / zoom]);
         ctx.lineWidth = 2 / zoom;
       } else if (front && !polySel) {
@@ -2044,9 +2104,10 @@ const EDITOR = (() => {
     const cx = snap(w.x), cy = snap(w.y);
     if (tool === 'poly') {
       // the draft is tinted to match its editor outline: violet when invisible,
-      // amber on the front layer, gold otherwise
+      // amber on the front layer, teal on the blend layer, gold otherwise
       const draftCol = polyMode === 'invisible' ? 'rgba(206,128,236,0.95)'
-        : polyLayer === 'front' ? 'rgba(255,170,90,0.95)' : '#ffe27a';
+        : polyLayer === 'front' ? 'rgba(255,170,90,0.95)'
+        : polyLayer === 'blend' ? 'rgba(120,220,200,0.95)' : '#ffe27a';
       ctx.strokeStyle = draftCol;
       ctx.lineWidth = 2 / zoom;
       ctx.setLineDash([6 / zoom, 4 / zoom]);
@@ -2071,11 +2132,13 @@ const EDITOR = (() => {
     }
     if (tool === 'object' && !overChrome()) {
       // ghost the armed object kind at the snapped cursor; the flip burger wears
-      // its editor badge, the nut mound its pile
+      // its editor badge, the nut mound its pile, the defibrillator its unit
       ctx.save();
       ctx.globalAlpha = 0.55;
       if (objectKind === 'nut') {
         drawNutMound(ctx, cx, cy, rt);
+      } else if (objectKind === 'defib') {
+        drawDefib(ctx, cx, cy, rt);
       } else {
         drawBurger(ctx, cx, cy, rt);
         if (OBJ_FLIP_DIR[objectKind]) drawFlipBadge(ctx, cx, cy, OBJ_FLIP_DIR[objectKind]);
@@ -2129,6 +2192,8 @@ const EDITOR = (() => {
         ring(map.burgers[p.bi][0], map.burgers[p.bi][1], 0.7, hot);
       } else if (p.kind === 'nut' && map.nuts[p.ni]) {
         ring(map.nuts[p.ni][0], map.nuts[p.ni][1], 0.7, hot);
+      } else if (p.kind === 'defib' && map.defibs[p.dfi]) {
+        ring(map.defibs[p.dfi][0], map.defibs[p.dfi][1], 0.7, hot);
       } else if (p.kind === 'flip' && map.flipBurgers[p.fi]) {
         ring(map.flipBurgers[p.fi][0], map.flipBurgers[p.fi][1], 0.7, hot);
       } else if (p.kind === 'start') {
@@ -2430,6 +2495,7 @@ const EDITOR = (() => {
   // lethal hazard.
   const OBJECT_KINDS = [
     { id: 'burger', label: 'Burger', draw: (c, t) => drawBurger(c, 0, 0, t) },
+    { id: 'defib', label: 'Defibrillator', draw: (c, t) => drawDefib(c, 0, 0, t) },
     { id: 'flipUp', label: 'Grav Up', draw: (c, t) => { drawBurger(c, 0, 0, t); drawFlipBadge(c, 0, 0, 'up'); } },
     { id: 'flipDown', label: 'Grav Down', draw: (c, t) => { drawBurger(c, 0, 0, t); drawFlipBadge(c, 0, 0, 'down'); } },
     { id: 'flipLeft', label: 'Grav Left', draw: (c, t) => { drawBurger(c, 0, 0, t); drawFlipBadge(c, 0, 0, 'left'); } },
@@ -2437,9 +2503,11 @@ const EDITOR = (() => {
     { id: 'nut', label: 'Nut Mound', draw: (c, t) => drawNutMound(c, 0, 0, t) },
   ];
 
-  // Help / Harm sections, with the four gravity burgers as a "Gravity" sub-group
-  // under Help (they're required and helpful, like a normal burger — you collect
-  // them — so they belong with Help, just set gravity instead of nudging it).
+  // Help / Harm sections. The burger and the defibrillator (a one-up that adds a
+  // life) sit side by side under Help — both are collected and good for the
+  // rider. The four gravity burgers are a "Gravity" sub-group under Help too
+  // (required and helpful like a normal burger — you collect them — they just set
+  // gravity instead of nudging it).
   function drawObjectPalette(ctx, W, H, rt) {
     const cell = id => {
       const k = OBJECT_KINDS.find(o => o.id === id);
@@ -2450,7 +2518,7 @@ const EDITOR = (() => {
       title: 'OBJECTS',
       sections: [
         { label: 'Help', groups: [
-          { cells: [cell('burger')] },
+          { cells: [cell('burger'), cell('defib')] },
           { label: 'Gravity', cells: ['flipUp', 'flipDown', 'flipLeft', 'flipRight'].map(cell) },
         ] },
         { label: 'Harm', groups: [
@@ -2488,10 +2556,12 @@ const EDITOR = (() => {
     drawPalettePanel(ctx, W, H, rt, {
       title: 'POLYGON',
       // a layer toggle like the doodad palette's: front polygons draw over the
-      // rider (defaults to back)
+      // rider, blend ones merge seamlessly into the terrain they cover (back is
+      // the default)
       toggles: [
         { id: 'polyLayer:back', label: 'Back', on: polyLayer === 'back' },
         { id: 'polyLayer:front', label: 'Front', on: polyLayer === 'front' },
+        { id: 'polyLayer:blend', label: 'Blend', on: polyLayer === 'blend' },
       ],
       cells: POLY_MODES.map(m => ({
         id: 'polyMode:' + m.id, label: m.label, on: m.id === polyMode,
@@ -2719,7 +2789,7 @@ const EDITOR = (() => {
 
   const TOOL_HINTS = {
     select: 'drag vertices, edges, burgers, START, GOAL - Shift+drag moves a whole polygon (or Shift while dragging a lone vertex snaps it to the grid) - a whole polygon or a doodad shows a rotate handle above it (drag to spin, 15° detents unless Shift) - double-click an edge to add a vertex (a vertex to remove it) - Del removes (a glassed edge clears its glass; Shift+Del the whole polygon)',
-    poly: 'pick Polygon or Invisible + a Back/Front layer from the palette, then click to lay vertices - click the first point (or Enter) closes it - invisible keeps collision but draws nothing; a front polygon draws OVER the rider (collision unchanged) so he can hide behind it - Esc cancels',
+    poly: 'pick Polygon or Invisible + a Back/Front/Blend layer from the palette, then click to lay vertices - click the first point (or Enter) closes it - invisible keeps collision but draws nothing; a front polygon draws OVER the rider (collision unchanged) so he can hide behind it; a blend polygon also draws over the rider but with no outline, merging seamlessly into the terrain it covers so several stitch into one shape - Esc cancels',
     object: 'pick Burger, one of the four Gravity burgers (Up/Down/Left/Right) or Nut Mound from the palette, then click to drop it - a gravity burger sets gravity that way when collected; a nut mound is a lethal hazard',
     glass: 'Glass brush: click or drag an edge to glass it (the tires barely grip). No-Collision brush: click or drag an edge to let the rider ride straight through it (the wall still shows). Clear either by selecting the edge and pressing Del',
     doodad: 'pick a sprite + layer from the palette, then click to place an inert prop - "back" sits behind the rider, "front" in front of him (it never collides)',
@@ -2749,9 +2819,11 @@ const EDITOR = (() => {
       ' x ' + Math.round(b.minY) + '..' + Math.round(b.maxY) +
       '  |  ' + map.polygons.length + ' poly  ' + map.burgers.length + ' burgers' +
       (map.flipBurgers.length ? '  ' + map.flipBurgers.length + ' flip' : '') +
+      (map.defibs.length ? '  ' + map.defibs.length + ' defib' : '') +
       (map.nuts.length ? '  ' + map.nuts.length + ' nuts' : '') +
       (map.invisible.length ? '  ' + map.invisible.length + ' invis' : '') +
       (map.frontPolys.length ? '  ' + map.frontPolys.length + ' front' : '') +
+      (map.blendPolys.length ? '  ' + map.blendPolys.length + ' blend' : '') +
       (map.noCollide.length ? '  ' + map.noCollide.length + ' ghost' : '') +
       (map.doodads.length ? '  ' + map.doodads.length + ' doodads' : '') +
       '  |  snap ' + SNAP, W - 10 - SAFE.right, ty);
@@ -2761,8 +2833,8 @@ const EDITOR = (() => {
   const HELP = [
     ['1 / V', 'Select: drag vertices, edges (walls move whole), burgers, START, GOAL'],
     ['Shift+drag', 'move a whole polygon (Shift+grab a vertex/edge); or hold Shift while dragging a lone vertex to snap it to the grid'],
-    ['2 / P', 'Polygon: click out a new shape, close on the first point - inside the play area it is a solid island. The palette picks Invisible (keeps collision, draws nothing) and a Back/Front layer - a Front polygon draws OVER the rider so he can hide behind it (collision unchanged)'],
-    ['3 / B', 'Object: pick Burger, a Gravity burger (Up/Down/Left/Right) or Nut Mound in the palette, then click to drop it (3/B arms a burger, 5/K a nut mound, 6/F a gravity burger)'],
+    ['2 / P', 'Polygon: click out a new shape, close on the first point - inside the play area it is a solid island. The palette picks Invisible (keeps collision, draws nothing) and a Back/Front/Blend layer - Front draws OVER the rider so he can hide behind it; Blend also draws over him but seamless (no outline, merged into the terrain it covers) so several stitch into one shape (collision unchanged)'],
+    ['3 / B', 'Object: pick Burger, Defibrillator (a one-up that adds a life), a Gravity burger (Up/Down/Left/Right) or Nut Mound in the palette, then click to drop it (3/B arms a burger, 5/K a nut mound, 6/F a gravity burger)'],
     ['4 / G', 'Edge: the Glass brush paints obsidian onto edges (near-zero grip); the No-Collision brush paints an edge the rider rides straight through (the wall still shows). Both clear by selecting the edge + Del'],
     ['5 / K', 'Nut Mound: arms the +Object tool with the lethal nut-mound hazard (Del removes a selected one)'],
     ['6 / F', 'Gravity Burger: arms the +Object tool with a gravity burger; press 6/F again to cycle its direction (up/down/left/right) - collecting it sets gravity that way'],

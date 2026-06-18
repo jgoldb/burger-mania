@@ -87,7 +87,7 @@ global.makeCtx = makeCtx;
 // entry points back via global.__R (same pattern as the other harnesses)
 const code = ['js/assets.js', 'js/physics.js', 'js/render.js', 'js/touch.js']
   .map(f => fs.readFileSync(path.join(root, f), 'utf8')).join('\n')
-  + '\nglobal.__R = { drawLoading, drawMenu, drawDifficulty, drawReady, drawPause,'
+  + '\nglobal.__R = { drawLoading, drawMainMenu, drawDifficulty, drawReady, drawPause,'
   + ' drawAudio, drawContinue, drawLevelLoadError, drawReplays, drawLevelSelect, drawVictory, drawHUD,'
   + ' drawRecords, drawTitleLetters, makePatterns, TOUCH, setSafeInsets, saveButtonRect,'
   + ' menuRects, audioRects, replayRects, recordsRects, minimapRect,'
@@ -114,11 +114,13 @@ const SCENES = {
   loading: (c, W, H) => R.drawLoading(c, W, H, 0.4, 0, false, true),
   'loading-ready': (c, W, H) => R.drawLoading(c, W, H, 1, 0, true, true),
   menu: (c, W, H) => { R.drawTitleLetters(c, W, H, 3);
-    R.drawMenu(c, W, H, 1, ['Play', 'Map Editor', 'Replays', 'Records', 'Audio'], 0, -1); },
+    R.drawMainMenu(c, W, H, 1, ['Play', 'Records', 'Replays', 'Map Editor', 'Audio'], 0, -1,
+      { show: true, hot: true }); },
   difficulty: (c, W, H) => R.drawDifficulty(c, W, H, 1, TRACKS, 0, -1, true),
-  'records-diff': (c, W, H) => R.drawDifficulty(c, W, H, 1, TRACKS, 0, -1, true, 'BEST RECORDS'),
-  records: (c, W, H) => R.drawRecords(c, W, H, 1, { label: 'Beginner', names: NAMES,
-    results, sel: 0, hover: -1, touch: true }),
+  records: (c, W, H) => R.drawRecords(c, W, H, 1, { label: 'Beginner', color: '#9be08a',
+    names: NAMES, results, hover: -1, canPrev: false, canNext: true, touch: true }),
+  'records-empty': (c, W, H) => R.drawRecords(c, W, H, 1, { label: 'Advanced', color: '#f9c623',
+    names: [], results: [], hover: -1, canPrev: true, canNext: false, touch: true }),
   ready: (c, W, H) => R.drawReady(c, W, H, '09  Sriracha Spiral', true),
   pause: (c, W, H) => R.drawPause(c, W, H, ['Continue', 'Audio', 'Return to Menu'], 0, -1),
   audio: (c, W, H) => R.drawAudio(c, W, H, 1, { volume: { master: 0.8, music: 0.6, sfx: 1 },
@@ -153,7 +155,7 @@ const SCENES = {
     got: 0, total: 3, lives: 3, theme: pat.meadow, state: 'ready', touch: true,
     mapLabel: '01  Burger Hill' }),
   'touch-finished': (c, W, H) => R.TOUCH.draw(c, W, H, { state: 'finished', saveBusy: false }),
-  'touch-difficulty': (c, W, H) => R.TOUCH.draw(c, W, H, { state: 'difficulty' }),
+  'touch-skip': (c, W, H) => R.TOUCH.draw(c, W, H, { state: 'skip' }),
 };
 
 // portrait + landscape, from an old iPhone SE up to a Pro Max

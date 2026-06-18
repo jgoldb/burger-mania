@@ -270,8 +270,8 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
   key('ArrowUp');                            // wrap to Return to Menu (last item)
   key('Enter');
   pumpFrames(3, 1 / 60);
-  key('ArrowDown');                          // menu: Play -> Map Editor
-  key('ArrowDown');                          // menu: Map Editor -> Replays
+  key('ArrowDown');                          // menu: Play -> Records
+  key('ArrowDown');                          // menu: Records -> Replays
   key('Enter');                              // -> replays screen
   await settle();
   if (!lastFrameTexts().some(t => t.includes('Choose Replays Folder'))) {
@@ -330,7 +330,7 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
   }
   // ---- a synthetic instant-win replay covers the finished path ----
   savedFiles['synthetic-win.bmr'] = JSON.stringify({
-    format: 'burger-mania-replay', version: 11,
+    format: 'burger-mania-replay', version: 12,
     savedAt: '2026-06-11T00:00:00.000Z',
     label: 'Synthetic Win', outcome: 'finished', time: 0.02,
     trackId: null, levelIndex: 0, skin: 3, // recorded on the top-tier skin

@@ -36,10 +36,14 @@ const TOUCH = (() => {
     const lx = sl + m;                 // left cluster x
     const rgx = W - sr - m - bs;       // right (gas) cluster x
     return {
+      // the lean pair and the gas/brake pair each butt together with no gap so
+      // they read as one capsule; a thumb on the seam trips both halves (the
+      // generous hit margins overlap there) while either end presses just its
+      // own side. flip stays centred over the (now narrower) left cluster
       left:    { x: lx, y, w: bs, h: bs },
-      right:   { x: lx + bs + gap, y, w: bs, h: bs },
-      flip:    { x: lx + (2 * bs + gap - fs) / 2, y: y - gap - fs, w: fs, h: fs },
-      brake:   { x: rgx - bs - gap, y, w: bs, h: bs },
+      right:   { x: lx + bs, y, w: bs, h: bs },
+      flip:    { x: lx + (2 * bs - fs) / 2, y: y - gap - fs, w: fs, h: fs },
+      brake:   { x: rgx - bs, y, w: bs, h: bs },
       gas:     { x: rgx, y, w: bs, h: bs },
       pause:   { x: W / 2 - ss - 8, y: 10 + st, w: ss, h: ss },
       restart: { x: W / 2 + 8, y: 10 + st, w: ss, h: ss },
@@ -64,12 +68,13 @@ const TOUCH = (() => {
     const L = layout(W, H);
     for (let i = 0; i < list.length; i++) {
       const x = list[i].clientX, y = list[i].clientY;
+      // every direction is tested independently (not else-if): each pair's two
+      // halves butt together, so the generous hit margins overlap in a fat strip
+      // over the seam — a single touch there sets BOTH (alovolt on the lean pair;
+      // gas+brake on the right), and two fingers on the ends do the same. Mirrors
+      // the keyboard, where left+right is alovolt
       if (hit(L.gas, x, y)) input.up = true;
       if (hit(L.brake, x, y)) input.down = true;
-      // left & right are independent (not else-if): the generous hit margins make
-      // the two adjacent buttons overlap in a central strip, so a single touch
-      // there sets BOTH → alovolt; two fingers on the separate buttons do the
-      // same. Mirrors the keyboard's left+right alovolt
       if (hit(L.left, x, y)) input.left = true;
       if (hit(L.right, x, y)) input.right = true;
     }
@@ -103,9 +108,48 @@ const TOUCH = (() => {
     ctx.restore();
   }
 
-  function arrowBtn(ctx, r, ang, hot) {
-    btnBox(ctx, r, hot);
-    tri(ctx, r.x + r.w / 2, r.y + r.h / 2, r.w * 0.22, ang, ink(hot));
+  // two adjacent buttons drawn as ONE capsule: a single rounded outline around
+  // the pair, each half lit when held, with a faint centre divider so the two
+  // sides still read. Pressing the seam lights both halves. `a` is the
+  // left/bottom half, `b` the right/top half; they must butt together with no
+  // gap (a.x + a.w === b.x), so the whole span is one continuous rounded rect.
+  function pairBox(ctx, a, b, hotA, hotB) {
+    const x = a.x, y = a.y, w = a.w + b.w, h = a.h, mid = a.x + a.w;
+    const rad = Math.min(16, a.w * 0.2);
+    const hot = hotA || hotB;
+    ctx.fillStyle = 'rgba(20,12,6,0.55)';
+    roundRectPath(ctx, x, y, w, h, rad);
+    ctx.fill();
+    // lit half(s), clipped to the capsule so the outer corners stay rounded
+    // while the inner (divider) edge stays square — the two read as one shape
+    if (hot) {
+      ctx.save();
+      roundRectPath(ctx, x, y, w, h, rad);
+      ctx.clip();
+      ctx.fillStyle = 'rgba(70,34,10,0.92)';
+      if (hotA) ctx.fillRect(x, y, mid - x, h);
+      if (hotB) ctx.fillRect(mid, y, x + w - mid, h);
+      ctx.restore();
+    }
+    // faint centre divider
+    ctx.strokeStyle = 'rgba(249,198,35,0.45)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(mid, y + h * 0.2);
+    ctx.lineTo(mid, y + h * 0.8);
+    ctx.stroke();
+    // outer outline; brightens whenever either half is held
+    roundRectPath(ctx, x, y, w, h, rad);
+    ctx.lineWidth = hot ? 3 : 2;
+    ctx.strokeStyle = hot ? '#f9c623' : 'rgba(249,198,35,0.5)';
+    ctx.stroke();
+  }
+
+  // a merged button pair with an arrow centred on each half
+  function arrowPair(ctx, a, b, angA, angB, hotA, hotB) {
+    pairBox(ctx, a, b, hotA, hotB);
+    tri(ctx, a.x + a.w / 2, a.y + a.h / 2, a.w * 0.22, angA, ink(hotA));
+    tri(ctx, b.x + b.w / 2, b.y + b.h / 2, b.w * 0.22, angB, ink(hotB));
   }
 
   // two opposed arrows: the turn-around (rear/front wheel swap) button
@@ -157,10 +201,8 @@ const TOUCH = (() => {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     if (s === 'ready' || s === 'playing' || s === 'editorTest') {
-      arrowBtn(ctx, L.left, Math.PI, input.left);
-      arrowBtn(ctx, L.right, 0, input.right);
-      arrowBtn(ctx, L.brake, Math.PI / 2, input.down);
-      arrowBtn(ctx, L.gas, -Math.PI / 2, input.up);
+      arrowPair(ctx, L.left, L.right, Math.PI, 0, input.left, input.right);
+      arrowPair(ctx, L.brake, L.gas, Math.PI / 2, -Math.PI / 2, input.down, input.up);
       btnBox(ctx, L.flip, false);
       turnIcon(ctx, L.flip);
       btnBox(ctx, L.pause, false);
@@ -192,8 +234,10 @@ const TOUCH = (() => {
       ctx.font = 'bold 18px "Consolas","Courier New",monospace';
       ctx.fillText('SAVE REPLAY', L.save.x + L.save.w / 2, L.save.y + L.save.h / 2 + 1);
       ctx.globalAlpha = 1;
-    } else if (s === 'difficulty' || s === 'recordsDiff' ||
-               s === 'replays' || s === 'skip') {
+    } else if (s === 'skip') {
+      // the difficulty / records / replays screens draw their own corner Back
+      // (render.js drawMenuBack) on every device; only the dev skip overlay
+      // still relies on the touch overlay for its back button.
       btnBox(ctx, L.back, false);
       tri(ctx, L.back.x + 24, L.back.y + L.back.h / 2, 9, Math.PI, ink(false));
       ctx.fillStyle = ink(false);

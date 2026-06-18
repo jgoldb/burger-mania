@@ -159,8 +159,13 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   if (playedNow !== 'meadow') bad('after using a continue should be meadow, got ' + playedNow);
   key('Escape');                             // ready -> back to the menu
   pumpFrames(3, 1 / 60);
-  key('ArrowUp'); key('ArrowUp');            // wrap up to the dev-only "Skip" item
-  key('Enter');                              // open the skip-cheat level picker
+  // open the skip-cheat picker via the dev-only Skip chip (a dashed dev-tool
+  // button by the version stamp; it replaced the old "Skip" menu item)
+  {
+    const c = skipChipRect(gameCanvas.width, gameCanvas.height);
+    for (const fn of canvasHandlers.click || [])
+      fn({ clientX: c.x + c.w / 2, clientY: c.y + c.h / 2, preventDefault() {} });
+  }
   pumpFrames(3, 1 / 60);
   key('ArrowUp');                            // wrap up to the last Beginner map (volcano)
   key('Enter');                              // jump to the picked map

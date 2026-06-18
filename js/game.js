@@ -121,6 +121,24 @@
   let stoppieT = 0;     // same, for an unbroken stoppie (front down, rear up)
   let stylePopups = []; // floating "+N" toasts riding above the biker
   let popupSeq = 0;     // cycles spawn lanes so stacked toasts stay legible
+  // defibrillator one-ups: a runtime list parallel to burgers (own pickup, does
+  // NOT count toward the burger/goal total), plus the cosmetic state a grab
+  // kicks off — the electrocution zaps over the rider, the "+1 LIFE" toasts, and
+  // a timer that animates the freshly-won head into the lives row.
+  let defibs = [];      // [{ x, y, got }] for this run
+  // a defibrillator is a one-up that exists ONCE PER CONTINUE, not once per map:
+  // once grabbed it stays gone for the rest of this set of lives, so dying and
+  // respawning never re-floats a life you already banked (it can't be farmed by
+  // crashing on purpose). Spending a continue is the reset point — it re-floats
+  // every defib. This set remembers the consumed ones by "<levelIndex>:<defibIndex>"
+  // until then; reset() reads it when rebuilding the run's defib list. It's cleared
+  // when a continue is used and when a fresh world is entered (startGame / a replay
+  // / an editor test ride) so those contexts always start with every defib present.
+  let consumedDefibs = new Set();
+  let zaps = [];        // [{ age }] live electrocution animations (see drawElectrocution)
+  let lifePopups = [];  // [{ text, age }] floating "+1 LIFE" combat text
+  let lifeAnimT = 99;   // seconds since the last life was banked (99 = settled)
+  const LIFE_HEAD_POP = 0.7; // how long the new head's zap-in animation runs
   let exhaust = [];     // live exhaust smoke puffs (cosmetic; see emitExhaust)
   let exhaustAcc = 0;   // fractional puff carried between frames so a low rate
                         // still spits the odd puff instead of rounding to zero
@@ -168,11 +186,15 @@
              h === '::1' || h === '0.0.0.0';
     } catch (e) { return false; }
   })();
-  const menuItems = ['Play', 'Map Editor', 'Replays', 'Records', 'Audio'];
-  // the level-skip cheat appears as a menu item only on a dev host; it slots
-  // in just before Audio so Audio stays last (menu-order tests rely on that)
-  if (cheatsEnabled) menuItems.splice(menuItems.length - 1, 0, 'Skip');
+  // Play is the hero slab; the rest fill the grid beneath it (see drawMainMenu)
+  const menuItems = ['Play', 'Records', 'Replays', 'Map Editor', 'Audio'];
+  // the level-skip cheat is dev-only. Rather than a real menu item it shows as
+  // a separate, dashed "dev tool" chip just above the version stamp (drawSkipChip),
+  // so it can never be mistaken for a player-facing button.
+  const devSkip = cheatsEnabled;
   let menuSel = 0, diffSel = 0, contSel = 0, errSel = 0;
+  let skipHover = false; // the cursor/finger is over the dev Skip chip
+  let backHover = false; // the cursor is over a sub-screen's corner Back button
   let loadErrorIndex = 0; // which map index the 'levelLoadError' screen will retry
   const pauseItems = ['Continue', 'Audio', 'Return to Menu'];
   let pauseSel = 0, pausedFrom = 'playing';
@@ -222,6 +244,17 @@
         burgers.push({ x: b[0], y: b[1], got: false, grav: GRAV_VECS[b[2]] || GRAV_VECS.up });
       }
     }
+    // defibrillators are a separate, optional list (a bonus one-up, not a
+    // required pickup), so they never enter the burger/goal count. They're
+    // also once-per-continue: one already grabbed since the last continue comes
+    // back pre-consumed so a respawn can't re-float it (consumedDefibs, keyed by
+    // map+slot; empty outside a real track run, so replays/test rides are fresh)
+    defibs = (level.defibs || []).map((d, i) => ({
+      x: d[0], y: d[1], got: consumedDefibs.has(levelIndex + ':' + i),
+    }));
+    zaps = [];
+    lifePopups = [];
+    lifeAnimT = 99;
     headBody = null;
     suspLevel = 0; // silence any crank still ringing from the last life at once
     stylePts = 0;
@@ -276,6 +309,9 @@
 
   const MUTE_KEY = 'burger-mania-muted';
   try { muted = localStorage.getItem(MUTE_KEY) === '1'; } catch (e) { /* unreadable: start unmuted */ }
+  // H hides the whole riding HUD (metrics, lives, mph, minimap, level label)
+  // for a clean view; in-memory only, so a refresh brings the HUD back
+  let hudHidden = false;
 
   function setMuted(m) {
     muted = m;
@@ -390,7 +426,7 @@
   function updateMusic() {
     let want = null;
     if (state === 'menu' || state === 'difficulty' || state === 'replays' ||
-        state === 'recordsDiff' || state === 'records') want = 'menu';
+        state === 'records') want = 'menu';
     else if (state === 'continue') want = 'continue';
     // the picker keeps the summoning screen's song: the frozen world's
     // theme mid-game, the menu theme otherwise
@@ -670,6 +706,113 @@
     });
   }
 
+  // the defibrillator SHOCK: the paddles discharging into the rider, built to
+  // sound violent and electric. Layers — a capacitor charge-whine swooping up,
+  // then on the discharge a long gritty BUZZ (bandpassed noise chopped by a
+  // ~70 Hz square LFO, the classic mains "BZZZT"), a pair of detuned sawtooth
+  // arc-tones screeching down, and a hard low chest thump under it all.
+  function defibShock() {
+    if (!AC || muted) return;
+    const t0 = AC.currentTime;
+    // 1) capacitor charge whine, rising fast then cut by the discharge
+    const o = AC.createOscillator(), cg = AC.createGain();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(300, t0);
+    o.frequency.exponentialRampToValueAtTime(1750, t0 + 0.16);
+    cg.gain.setValueAtTime(0.0001, t0);
+    cg.gain.exponentialRampToValueAtTime(0.08, t0 + 0.12);
+    cg.gain.exponentialRampToValueAtTime(0.001, t0 + 0.2);
+    o.connect(cg); cg.connect(sfxGain);
+    o.start(t0); o.stop(t0 + 0.22);
+
+    // the discharge fires the instant the whine peaks
+    const td = t0 + 0.16;
+
+    // 2) the BUZZ: a long crackle of bandpassed noise whose amplitude is chopped
+    //    by a square LFO, so it reads as a savage electric buzz, not a soft hiss
+    const dur = 0.42;
+    const n = Math.floor(AC.sampleRate * dur);
+    const buf = AC.createBuffer(1, n, AC.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 0.7);
+    const src = AC.createBufferSource();
+    src.buffer = buf;
+    const f = AC.createBiquadFilter();
+    f.type = 'bandpass';
+    f.frequency.setValueAtTime(2400, td);
+    f.frequency.exponentialRampToValueAtTime(650, td + dur);
+    f.Q.value = 6; // high Q = a tight, fizzing electric crackle
+    const ng = AC.createGain();
+    ng.gain.setValueAtTime(0.5, td);
+    ng.gain.exponentialRampToValueAtTime(0.05, td + dur);
+    // the chopper: a square LFO summed into the noise gain, dropping in pitch so
+    // the buzz "tears" lower as it discharges
+    const lfo = AC.createOscillator(), lfoAmt = AC.createGain();
+    lfo.type = 'square';
+    lfo.frequency.setValueAtTime(72, td);
+    lfo.frequency.linearRampToValueAtTime(42, td + dur);
+    lfoAmt.gain.value = 0.42;
+    lfo.connect(lfoAmt); lfoAmt.connect(ng.gain);
+    src.connect(f); f.connect(ng); ng.connect(sfxGain);
+    src.start(td); lfo.start(td); lfo.stop(td + dur);
+
+    // 3) two detuned sawtooth arc-tones screeching down over the buzz
+    for (const det of [0, 7]) {
+      const a = AC.createOscillator(), ag = AC.createGain();
+      a.type = 'sawtooth';
+      a.frequency.setValueAtTime(440 + det, td);
+      a.frequency.exponentialRampToValueAtTime(105 + det, td + 0.32);
+      ag.gain.setValueAtTime(0.0001, td);
+      ag.gain.exponentialRampToValueAtTime(0.09, td + 0.02);
+      ag.gain.exponentialRampToValueAtTime(0.001, td + 0.36);
+      a.connect(ag); ag.connect(sfxGain);
+      a.start(td); a.stop(td + 0.38);
+    }
+
+    // 4) the chest thump under it — a hard low sine punched in and dropped
+    const o2 = AC.createOscillator(), bg = AC.createGain();
+    o2.type = 'sine';
+    o2.frequency.setValueAtTime(155, td);
+    o2.frequency.exponentialRampToValueAtTime(44, td + 0.16);
+    bg.gain.setValueAtTime(0.0001, td);
+    bg.gain.exponentialRampToValueAtTime(0.42, td + 0.006);
+    bg.gain.exponentialRampToValueAtTime(0.001, td + 0.24);
+    o2.connect(bg); bg.connect(sfxGain);
+    o2.start(td); o2.stop(td + 0.26);
+  }
+
+  // the ONE-UP: a bright ascending power-up chime when the life lands, riding in
+  // just after the shock. A square-wave major arpeggio (the classic 1-up feel),
+  // capped with a quick high shimmer — purposely brighter and "happier" than the
+  // style-points sparkle so a life gain reads as its own reward.
+  function oneUp() {
+    if (!AC || muted) return;
+    const base = AC.currentTime + 0.34; // rises as the shock buzz tears down and decays
+    const notes = [523.25, 659.25, 783.99, 1046.5]; // C5 E5 G5 C6
+    notes.forEach((freq, i) => {
+      const t0 = base + i * 0.07;
+      const o = AC.createOscillator(), g = AC.createGain();
+      o.type = 'square';
+      o.frequency.setValueAtTime(freq, t0);
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(i === 3 ? 0.13 : 0.10, t0 + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.001, t0 + (i === 3 ? 0.34 : 0.18));
+      o.connect(g); g.connect(sfxGain);
+      o.start(t0); o.stop(t0 + 0.36);
+    });
+    // a sparkle tail over the top note
+    const ts = base + 3 * 0.07 + 0.06;
+    const o = AC.createOscillator(), g = AC.createGain();
+    o.type = 'triangle';
+    o.frequency.setValueAtTime(2093, ts); // C7
+    o.frequency.exponentialRampToValueAtTime(3136, ts + 0.18);
+    g.gain.setValueAtTime(0.0001, ts);
+    g.gain.exponentialRampToValueAtTime(0.07, ts + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.001, ts + 0.24);
+    o.connect(g); g.connect(sfxGain);
+    o.start(ts); o.stop(ts + 0.26);
+  }
+
   // fires whoosh / thud / fanfare cues as title letters launch and land
   function introSounds() {
     const launched = Math.max(0, Math.min(TITLE_ANIM.count,
@@ -778,6 +921,7 @@
     checkpointIndex = 0;
     runResults = [];
     runPerfect = true;
+    consumedDefibs.clear(); // a new campaign re-floats every defib
     enterLevel(0); // sets state ('levelLoading' then 'ready')
   }
 
@@ -804,6 +948,7 @@
     continues--;
     lives = 3;
     runPerfect = false; // a continue burned — the flawless run is over
+    consumedDefibs.clear(); // spending a continue re-floats every defib
     enterLevel(checkpointIndex); // sets state (checkpoint map is already cached)
   }
 
@@ -822,39 +967,72 @@
   }
 
   // ---------- best records ----------
-  // 'recordsDiff' picks a track (the same disabled-when-empty selector Play
-  // uses); 'records' then shows that track's all-time best time and style per
-  // map in the victory-style scorecard. Both read straight from the per-map
-  // best-time / best-style localStorage keys, so nothing new is persisted.
-  let recDiffSel = 0, recDiffT = 0, recT = 0;
+  // 'records' shows one track's all-time best time and style per map in the
+  // victory-style scorecard, with a ◀/▶ selector to switch tracks (no separate
+  // picker step). The figures read straight from the per-map best-time /
+  // best-style localStorage keys, so nothing new is persisted; only the chosen
+  // track is remembered (RECORDS_TRACK_KEY) so the screen reopens where it was.
+  const RECORDS_TRACK_KEY = 'burger-mania-records-track';
+  let recSel = 0, recT = 0;
   let recTrack = null, recNames = [], recResults = [];
 
-  function goRecordsDiff() {
-    state = 'recordsDiff';
-    recDiffT = 0;
-    // land on the first track that actually has maps (Beginner, today)
-    recDiffSel = Math.max(0, visibleTracks().findIndex(t => t.files.length));
-    hoverIdx = -1;
-  }
+  // only tracks that actually HAVE maps can hold records, so the selector skips
+  // the "coming soon" ones (Advanced/Expert today) entirely. recSel indexes
+  // into THIS list, not visibleTracks.
+  function recordsTracks() { return visibleTracks().filter(t => t.files.length); }
 
-  function activateRecordsDiff(i) {
-    const track = visibleTracks()[i];
-    if (!track.files.length) {
-      blip(180, 0.12); // no maps yet, so no records to show
+  function goRecords() {
+    recT = 0;
+    hoverIdx = -1;
+    const list = recordsTracks();
+    if (!list.length) { // nothing has records yet — show an empty placeholder
+      recTrack = null; recNames = []; recResults = []; recSel = 0;
+      state = 'records';
       return;
     }
-    blip(880, 0.08);
+    let i = -1;
+    try {
+      const cached = localStorage.getItem(RECORDS_TRACK_KEY);
+      if (cached) i = list.findIndex(t => t.id === cached);
+    } catch (e) { /* localStorage may be unavailable */ }
+    if (i < 0) i = 0; // default to the first track with maps (Beginner)
+    selectRecordsTrack(i);
+  }
+
+  // switch the records screen to track `i` (an index into recordsTracks),
+  // remember the choice, and show its scorecard, loading its maps if needed.
+  function selectRecordsTrack(i) {
+    const list = recordsTracks();
+    if (i < 0 || i >= list.length) return; // off the ends — nothing to select
+    recSel = i;
+    const track = list[i];
+    try { localStorage.setItem(RECORDS_TRACK_KEY, track.id); } catch (e) { /* ignore */ }
     // the scorecard lists every map's best, so the whole track must be loaded
     if (trackFullyLoaded(track)) { showRecords(track); return; }
     loadingWhat = 'records';
     state = 'levelLoading';
-    ensureTrackLoaded(track).then(() => showRecords(track));
+    ensureTrackLoaded(track).then(() => { if (state === 'levelLoading') showRecords(track); });
+  }
+
+  // step the selector one track left/right. It does NOT wrap: at either end the
+  // arrow that way is dead (recCanCycle reports this, greying it in the UI).
+  function cycleRecordsTrack(d) {
+    if (!recCanCycle(d)) { blip(180, 0.12); return; } // no track that way
+    blip(520, 0.05);
+    selectRecordsTrack(recSel + d);
+  }
+
+  // is there a track one step in direction d (-1 prev, +1 next)?
+  function recCanCycle(d) {
+    const i = recSel + d;
+    return i >= 0 && i < recordsTracks().length;
   }
 
   // gather a track's stored bests into the scorecard's results shape. A map
   // with no banked time was never cleared (shown as dashes); a cleared map
   // that never scored style reads as 0. No record flags — every figure here
   // already is the all-time best, so the scorecard draws them unstarred.
+  // recT is left alone so switching tracks doesn't replay the fade-in.
   function showRecords(track) {
     recTrack = track;
     recNames = track.files.map((_, i) => levelName(track, i));
@@ -867,7 +1045,6 @@
       return { time: t, style: isFinite(s) ? s : 0 };
     });
     state = 'records';
-    recT = 0;
     hoverIdx = -1;
   }
 
@@ -879,7 +1056,8 @@
   }
 
   // ---------- audio settings ----------
-  // rows on the audio screen: the volume keys in audioRects order, then Back
+  // the audio screen's three slider rows, in audioRects order (Back is the
+  // shared corner button, not a row)
   const audioKeys = ['master', 'music', 'sfx'];
   let audioSel = 0, audioT = 0, audioFrom = 'menu';
   let audioDrag = -1;        // slider row being mouse-dragged, -1 when none
@@ -1097,6 +1275,7 @@
     replayCursor = REPLAY.cursor(data);
     replayOutcome = null;
     state = 'replay'; // before loadLevel, so reset() leaves the tape alone
+    consumedDefibs.clear(); // a watched run shows the map's defibs as recorded
     loadLevel(data.level);
     // loadLevel just dressed the bike in the VIEWER's earned skin; wear the
     // skin the run was actually recorded with instead. Pre-skin tapes carry
@@ -1160,8 +1339,8 @@
   }
 
   // dev cheat: a level-select overlay that jumps to any map in the track.
-  // It's opened from the dev-only "Skip" main-menu item (added to menuItems
-  // when cheatsEnabled), so only a local dev host can ever reach it.
+  // It's opened from the dev-only Skip chip on the menu (drawn only when
+  // devSkip/cheatsEnabled), so only a local dev host can ever reach it.
   let skipTrack = null, skipItems = [];
   let skipSel = 0, skipScroll = 0, skipT = 0, skipFrom = 'menu';
 
@@ -1270,6 +1449,10 @@
   }
 
   function startEditorTest() {
+    // a test ride belongs to no track: clear the once-per-track defib memory so
+    // every defib on the working map is present (and stale track keys can't mark
+    // one consumed by a levelIndex collision)
+    consumedDefibs.clear();
     loadLevel(EDITOR.exportLevel());
     testOutcome = null;
     state = 'editorTest';
@@ -1352,9 +1535,7 @@
       goReplays();
     } else if (menuItems[i] === 'Records') {
       blip(880, 0.08);
-      goRecordsDiff();
-    } else if (menuItems[i] === 'Skip') {
-      openSkip(); // dev-only level-skip picker (blips on its own)
+      goRecords();
     } else if (menuItems[i] === 'Audio') {
       blip(880, 0.08);
       goAudio();
@@ -1393,16 +1574,13 @@
   // ---------- input ----------
   function currentRects() {
     if (state === 'menu' && menuT > 0.15) {
-      return menuRects(W, H, menuItems.length, H * 0.58);
+      return mainMenuRects(W, H, menuItems.length);
     }
     if (state === 'difficulty' && diffT > 0.15) {
       return menuRects(W, H, visibleTracks().length, H * 0.34);
     }
-    if (state === 'recordsDiff' && recDiffT > 0.15) {
-      return menuRects(W, H, visibleTracks().length, H * 0.34);
-    }
     if (state === 'records') {
-      return recordsRects(W, H);
+      return recordsRects(W, H); // the ◀ / ▶ track-selector arrows
     }
     if (state === 'continue' && contT > 0.15) {
       return menuRects(W, H, 2, H * 0.62);
@@ -1432,6 +1610,38 @@
     return null;
   }
 
+  // is (x, y) over the dev-only Skip chip? It shows (and so works) on every
+  // menu sub-screen that keeps the version stamp visible — the same screens
+  // menuScene draws it on — but never off a dev host.
+  function skipChipHit(x, y) {
+    if (!devSkip) return false;
+    if (!(state === 'menu' || state === 'difficulty' || state === 'records' ||
+          state === 'replays' || (state === 'audio' && audioFrom !== 'paused'))) {
+      return false;
+    }
+    const r = skipChipRect(W, H);
+    return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+  }
+
+  // the corner Back button (drawMenuBack) lives outside the screen's `rects`,
+  // so the menu sub-screens that draw it hit-test it on its own
+  function backChipActive() {
+    return state === 'difficulty' || state === 'records' ||
+           state === 'replays' || state === 'audio';
+  }
+  function backChipHit(x, y) {
+    if (!backChipActive()) return false;
+    const r = menuBackRect(W, H);
+    return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+  }
+  // leave a sub-screen via its corner Back: audio returns to wherever it was
+  // opened from (menu or pause), the rest return to the main menu
+  function backChipAction() {
+    blip(880, 0.08);
+    if (state === 'audio') closeAudio();
+    else goMenu();
+  }
+
   function updateHover() {
     if (state === 'editor') return; // the editor manages its own cursor
     const rects = currentRects();
@@ -1442,7 +1652,10 @@
             mouse.y >= r.y && mouse.y <= r.y + r.h) hoverIdx = i;
       });
     }
-    canvas.style.cursor = hoverIdx >= 0 ? 'pointer' : 'default';
+    // the chip and the corner Back both live outside `rects`
+    skipHover = skipChipHit(mouse.x, mouse.y);
+    backHover = backChipHit(mouse.x, mouse.y);
+    canvas.style.cursor = (hoverIdx >= 0 || skipHover || backHover) ? 'pointer' : 'default';
   }
 
   window.addEventListener('keydown', e => {
@@ -1463,6 +1676,11 @@
     }
     if (e.key === 'm' || e.key === 'M') {
       setMuted(!muted);
+      return;
+    }
+    // H toggles the riding HUD (all UI frames) off for a clean view
+    if (e.key === 'h' || e.key === 'H') {
+      hudHidden = !hudHidden;
       return;
     }
     switch (state) {
@@ -1498,28 +1716,13 @@
           activateDifficulty(diffSel);
         }
         return;
-      case 'recordsDiff':
-        if (e.key === 'Escape') { goMenu(); return; }
-        if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-          const d = e.key === 'ArrowUp' ? -1 : 1;
-          // step to the next enabled track, skipping disabled ones (same as
-          // the Play selector)
-          const vt = visibleTracks();
-          let next = recDiffSel;
-          for (let k = 0; k < vt.length; k++) {
-            next = (next + d + vt.length) % vt.length;
-            if (vt[next].files.length) break;
-          }
-          if (next !== recDiffSel) { recDiffSel = next; blip(520, 0.05); }
-        } else if (e.key === 'Enter' || e.key === ' ') {
-          activateRecordsDiff(recDiffSel);
-        }
-        return;
       case 'records':
-        // a single Back button: any confirm/cancel returns to the track picker
+        // ◀ / ▶ (or up/down) switch tracks; any confirm/cancel returns to menu
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { cycleRecordsTrack(-1); return; }
+        if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { cycleRecordsTrack(1); return; }
         if (e.key === 'Enter' || e.key === ' ' || e.key === 'Escape') {
           blip(440, 0.08);
-          goRecordsDiff();
+          goMenu();
         }
         return;
       case 'paused':
@@ -1534,21 +1737,16 @@
         }
         return;
       case 'audio': {
-        if (e.key === 'Escape') { closeAudio(); return; }
-        const rows = audioKeys.length + 1; // sliders + Back
+        // Esc (or the corner Back) leaves; the screen is otherwise just the
+        // three volume sliders now that Back isn't a focusable row
+        if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ') { closeAudio(); return; }
+        const rows = audioKeys.length; // the three sliders
         if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
           const d = e.key === 'ArrowUp' ? -1 : 1;
           audioSel = (audioSel + d + rows) % rows;
           blip(520, 0.05);
         } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-          if (audioSel < audioKeys.length) {
-            nudgeVolume(audioSel, e.key === 'ArrowLeft' ? -1 : 1);
-          }
-        } else if (e.key === 'Enter' || e.key === ' ') {
-          if (audioSel === audioKeys.length) {
-            blip(880, 0.08);
-            closeAudio();
-          }
+          nudgeVolume(audioSel, e.key === 'ArrowLeft' ? -1 : 1);
         }
         return;
       }
@@ -1687,12 +1885,10 @@
     } else if (state === 'difficulty') {
       if (visibleTracks()[hoverIdx].files.length) diffSel = hoverIdx;
       activateDifficulty(hoverIdx);
-    } else if (state === 'recordsDiff') {
-      if (visibleTracks()[hoverIdx].files.length) recDiffSel = hoverIdx;
-      activateRecordsDiff(hoverIdx);
     } else if (state === 'records') {
-      blip(440, 0.08);
-      goRecordsDiff(); // the screen's one button: Back to the track picker
+      // the two ◀ / ▶ selector arrows (the corner Back is hit-tested apart)
+      if (hoverIdx === 0) cycleRecordsTrack(-1);
+      else if (hoverIdx === 1) cycleRecordsTrack(1);
     } else if (state === 'continue') {
       contSel = hoverIdx;
       activateContinue(hoverIdx);
@@ -1769,22 +1965,18 @@
     mouse.x = e.clientX;
     mouse.y = e.clientY;
     updateHover();
-    const wasDrag = audioDragged;
-    audioDragged = false;
+    audioDragged = false; // clear the drag-ate-the-click guard each click
     if (state === 'loading') {
       leaveLoading();
       return;
     }
     if (state === 'intro') { skipIntro(); return; }
+    // the dev Skip chip and the corner Back both sit outside the button rects,
+    // so test them before the hover-based dispatch
+    if (skipChipHit(mouse.x, mouse.y)) { openSkip(); return; }
+    if (backChipHit(mouse.x, mouse.y)) { backChipAction(); return; }
     if (hoverIdx < 0) return;
-    if (state === 'audio') {
-      // a drag released over Back shouldn't activate it
-      if (!wasDrag && hoverIdx === audioKeys.length) {
-        blip(880, 0.08);
-        closeAudio();
-      }
-      return;
-    }
+    if (state === 'audio') return; // sliders act on drag, not on a plain click
     activateHover();
   });
 
@@ -1797,6 +1989,8 @@
   // per-state tap actions beyond what a mouse click can mean
   function touchTap(x, y) {
     const k = TOUCH.layout(W, H);
+    // the dev Skip chip shows on every menu sub-screen, so test it up front
+    if (skipChipHit(x, y)) { openSkip(); return; }
     switch (state) {
       case 'loading':
         leaveLoading();
@@ -1805,6 +1999,8 @@
         skipIntro();
         return;
       case 'menu':
+        activateHover();
+        return;
       case 'continue':
       case 'levelLoadError':
       case 'paused':
@@ -1814,12 +2010,9 @@
         if (TOUCH.hit(k.back, x, y)) { blip(880, 0.08); goMenu(); return; }
         activateHover();
         return;
-      case 'recordsDiff':
-        if (TOUCH.hit(k.back, x, y)) { blip(880, 0.08); goMenu(); return; }
-        activateHover();
-        return;
       case 'records':
-        activateHover(); // the on-screen Back button
+        if (TOUCH.hit(k.back, x, y)) { blip(880, 0.08); goMenu(); return; }
+        activateHover(); // the ◀ / ▶ track-selector arrows
         return;
       case 'replays': {
         if (TOUCH.hit(k.back, x, y)) { blip(880, 0.08); goMenu(); return; }
@@ -1863,13 +2056,11 @@
         return;
       }
       case 'audio':
+        if (TOUCH.hit(k.back, x, y)) { blip(880, 0.08); closeAudio(); return; }
         if (hoverIdx >= 0 && hoverIdx < audioKeys.length) {
           audioDrag = hoverIdx;
           audioSel = hoverIdx;
           dragVolume(x);
-        } else if (hoverIdx === audioKeys.length) {
-          blip(880, 0.08);
-          closeAudio();
         }
         return;
       case 'ready':
@@ -2034,6 +2225,13 @@
     if (stylePopups.length && stylePopups[0].age >= STYLE_POPUP_DUR) {
       stylePopups = stylePopups.filter(p => p.age < STYLE_POPUP_DUR);
     }
+    // the defibrillator's cosmetic state ages alongside the style toasts: the
+    // electrocution zaps, the "+1 LIFE" toasts, and the lives-row pop-in timer
+    for (const z of zaps) z.age += dt;
+    if (zaps.length) zaps = zaps.filter(z => z.age < ZAP_DUR);
+    for (const p of lifePopups) p.age += dt;
+    if (lifePopups.length) lifePopups = lifePopups.filter(p => p.age < LIFE_POPUP_DUR);
+    lifeAnimT += dt;
   }
 
   // ---------- exhaust smoke ----------
@@ -2476,6 +2674,19 @@
         }
       }
     }
+    // defibrillators: collected like a burger (same per-part reach), but instead
+    // of counting toward the goal they shock the rider and bank a life
+    for (let di = 0; di < defibs.length; di++) {
+      const d = defibs[di];
+      if (d.got) continue;
+      for (const o of pts) {
+        if (Math.hypot(o.p.x - d.x, o.p.y - d.y) < o.r + OBJ_R) {
+          d.got = true;
+          collectDefib(di);
+          break;
+        }
+      }
+    }
     if (burgers.every(b => b.got)) {
       for (const o of pts) {
         if (Math.hypot(o.p.x - level.goal[0], o.p.y - level.goal[1]) < o.r + OBJ_R) {
@@ -2483,6 +2694,26 @@
           break;
         }
       }
+    }
+  }
+
+  // a defibrillator was just grabbed: kick off the electrocution + "+1 LIFE"
+  // toast and play the shock/one-up cues. The cosmetic FX fire on every run
+  // (live, replay or test ride) so the jolt always reads, but the life itself is
+  // only BANKED in a real run — a replay/test shows the spectacle and scores
+  // nothing (lives is hidden on those screens anyway). Cosmetic-only state, so
+  // it never desyncs a replay.
+  function collectDefib(idx) {
+    zaps.push({ age: 0 });
+    lifePopups.push({ text: '+1 LIFE', age: 0 });
+    defibShock();
+    oneUp();
+    if (state === 'playing') {
+      lives++;
+      lifeAnimT = 0; // (re)start the lives-row pop-in for the new head
+      // bank it as consumed for the rest of the track: a respawn rebuilds
+      // the defib list (reset) and this keeps it from re-floating
+      consumedDefibs.add(levelIndex + ':' + idx);
     }
   }
 
@@ -2728,8 +2959,6 @@
         menuT += FDT;
       } else if (state === 'difficulty') {
         diffT += FDT;
-      } else if (state === 'recordsDiff') {
-        recDiffT += FDT;
       } else if (state === 'records') {
         recT += FDT;
       } else if (state === 'continue') {
@@ -2786,8 +3015,7 @@
       if (state !== 'loading' && state !== 'intro' && state !== 'menu' &&
           state !== 'difficulty' && state !== 'continue' && state !== 'replays' &&
           state !== 'audio' && state !== 'skip' && state !== 'editor' &&
-          state !== 'recordsDiff' && state !== 'records' &&
-          state !== 'victory') {
+          state !== 'records' && state !== 'victory') {
         updateCamera(FDT);
         // toasts keep rising over the crash/finish screens, but a pause
         // freezes them along with everything else; the smoke drifts on too
@@ -2843,9 +3071,16 @@
     // and the engine build stamp all persist. Only the "BURGER MANIA" title
     // is exclusive to the top menu — stepping into a sub-screen never blanks
     // the rest of the scene out from under the player mid-animation.
-    function menuScene() {
+    function menuScene(withTag = true) {
       drawMenuBackdrop(ctx, W, H, mt, patterns.meadow, true);
-      drawCornerTag(ctx, W, H, 'engine v' + REPLAY.VERSION);
+      // the main menu's wide grid reaches the bottom-left corner, so there it
+      // redraws the stamp on top instead (see below); other screens are clear.
+      // The dev Skip chip rides with the stamp — visible wherever the version
+      // label is, not just on the top menu.
+      if (withTag) {
+        drawCornerTag(ctx, W, H, 'v' + REPLAY.VERSION);
+        if (devSkip) drawSkipChip(ctx, W, H, 1, skipHover);
+      }
     }
     if (state === 'loading') {
       drawLoading(ctx, W, H, loadFrac, rt, loadDone, TOUCH.active);
@@ -2860,31 +3095,30 @@
       return;
     }
     if (state === 'intro' || state === 'menu') {
-      menuScene();
+      menuScene(state !== 'menu'); // the menu draws its stamp on top of the grid
       drawTitleLetters(ctx, W, H, introT);
       if (state === 'menu') {
-        drawMenu(ctx, W, H, Math.min(1, menuT / 0.6), menuItems, menuSel, hoverIdx);
+        drawMainMenu(ctx, W, H, Math.min(1, menuT / 0.6), menuItems, menuSel, hoverIdx,
+          { show: devSkip, hot: skipHover });
+        // keep the build stamp + dev Skip chip above the wide grid, never buried
+        drawCornerTag(ctx, W, H, 'v' + REPLAY.VERSION);
       }
       return;
     }
     if (state === 'difficulty') {
       menuScene();
       drawDifficulty(ctx, W, H, Math.min(1, diffT / 0.4), visibleTracks(), diffSel, hoverIdx,
-        TOUCH.active);
-      return;
-    }
-    if (state === 'recordsDiff') {
-      menuScene();
-      drawDifficulty(ctx, W, H, Math.min(1, recDiffT / 0.4), visibleTracks(), recDiffSel,
-        hoverIdx, TOUCH.active, 'BEST RECORDS');
+        TOUCH.active, undefined, backHover);
       return;
     }
     if (state === 'records') {
       menuScene();
       drawRecords(ctx, W, H, Math.min(1, recT / 0.4), {
         label: recTrack ? recTrack.label : '',
-        names: recNames, results: recResults, sel: 0, hover: hoverIdx,
-        touch: TOUCH.active,
+        color: recTrack ? recTrack.color : '',
+        names: recNames, results: recResults, hover: hoverIdx,
+        canPrev: recCanCycle(-1), canNext: recCanCycle(1),
+        touch: TOUCH.active, backHot: backHover,
       });
       return;
     }
@@ -2898,14 +3132,14 @@
     if (state === 'replays') {
       menuScene();
       drawReplays(ctx, W, H, Math.min(1, repT / 0.4),
-        repItems, repSel, repScroll, hoverIdx, repNote, TOUCH.active);
+        repItems, repSel, repScroll, hoverIdx, repNote, TOUCH.active, backHover);
       return;
     }
     if (state === 'audio' && audioFrom !== 'paused') {
       menuScene();
       drawAudio(ctx, W, H, Math.min(1, audioT / 0.4),
         { volume, sel: audioSel, hover: hoverIdx, dim: false, muted,
-          touch: TOUCH.active });
+          touch: TOUCH.active, backHot: backHover });
       return;
     }
     // the skip picker summoned from a menu gets its own backdrop; summoned
@@ -2951,6 +3185,7 @@
     drawDoodadLayer(ctx, level.doodads, 'back', rt);
     if (level.nuts) for (const n of level.nuts) drawNutMound(ctx, n[0], n[1], rt);
     for (const b of burgers) if (!b.got) drawBurger(ctx, b.x, b.y, rt);
+    for (const d of defibs) if (!d.got) drawDefib(ctx, d.x, d.y, rt);
     drawPopcorn(ctx, level.goal[0], level.goal[1], rt);
     // exhaust behind the bike so it trails off the pipe. The tier-3 plasma
     // mirage re-stamps the canvas to distort the background, so it needs the
@@ -2961,6 +3196,9 @@
     drawDirt(ctx, dirt);
     drawBike(ctx, bike, !!headBody, false, theme.dark, rt);
     if (headBody) drawHead(ctx, headBody.x, headBody.y, bike.facing, headBody.rot);
+    // the defibrillator shock crackles over the rider (lightning + x-ray bones),
+    // one per live zap; drawn here so it sits on the bike, under any front props
+    for (const z of zaps) drawElectrocution(ctx, bike, z.age, rt);
     drawDoodadLayer(ctx, level.doodads, 'front', rt);
     // foreground terrain: front-layer polygons over the rider AND the doodads,
     // so he disappears behind them (see drawForeground)
@@ -2988,46 +3226,61 @@
       drawStylePopup(ctx, W / 2 + (wx - cam.x) * Z, H / 2 + (wy - cam.y) * Z,
         p.text, p.age, Z);
     }
-
-    drawMinimap(ctx, W, H, level, {
-      pos: bike.pos,
-      burgers,
-      goal: level.goal,
-      nuts: level.nuts,
-      t: rt,
-      theme,
-    });
+    // the "+1 LIFE" toast rises higher and centred over the rider, in its own
+    // electric style so it never blends into the yellow style points
+    for (const p of lifePopups) {
+      const wx = bike.pos.x;
+      const wy = bike.pos.y - 2.0 - p.age * 0.9;
+      drawLifePopup(ctx, W / 2 + (wx - cam.x) * Z, H / 2 + (wy - cam.y) * Z,
+        p.text, p.age, Z);
+    }
 
     const watching = state === 'replay' || state === 'replayEnd';
     const testing = state === 'editorTest' || state === 'editorTestEnd';
-    drawHUD(ctx, W, H, {
-      time,
-      t: rt,
-      theme,
-      got: burgers.filter(b => b.got).length,
-      total: burgers.length,
-      best,
-      style: stylePts,
-      styleBest,
-      state,
-      speed: bike && bike.vel ? Math.hypot(bike.vel.x, bike.vel.y) : 0,
-      lives: watching || testing ? null : lives,
-      hasNext: hasNextLevel(),
-      mapLabel: testing ? level.name : mapLabel(),
-      replay: watching ? {
-        label: (replayData && replayData.label) || level.name,
-        done: state === 'replayEnd',
-        outcome: replayOutcome,
-      } : null,
-      test: testing ? {
-        done: state === 'editorTestEnd',
-        outcome: testOutcome,
-      } : null,
-      // the keyboard hint is redundant next to the touch save button;
-      // save status messages still show either way
-      saveNote: TOUCH.active && saveNote === 'S: save replay' ? '' : saveNote,
-      touch: TOUCH.active,
-    });
+    // H hides every riding UI frame — minimap, metrics, mph, level label — for
+    // a clean view; menus/banners drawn after this still show as normal
+    if (!hudHidden) {
+      drawMinimap(ctx, W, H, level, {
+        pos: bike.pos,
+        burgers,
+        defibs,
+        goal: level.goal,
+        nuts: level.nuts,
+        t: rt,
+        theme,
+      });
+
+      drawHUD(ctx, W, H, {
+        time,
+        t: rt,
+        theme,
+        got: burgers.filter(b => b.got).length,
+        total: burgers.length,
+        best,
+        style: stylePts,
+        styleBest,
+        state,
+        speed: bike && bike.vel ? Math.hypot(bike.vel.x, bike.vel.y) : 0,
+        lives: watching || testing ? null : lives,
+        // a freshly-banked life zaps into the row: 0..1 entrance progress, ≥1 once settled
+        lifeAnim: lifeAnimT < LIFE_HEAD_POP ? lifeAnimT / LIFE_HEAD_POP : 1,
+        hasNext: hasNextLevel(),
+        mapLabel: testing ? level.name : mapLabel(),
+        replay: watching ? {
+          label: (replayData && replayData.label) || level.name,
+          done: state === 'replayEnd',
+          outcome: replayOutcome,
+        } : null,
+        test: testing ? {
+          done: state === 'editorTestEnd',
+          outcome: testOutcome,
+        } : null,
+        // the keyboard hint is redundant next to the touch save button;
+        // save status messages still show either way
+        saveNote: TOUCH.active && saveNote === 'S: save replay' ? '' : saveNote,
+        touch: TOUCH.active,
+      });
+    }
 
     if (state === 'paused') {
       drawPause(ctx, W, H, pauseItems, pauseSel, hoverIdx);
@@ -3035,7 +3288,7 @@
     if (state === 'audio') {
       drawAudio(ctx, W, H, Math.min(1, audioT / 0.4),
         { volume, sel: audioSel, hover: hoverIdx, dim: true, muted,
-          touch: TOUCH.active });
+          touch: TOUCH.active, backHot: backHover });
     }
     if (state === 'skip') {
       drawLevelSelect(ctx, W, H, Math.min(1, skipT / 0.4), {

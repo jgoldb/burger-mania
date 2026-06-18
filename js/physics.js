@@ -106,7 +106,7 @@ const PHYS = {
                    // so any bounce needs ζ under 1. Lower springC (or higher springK) = more
                    // bounce; higher springC = back toward a dead creep. The hard-LANDING
                    // bounce + fall-toughness specifically is springCFade
-  springCFade: 36, // relative speed (m/s) where the suspension damper fades to
+  springCFade: 28, // relative speed (m/s) where the suspension damper fades to
                    // half, so a fast compression rides mostly on the spring (and
                    // bounces) instead of being soaked dead. The body has no terrain
                    // collider, so a big enough slam sinks the frame through until
@@ -197,7 +197,7 @@ const PHYS = {
                    // now: maxSpin = top_mph / 0.894 in rad/s (e.g. 50 mph -> 56, 70 -> 78).
                    // The maxSpin cap alone sets the top now (the old engineFade taper that
                    // used to soften the approach was a dead lever at 0 and is gone).
-  brakeSpringK: 55, // BRAKE = a stiff spring pinning the wheel to its captured ground-
+  brakeSpringK: 65, // BRAKE = a stiff spring pinning the wheel to its captured ground-
                    // contact point (Elasto Mania's model), NOT a spin-decay clutch. This is
                    // the pin STIFFNESS: how rigidly a braked wheel is held in place against
                    // the world. The wheel↔frame suspension spring then carries that pinned
@@ -209,7 +209,7 @@ const PHYS = {
                    // Because the pin acts on the wheel's POSITION while the throttle acts on
                    // its SPIN, gas+brake no longer fight over one number (the old bug) — the
                    // engine loads the chassis against the planted wheel, exactly as in Elasto.
-  brakeSpringC: 4, // pin DAMPING: bleeds the braked wheel's velocity, so it's the main
+  brakeSpringC: 6, // pin DAMPING: bleeds the braked wheel's velocity, so it's the main
                    // "kill the wheel's motion" term — how hard the stop bites. Higher = the
                    // wheel halts more sharply (a more violent stoppie at speed); lower = it
                    // coasts into the pin. Feel lever, paired with brakeSpringK.
@@ -224,7 +224,7 @@ const PHYS = {
   // bounded EMERGENTLY by air drag on the fast, flung-out wheels (and lower the
   // faster you're also falling, as fall speed stacks onto the wheels). A fresh
   // normal press pumps at once.
-  voltAcc: 17.3,    // torque of ONE normal volt pump (the punch). Sets normal-volt
+  voltAcc: 18,    // torque of ONE normal volt pump (the punch). Sets normal-volt
                     // rotation (fine control / balance) AND how easily you can pump
                     // off a ledge — keep it modest so a DANGLING body (gravity
                     // resisting) can't be pumped up, while a body whose CoM is still
@@ -243,7 +243,7 @@ const PHYS = {
                     // gravity/damping act on a hang, so a shorter gap makes a ledge
                     // recovery less of a wait (voltBurstDur was shortened to match, so
                     // the average torque is unchanged)
-  alovoltAcc: 5,    // CONTINUOUS torque of the alovolt (both keys) — sustained, not
+  alovoltAcc: 5.5,    // CONTINUOUS torque of the alovolt (both keys) — sustained, not
                     // pulsed, so it clearly out-spins the bursty normal volt while
                     // held. The cadence gates when it can ENGAGE, but the drive itself
                     // is the same on ground and air. Eased 7->5 for a more controllable
@@ -437,6 +437,11 @@ function pointInPoly(px, py, poly) {
 // (so pairing one with noCollide walls lets the rider slip behind it, out of
 // view); only their draw order moves. So their grass/glass tops are gathered
 // into separate frontGrass/frontGlassTops lists the foreground pass draws.
+// L.blendPolys ([polyIndex, ...]) is the same foreground layer painted to MERGE:
+// drawn over the rider with no outline so it blends seamlessly into the terrain
+// it covers (stitch one continuous shape from several polys without visible
+// seams). Collision is normal like frontPolys, but a seam-hiding fill carries no
+// grass/glass top, so blend polys add nothing to either grass list.
 // All of these are additive + inert when absent (no shipped level or replay
 // carries them), so existing maps and tapes are untouched.
 function prepareLevel(L) {
@@ -446,12 +451,15 @@ function prepareLevel(L) {
   const noColl = new Set((L.noCollide || []).map(e => e[0] + ':' + e[1]));
   const invisible = new Set(L.invisible || []);
   const front = new Set(L.frontPolys || []);
+  const blend = new Set(L.blendPolys || []);
   L.polygons.forEach((poly, pi) => {
     // a polygon nested inside another is a solid island in the playable
     // area (evenodd fill), so its playable side is the inverse
     const island = L.polygons.some(p =>
       p !== poly && pointInPoly(poly[0][0], poly[0][1], p));
-    const polyInvisible = invisible.has(pi);
+    // invisible polys and blend polys both draw no grass: invisible draws
+    // nothing, blend is a bare seam-hiding fill
+    const polyNoGrass = invisible.has(pi) || blend.has(pi);
     // foreground polygons route their grass/glass to the front lists, drawn over
     // the rider instead of behind him
     const gList = front.has(pi) ? frontGrass : grass;
@@ -469,9 +477,9 @@ function prepareLevel(L) {
       if (!ghost) segments.push(s);
       const dx = s.bx - s.ax, dy = s.by - s.ay;
       // grass grows on edges that are not too steep and face the playable
-      // side upward; glass gets a sheen instead. Invisible polygons draw
-      // nothing at all, so they get no grass/glass top either.
-      if (!polyInvisible && Math.abs(dx) > 0.001 && Math.abs(dy / dx) < 2.0) {
+      // side upward; glass gets a sheen instead. Invisible and blend polygons
+      // draw no grass/glass top (nothing, and a bare merge fill respectively).
+      if (!polyNoGrass && Math.abs(dx) > 0.001 && Math.abs(dy / dx) < 2.0) {
         const up = pointInPoly(mx, my - 0.3, poly);
         const down = pointInPoly(mx, my + 0.3, poly);
         if (island ? (down && !up) : (up && !down)) {

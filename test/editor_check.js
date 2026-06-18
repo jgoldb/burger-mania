@@ -1,7 +1,7 @@
 // Map editor check: loads the full script stack under a stubbed DOM,
 // walks menu -> Map Editor, then exercises the editing surface with
-// synthetic mouse and key events — placing burgers, nut mounds, upside-down
-// burgers and doodads (inert sprites: picking sprite + layer), dragging
+// synthetic mouse and key events — placing burgers, nut mounds, defibrillators,
+// upside-down burgers and doodads (inert sprites: picking sprite + layer), dragging
 // vertices and walls, painting glass and clearing it by selecting the edge + Delete,
 // drawing an island polygon, Shift+dragging a whole polygon, cycling the
 // placement grid, the dense-grid toggle and Shift-snapping a lone vertex,
@@ -171,7 +171,8 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   if (playedNow !== 'menu') bad('menu should play menu, got ' + playedNow);
 
   // ---- into the editor ----
-  key('ArrowDown');                          // Play -> Map Editor
+  // menu order is Play, Records, Replays, Map Editor, Audio
+  key('ArrowDown'); key('ArrowDown'); key('ArrowDown'); // Play -> Map Editor
   key('Enter');
   pumpFrames(3, 1 / 60);
   if (playedNow !== 'meadow') bad('editor should play its theme song, got ' + playedNow);
@@ -205,6 +206,42 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   if (EDITOR.map.nuts.length !== nuts0) bad('Ctrl+Z should undo the nut mound');
   key('y', { ctrlKey: true });
   if (EDITOR.map.nuts.length !== nuts0 + 1) bad('Ctrl+Y should redo the nut mound');
+  key('1');
+
+  // ---- defibrillator placement (the +Object tool's defib kind, armed from the
+  //      palette next to Burger) + undo/redo + drag + round-trip + delete ----
+  const defib0 = EDITOR.map.defibs.length;
+  key('3');                                    // +Object tool (burger by default)
+  EDITOR.action('objectKind:defib');           // the palette arms the defibrillator
+  if (EDITOR.tool !== 'object') bad('the defib should live under the +Object tool');
+  if (EDITOR.objectKind !== 'defib') bad('the object palette should arm the defib kind');
+  pumpFrames(2, 1 / 60);                        // draw the palette + defib ghost (must not throw)
+  let defS = w2s(48, -4);                       // a clear spot inside the box
+  mouseDown(defS.x, defS.y); mouseUp(defS.x, defS.y);
+  if (EDITOR.map.defibs.length !== defib0 + 1) bad('clicking should drop a defibrillator');
+  pumpFrames(2, 1 / 60);                        // draw a frame with the defib (must not throw)
+  key('z', { ctrlKey: true });
+  if (EDITOR.map.defibs.length !== defib0) bad('Ctrl+Z should undo the defibrillator');
+  key('y', { ctrlKey: true });
+  if (EDITOR.map.defibs.length !== defib0 + 1) bad('Ctrl+Y should redo the defibrillator');
+  // it survives a .bmm round trip (optional + inert when absent, like nuts)
+  const defTrip = EDITOR.parse(EDITOR.serialize());
+  if (!defTrip.defibs || defTrip.defibs.length !== defib0 + 1) {
+    bad('round trip should preserve the defibrillator, got ' + JSON.stringify(defTrip.defibs));
+  }
+  // select + drag it like any other point object
+  key('1');
+  const dp = EDITOR.map.defibs[defib0];
+  let dps = w2s(dp[0], dp[1]);
+  mouseDown(dps.x, dps.y);
+  if (!EDITOR.sel || EDITOR.sel.kind !== 'defib') bad('clicking a defib should select it');
+  mouseMove(w2s(dp[0] + 2, dp[1]).x, w2s(dp[0] + 2, dp[1]).y);
+  mouseUp(0, 0);
+  if (Math.abs(EDITOR.map.defibs[defib0][0] - (dp[0] + 2)) > 0.2) {
+    bad('dragging should move the defib, got ' + JSON.stringify(EDITOR.map.defibs[defib0]));
+  }
+  key('Delete');                               // Del removes the selected defib
+  if (EDITOR.map.defibs.length !== defib0) bad('Del should remove the selected defibrillator');
   key('1');
 
   // ---- gravity-burger placement: the +Object tool's directional gravity kinds ----
@@ -392,6 +429,43 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   if (prepareLevel(EDITOR.map).frontGrass.length !== 0) bad('removing the front polygon should empty frontGrass');
   EDITOR.action('polyLayer:back');              // restore the back layer
   if (EDITOR.polyLayer !== 'back') bad('the poly palette should re-arm the back layer');
+  key('1');
+
+  // ---- blend polygon: normal collision, drawn over the rider with no outline,
+  //      merged seamlessly into the terrain it covers (grows no grass of its own)
+  const grass0 = prepareLevel(EDITOR.map).grass.length;
+  key('2');                                    // poly tool
+  EDITOR.action('polyLayer:blend');            // the palette's third layer toggle
+  if (EDITOR.polyLayer !== 'blend') bad('the poly palette should arm the blend layer');
+  pumpFrames(1, 1 / 60);                        // draw the palette with three layer toggles (must not throw)
+  // the SAME island triangle the front test used: as a front poly it grew grass
+  // (frontGrass), so reusing it proves blend SUPPRESSES that grass
+  for (const [px, py] of [[40, -8], [50, -8], [45, -5]]) {
+    let p = w2s(px, py);
+    mouseDown(p.x, p.y); mouseUp(p.x, p.y);
+  }
+  key('Enter');
+  if (EDITOR.map.polygons.length !== 2) bad('the blend polygon should be added');
+  if (EDITOR.map.blendPolys.length !== 1 || EDITOR.map.blendPolys[0] !== 1) {
+    bad('a new blend polygon should flag its index, got ' + JSON.stringify(EDITOR.map.blendPolys));
+  }
+  const bPrep = prepareLevel(EDITOR.map);
+  // collision is normal (box 4 + triangle 3 = 7 segments)...
+  if (bPrep.segments.length !== 7) bad('a blend polygon must keep its collision, got ' + bPrep.segments.length);
+  // ...but it grows no grass at all: not in the back terrain, nor the front pass
+  if (bPrep.frontGrass.length !== 0) bad('a blend polygon should grow no foreground grass');
+  if (bPrep.grass.length !== grass0) bad('a blend polygon should add no back-terrain grass');
+  pumpFrames(1, 1 / 60);                         // draw with the blend poly in the foreground pass (must not throw)
+  const bTrip = EDITOR.parse(EDITOR.serialize());
+  if (!bTrip.blendPolys || bTrip.blendPolys.length !== 1 || bTrip.blendPolys[0] !== 1) {
+    bad('round trip should preserve the blend-layer flag, got ' + JSON.stringify(bTrip.blendPolys));
+  }
+  key('z', { ctrlKey: true });                  // undo removes the blend polygon and its flag
+  if (EDITOR.map.polygons.length !== 1 || EDITOR.map.blendPolys.length !== 0) {
+    bad('undo should remove the blend polygon and clear its flag');
+  }
+  EDITOR.action('polyLayer:back');              // restore the back layer
+  if (EDITOR.polyLayer !== 'back') bad('the poly palette should re-arm the back layer after blend');
   key('1');
 
   // ---- vertex drag: pull the floor-right corner (the map bounds) ----

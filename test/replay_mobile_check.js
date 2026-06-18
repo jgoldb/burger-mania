@@ -214,8 +214,8 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
   key('ArrowUp');                            // wrap to Return to Menu (last item)
   key('Enter');
   pumpFrames(3, 1 / 60);
-  key('ArrowDown');                          // menu: Play -> Map Editor
-  key('ArrowDown');                          // menu: Map Editor -> Replays
+  key('ArrowDown');                          // menu: Play -> Records
+  key('ArrowDown');                          // menu: Records -> Replays
   key('Enter');                              // -> replays screen
   await settle();
   const listTexts = lastFrameTexts();

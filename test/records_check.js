@@ -1,9 +1,10 @@
 // Best Records flow test: seeds a couple of per-map best-time/best-style
-// localStorage keys, then drives menu -> Records -> track picker -> scorecard,
-// asserting the scorecard reads those stored bests (formatted time, style,
-// dashes for unplayed maps), shows no total/stars on a partly-cleared track,
-// and that Escape walks back picker -> menu. Guards the menu-index navigation
-// and the localStorage wiring behind the screen. Run with: node test/records_check.js
+// localStorage keys, then drives menu -> Records straight to the scorecard
+// (no track-picker step), asserting it reads those stored bests (formatted
+// time, style, dashes for unplayed maps), shows no total/stars on a partly-
+// cleared track, that the ◀/▶ selector excludes coming-soon tracks (arrows
+// clamp, no wrap) and caches the choice, and that Escape returns to the menu.
+// Run with: node test/records_check.js
 const fs = require('fs');
 const path = require('path');
 const root = path.join(__dirname, '..');
@@ -82,19 +83,12 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
   let texts = frameTexts(3);
   if (!texts.includes('Records')) bad('menu missing the Records option: ' + texts.join('|'));
 
-  key('ArrowDown'); key('ArrowDown'); key('ArrowDown'); // Play -> ... -> Records
-  key('Enter');            // -> recordsDiff (track picker)
+  key('ArrowDown');        // Play -> Records (the first grid item after the hero)
+  key('Enter');            // -> records scorecard directly (no picker step)
   pumpFrames(6, 1 / 60);
   texts = frameTexts(3);
-  if (!texts.includes('BEST RECORDS')) bad('records track picker missing heading: ' + texts.join('|'));
-  if (!texts.includes('Beginner')) bad('records picker should list Beginner');
-  if (!texts.includes('Coming soon')) bad('disabled tracks should read Coming soon');
-
-  key('Enter');            // Beginner -> records scorecard
-  pumpFrames(6, 1 / 60);
-  texts = frameTexts(3);
-  if (!texts.includes('BEST RECORDS')) bad('scorecard missing heading');
-  if (!texts.some(t => t.includes('Beginner track'))) bad('scorecard missing track subtitle');
+  if (!texts.includes('BEST RECORDS')) bad('scorecard missing heading: ' + texts.join('|'));
+  if (!texts.includes('Beginner')) bad('selector should default to the Beginner track');
   if (!texts.some(t => t.includes(beginner[0].name))) bad('scorecard should list map 1: ' + beginner[0].name);
   if (!texts.includes('Back')) bad('scorecard should offer a Back button');
   if (!texts.includes('01:23,45')) bad('map 1 best time not shown, got: ' + texts.join('|'));
@@ -104,15 +98,32 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
   if (!texts.includes('---')) bad('unplayed maps should show style dashes');
   if (texts.includes('total')) bad('a partly-cleared track should not show a total row');
   if (texts.some(t => t.includes('\\u2605'))) bad('records screen should never star anything');
+  if (store['burger-mania-records-track'] !== 'beginner') {
+    bad('opening Records should cache the Beginner track, got ' + store['burger-mania-records-track']);
+  }
 
-  key('Escape');           // back to the track picker
+  // Advanced/Expert have no maps, so they're EXCLUDED from the selector: the
+  // arrows don't wrap and never reach them — the screen stays on Beginner.
+  key('ArrowRight');
   pumpFrames(3, 1 / 60);
   texts = frameTexts(3);
-  if (!texts.includes('Beginner')) bad('Escape from scorecard should return to the picker');
-  key('Escape');           // back to the menu
+  if (texts.includes('Advanced') || texts.includes('Expert')) {
+    bad('the selector must not reach a track with no maps');
+  }
+  if (!texts.includes('Beginner')) bad('a dead arrow should leave the screen on Beginner');
+  if (store['burger-mania-records-track'] !== 'beginner') {
+    bad('a dead arrow should not change the cached track, got ' + store['burger-mania-records-track']);
+  }
+  key('ArrowLeft');
   pumpFrames(3, 1 / 60);
   texts = frameTexts(3);
-  if (!texts.includes('Play')) bad('Escape from picker should return to the menu');
+  if (!texts.includes('Beginner')) bad('the selector should still be on Beginner');
+  if (!texts.some(t => t.includes(beginner[0].name))) bad('Beginner scorecard should remain');
+
+  key('Escape');           // straight back to the menu (no picker in between)
+  pumpFrames(3, 1 / 60);
+  texts = frameTexts(3);
+  if (!texts.includes('PLAY')) bad('Escape from records should return to the menu');
 
   console.log(fail ? 'FAILED (' + fail + ')' : 'OK');
   process.exit(fail ? 1 : 0);

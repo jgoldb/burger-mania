@@ -15,7 +15,11 @@
 // an older version" failure instead of a silent, wrong-looking playback.
 const REPLAY = (() => {
   const FORMAT = 'burger-mania-replay';
-  const VERSION = 11; // bumped 2026-06-17: tire + volt + suspension feel passes + the
+  const VERSION = 12; // bumped 2026-06-18: no new engine changes — the prior commit
+                     // (Elasto brake rework + infinite rock grip) shipped the physics
+                     // below without bumping the number, so old tapes were silently
+                     // mis-playing against the new sim. This bump retires them cleanly.
+                     // ---- below: bumped 2026-06-17: tire + volt + suspension feel passes + the
                      // Elasto BRAKE rework (brake is now a contact-point pin spring, not a
                      // spin-decay clutch — gas+brake, stoppie, hill-park and bounce all
                      // emerge from it) + INFINITE rock friction (Elasto no-slip: wheels

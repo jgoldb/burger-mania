@@ -80,7 +80,7 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
   pumpFrames(3, 1 / 60);
   key('Enter');           // intro -> menu
   let texts = frameTexts(3);
-  if (!texts.includes('Play')) bad('menu should show Play, got: ' + texts.join('|'));
+  if (!texts.includes('PLAY')) bad('menu should show PLAY, got: ' + texts.join('|'));
   // on a non-dev host the dev-only "Skip" item must not be in the menu
   if (texts.includes('Skip')) bad('the "Skip" menu item showed on a non-dev host');
 
@@ -88,7 +88,7 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
   key('s'); key('k'); key('i'); key('p');
   texts = frameTexts(3);
   if (texts.includes('SKIP TO MAP')) bad('skip overlay opened on a non-dev host');
-  if (!texts.includes('Play')) bad('menu should still be up after the dud keys');
+  if (!texts.includes('PLAY')) bad('menu should still be up after the dud keys');
 
   // and the menu still works: Enter activates Play -> difficulty
   key('Enter');

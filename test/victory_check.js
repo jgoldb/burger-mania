@@ -176,7 +176,7 @@ TRACKS[0].length = 2;
   key('Enter');            // Back to Menu
   texts = frameTexts(3);
   if (playedNow !== 'menu') bad('back at the menu should play menu, got ' + playedNow);
-  if (!texts.includes('Play')) bad('should be back on the menu, got: ' + texts.join('|'));
+  if (!texts.includes('PLAY')) bad('should be back on the menu, got: ' + texts.join('|'));
 
   console.log(fail ? 'FAILED (' + fail + ')' : 'OK');
   process.exit(fail ? 1 : 0);

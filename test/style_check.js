@@ -72,7 +72,7 @@ const clock = { t: 0 };
 // for ~3.7 s. The tape coasts 10 frames, turns around at frame 30, and
 // holds left the rest of the way so stacked volts wind up full rotations.
 const dropLab = JSON.stringify({
-  format: 'burger-mania-replay', version: 11,
+  format: 'burger-mania-replay', version: 12,
   savedAt: '2026-06-12T00:00:00.000Z',
   label: 'Drop Lab', outcome: 'crashed', time: 4,
   style: 350,
@@ -164,8 +164,8 @@ const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
   key('Enter');                              // loading -> intro
   key('Enter');                              // intro -> menu
   pumpFrames(3, 1 / 60);
-  key('ArrowDown');                          // menu: Play -> Map Editor
-  key('ArrowDown');                          // menu: Map Editor -> Replays
+  key('ArrowDown');                          // menu: Play -> Records
+  key('ArrowDown');                          // menu: Records -> Replays
   key('Enter');                              // -> replays screen
   await settle();
   key('Enter');                              // choose folder (stub grants)

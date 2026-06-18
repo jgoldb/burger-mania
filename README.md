@@ -180,7 +180,12 @@ control reference; the short version:
   (`Shift+Del`: its whole polygon).
 - **+Poly** (2): click out a new polygon and close it on its first point.
   A polygon inside the playable area is a solid island.
-- **+Burger** (3) drops burgers; **+Glass** (4) paints obsidian onto
+- **+Burger** (3) drops burgers. Its palette also carries the
+  **Defibrillator** (next to Burger under *Help*) — a one-up that, when
+  collected, shocks the rider (an electrocution + x-ray-skeleton flash) and
+  adds a life. It is a bonus pickup, so it does *not* count toward the burger
+  total or the goal. Select one and press `Del` to remove it.
+- **+Glass** (4) paints obsidian onto
   edges — click or drag and the one edge nearest the cursor takes the
   brush, so stacked polygons stay distinct. To clear glass, select that
   edge and press `Del`.
@@ -250,14 +255,25 @@ segment from vertex `i` to `i+1`.) Pre-`v2` maps used a `glass` field of
 `[x0, x1]` floor x-spans; the editor still loads them, converting each span
 to the edges whose midpoint falls inside it.
 
-Two more optional fields place objects. `nuts` is a list of `[x, y]` points,
+A few more optional fields place objects. `nuts` is a list of `[x, y]` points,
 each a **nut mound** — a lethal "killer" the rider dies on contact with (the
 Elasto Mania spinning-spike equivalent). Touching one with any part of the
 bike — head, either wheel, or the frame body, within `PHYS.nutR` of the
-point — ends the run. `flipBurgers` is a list of `[x, y]` points, each an
+point — ends the run. `defibs` is a list of `[x, y]` points, each a
+**defibrillator** — a one-up collected just like a burger (same per-part reach)
+that, instead of counting toward the goal, shocks the rider with an
+electrocution (lightning, plus a brief x-ray-skeleton flash) and adds a life,
+with its own "+1 LIFE" combat text and a head animating into the lives row.
+A defibrillator exists **once per continue, not once per map**: once grabbed it
+stays gone for the rest of the current set of lives, so dying and respawning
+never re-floats a life already banked — it can't be farmed by crashing on
+purpose. Spending a continue is the reset point: it re-floats every defib (as
+does starting a fresh campaign), and editor test rides and replays always start
+with every defib present.
+`flipBurgers` is a list of `[x, y]` points, each an
 **upside-down burger** — a burger that, when collected, reverses gravity (the
 Elasto Mania gravity apple). They are graphically identical to normal burgers
 in play and count toward the burger total; collecting one toggles `bike.grav`
-so the bike falls — and rides — the other way up. Neither field is used by a
-built-in track yet, and both are inert when absent, so existing maps and saved
-replays are unaffected.
+so the bike falls — and rides — the other way up. None of these fields are used
+by a built-in track yet, and all are inert when absent, so existing maps and
+saved replays are unaffected.
