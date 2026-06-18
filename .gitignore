@@ -7,5 +7,4 @@ _scratch_*
 .claude/
 
 # Local level scratch dirs (raw .lev imports + bmm staging)
-levels/bmm/*
-levels/lev/*
+levels/test/*

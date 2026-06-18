@@ -2840,8 +2840,21 @@
     // ease the look-ahead toward the current facing so a flip pans the
     // view across rather than snapping it
     camLead += (bike.facing * CAM_LEAD - camLead) * Math.min(1, 3 * dt);
-    const tx = bike.pos.x + camLead + bike.vel.x * 0.12;
-    const ty = bike.pos.y + bike.vel.y * 0.12 - 0.6;
+    // the lead rides the bike's FORWARD direction, which turns with gravity:
+    // forward (facing right) is perpendicular to the gravity pull, {g.y,-g.x}.
+    // default down {0,1} -> {1,0} (lead ahead horizontally); reversed gravity
+    // up {0,-1} -> {-1,0}; side gravity left/right -> {0,±1} (lead vertically,
+    // above/below the rider) instead of always shoving the view sideways.
+    const g = bike.gravDir || { x: 0, y: 1 };
+    const fx = g.y, fy = -g.x;
+    // the view is ~26x13.5, so on a wide screen height is the SHORT axis: a
+    // full horizontal-sized lead is a small slice sideways but a big chunk
+    // vertically, overshooting under side gravity. Scale the vertical share of
+    // the lead by the viewport aspect (hh/hw reduces to H/W) so it never shoves
+    // the rider off the short edge; 1 on square/tall screens, <1 on wide ones.
+    const vScale = W > 0 ? Math.min(1, H / W) : 1;
+    const tx = bike.pos.x + camLead * fx + bike.vel.x * 0.12;
+    const ty = bike.pos.y + camLead * fy * vScale + bike.vel.y * 0.12 - 0.6;
     const k = Math.min(1, 6 * dt);
     cam.x += (tx - cam.x) * k;
     cam.y += (ty - cam.y) * k;
