@@ -161,7 +161,18 @@ const TOUCH = (() => {
     const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
     const p = (sc - 1) / (PRESS_SCALE - 1);   // 0 at rest, 1 fully pressed
     ctx.save();
-    if (sc !== 1) { ctx.translate(cx, cy); ctx.scale(sc, sc); ctx.translate(-cx, -cy); }
+    if (sc !== 1) {
+      // pin the swell to this half's own side of the seam: clip everything past
+      // the shared inner edge so a held half grows only outward (and over the
+      // rail top/bottom), never across the divider. without this, both halves
+      // held at once each bulge ~6% past the seam and the second-drawn one
+      // paints over the first — making it look wider and the pair lopsided.
+      const seam = roundLeft ? r.x + r.w : r.x;   // shared edge with the neighbour
+      ctx.beginPath();
+      ctx.rect(roundLeft ? seam - 2 * r.w : seam, r.y - r.h, 2 * r.w, 3 * r.h);
+      ctx.clip();
+      ctx.translate(cx, cy); ctx.scale(sc, sc); ctx.translate(-cx, -cy);
+    }
     if (p > 0.004) {
       // the lit key fades in/out together with the swell, so a release shrinks
       // and dims off smoothly rather than popping away at the end
