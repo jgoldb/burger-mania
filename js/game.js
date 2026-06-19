@@ -6,8 +6,12 @@
   // changes (REPLAY.VERSION bumps on any physics/step/input change) we drop the
   // saved records once and stamp the new version. Reloads on the same version
   // see a matching stamp and leave storage untouched — no manual bump needed.
-  // Only the best-/style- record keys are cleared; volume prefs, saved editor
-  // maps, and the editor autosave are deliberately left intact.
+  // Cleared are the best-/style- record keys AND the per-track cleared flags
+  // ('burger-mania-cleared-<id>'): a track is only "cleared" by the records we're
+  // wiping, so the badge that proves it (and gates skin tiers + track unlocks)
+  // must reset with them — otherwise it would claim a clear the new build has no
+  // record of. Volume prefs, saved editor maps, and the editor autosave are
+  // deliberately left intact.
   const SIM_VER_KEY = 'burger-mania-sim-version';
   try {
     const cur = String(REPLAY.VERSION);
@@ -16,7 +20,8 @@
       for (let i = 0; i < localStorage.length; i++) {
         const k = localStorage.key(i);
         if (k && (k.indexOf('burger-mania-best-') === 0 ||
-                  k.indexOf('burger-mania-style-') === 0)) drop.push(k);
+                  k.indexOf('burger-mania-style-') === 0 ||
+                  k.indexOf('burger-mania-cleared-') === 0)) drop.push(k);
       }
       drop.forEach(k => localStorage.removeItem(k));
       localStorage.setItem(SIM_VER_KEY, cur); // stamp so reloads on this version are untouched
