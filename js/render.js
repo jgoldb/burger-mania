@@ -6398,6 +6398,291 @@ function drawDifficulty(ctx, W, H, alpha, tracks, sel, hover, touch, title, back
   drawMenuBack(ctx, W, H, alpha, backHot);
 }
 
+// ---------- equipment (character sheet) ----------
+// Laid out like an MMO loadout: a LEFT column listing every slot with what's
+// worn, and a RIGHT column with a de-emphasised preview of the rider in the
+// current loadout, the items available for the SELECTED slot, and a detail line.
+// equipLayout is the single source of geometry so the draw and the hit-tests
+// (equipSlotRects / equipItemRects in game.js's currentRects) stay in lockstep.
+function equipLayout(W, H) {
+  const mobile = (typeof TOUCH !== 'undefined') && TOUCH.active;
+  const contentW = Math.min(safeBandW(W) * 0.96, 880);
+  const x = safeCenterX(W, contentW);
+  const top = H * 0.20, bot = H - Math.max(14, H * 0.045) - SAFE.bottom;
+  const gap = 16;
+  const leftW = Math.min(contentW * 0.42, 300);
+  const rightX = x + leftW + gap, rightW = contentW - leftW - gap;
+  const colH = bot - top;
+  // on a phone the preview is shrunk (and the detail trimmed) so the item grid —
+  // the part you actually tap — gets the height; the preview stays a modest
+  // reference, not the focus.
+  const previewH = mobile ? Math.max(54, Math.min(colH * 0.32, 120))
+                          : Math.max(60, Math.min(colH * 0.42, 210));
+  const itemsTop = top + previewH + gap;
+  const detailH = mobile ? Math.max(32, Math.min(colH * 0.15, 70))
+                         : Math.max(36, Math.min(colH * 0.16, 88));
+  const headerH = 22;                                // the "SKINS" label over the rows
+  return {
+    x, contentW, top, bot, gap, leftW, rightX, rightW, headerH, mobile,
+    left:    { x, y: top, w: leftW, h: colH },
+    preview: { x: rightX, y: top, w: rightW, h: previewH },
+    items:   { x: rightX, y: itemsTop + headerH, w: rightW,
+               h: Math.max(0, bot - detailH - gap - (itemsTop + headerH)) },
+    itemsHeaderY: itemsTop + headerH / 2,
+    detail:  { x: rightX, y: bot - detailH, w: rightW, h: detailH },
+  };
+}
+
+// the left loadout column's slot rows, top to bottom (one per slot)
+function equipSlotRects(W, H, n) {
+  if (!n) return [];
+  const L = equipLayout(W, H);
+  const headerH = 24;                                // the "LOADOUT" label
+  const top = L.left.y + headerH, availH = L.left.h - headerH;
+  const gap = 6;
+  const rowH = Math.max(14, Math.min(52, (availH - (n - 1) * gap) / n));
+  const rects = [];
+  for (let i = 0; i < n; i++) rects.push({ x: L.left.x, y: top + i * (rowH + gap), w: L.left.w, h: rowH });
+  return rects;
+}
+
+// how many columns the item tiles flow into: as few as keep each tile a
+// readable height, so a desktop's tall box stays a single-column list while a
+// phone's short box spills to 2+ columns and the tiles aren't thin slivers.
+function equipItemCols(W, H, n) {
+  if (n <= 1) return 1;
+  const L = equipLayout(W, H);
+  const gap = 8, minTileW = 112, targetH = 34;
+  const maxByW = Math.max(1, Math.floor((L.items.w + gap) / (minTileW + gap)));
+  let cols = 1;
+  const rowH = c => (L.items.h - (Math.ceil(n / c) - 1) * gap) / Math.ceil(n / c);
+  while (cols < Math.min(n, maxByW) && rowH(cols) < targetH) cols++;
+  return cols;
+}
+
+// the selected slot's item tiles, row-major in the right column's items box. The
+// tiles always fit inside L.items (cols + height shrink to it) so a short
+// landscape can't push the bottom row off-screen; the cap limits big screens.
+function equipItemRects(W, H, n) {
+  if (!n) return [];
+  const L = equipLayout(W, H);
+  const cols = equipItemCols(W, H, n), rows = Math.ceil(n / cols);
+  const gap = 8;
+  const tileW = (L.items.w - (cols - 1) * gap) / cols;
+  const tileH = Math.max(2, Math.min(54, (L.items.h - (rows - 1) * gap) / rows));
+  const rects = [];
+  for (let i = 0; i < n; i++) {
+    const c = i % cols, r = Math.floor(i / cols);
+    rects.push({ x: L.items.x + c * (tileW + gap), y: L.items.y + r * (tileH + gap), w: tileW, h: tileH });
+  }
+  return rects;
+}
+
+// a small drawn padlock (shackle + body) centred at (cx, cy); `s` ≈ body width
+function drawPadlock(ctx, cx, cy, s, col) {
+  col = col || 'rgba(240,232,218,0.55)';
+  ctx.save();
+  ctx.strokeStyle = col;
+  ctx.lineWidth = Math.max(1.5, s * 0.16);
+  ctx.lineCap = 'round';
+  ctx.beginPath();                                  // shackle
+  ctx.arc(cx, cy - s * 0.26, s * 0.32, Math.PI, 0);
+  ctx.stroke();
+  ctx.fillStyle = col;                              // body
+  roundRectPath(ctx, cx - s * 0.5, cy - s * 0.02, s, s * 0.66, s * 0.14);
+  ctx.fill();
+  ctx.restore();
+}
+
+// the equipment character sheet. opts:
+//   slots:       [{ label, equipped, selected }]   the left loadout column
+//   slotLabel/slotBlurb/slotKind                   the selected slot
+//   items:       [{ name, tier, desc, owned, equipped, requirement }]  the selected slot's items
+//   sel, hover, focus ('slots'|'items'), previewTier, t, touch, backHot
+// hover is the combined index used by currentRects: < slots.length is a slot
+// row, the rest are item rows.
+function drawEquipment(ctx, W, H, alpha, o) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  const L = equipLayout(W, H);
+  const nSlots = o.slots.length;
+  const hoverSlot = o.hover >= 0 && o.hover < nSlots ? o.hover : -1;
+  const hoverItem = o.hover >= nSlots ? o.hover - nSlots : -1;
+
+  // title
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  fitFont(ctx, 'EQUIPMENT', safeBandW(W) * 0.9, 40, 'bold', 18);
+  ctx.fillStyle = 'rgba(40,16,4,0.85)';
+  ctx.fillText('EQUIPMENT', W / 2 + 2, H * 0.105 + 2);
+  ctx.fillStyle = '#f9c623';
+  ctx.fillText('EQUIPMENT', W / 2, H * 0.105);
+  ctx.restore();
+
+  // ----- LEFT: the loadout column -----
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = 'rgba(244,238,224,0.6)';
+  ctx.font = 'bold 13px "Consolas","Courier New",monospace';
+  ctx.fillText('LOADOUT', L.left.x + 4, L.left.y + 12);
+  const slotRects = equipSlotRects(W, H, nSlots);
+  slotRects.forEach((r, i) => {
+    const s = o.slots[i];
+    const focused = o.focus === 'slots';
+    const hot = i === hoverSlot || (s.selected && focused);
+    ctx.fillStyle = hot ? 'rgba(70,34,10,0.92)' : (s.selected ? 'rgba(40,22,8,0.85)' : 'rgba(20,12,6,0.7)');
+    roundRectPath(ctx, r.x, r.y, r.w, r.h, 8);
+    ctx.fill();
+    ctx.lineWidth = s.selected ? 2.5 : 1.5;
+    ctx.strokeStyle = s.selected ? '#f9c623' : 'rgba(249,198,35,0.3)';
+    ctx.stroke();
+    const cy = r.y + r.h / 2;
+    // slot name (left) and what's worn (right)
+    ctx.textAlign = 'left';
+    ctx.fillStyle = hot ? '#ffe27a' : '#f0e8da';
+    ctx.font = 'bold ' + Math.min(15, r.h * 0.42) + 'px "Consolas","Courier New",monospace';
+    ctx.fillText(ellipsize(ctx, s.label, r.w * 0.5), r.x + 10, cy);
+    ctx.textAlign = 'right';
+    const empty = s.equipped === '—';
+    ctx.fillStyle = empty ? 'rgba(240,232,218,0.4)' : 'rgba(155,224,138,0.95)';
+    ctx.font = Math.min(13, r.h * 0.36) + 'px "Consolas","Courier New",monospace';
+    ctx.fillText(ellipsize(ctx, s.equipped, r.w * 0.46), r.x + r.w - 10, cy);
+  });
+  ctx.restore();
+
+  // ----- RIGHT/top: the preview -----
+  const savedSkin = BIKE_SKIN;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  const pv = L.preview;
+  ctx.fillStyle = 'rgba(12,7,3,0.66)';
+  roundRectPath(ctx, pv.x, pv.y, pv.w, pv.h, 12);
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = 'rgba(249,198,35,0.35)';
+  ctx.stroke();
+  ctx.save();
+  roundRectPath(ctx, pv.x, pv.y, pv.w, pv.h, 12);
+  ctx.clip();
+  const scale = Math.min(pv.w / 2.5, pv.h / 2.45);
+  const groundY = pv.y + pv.h * 0.90, pcx = pv.x + pv.w / 2;
+  setBikeSkin(o.previewTier | 0);
+  drawStandingBiker(ctx, pcx - scale * 0.55, groundY, scale, o.t || 0); // behind
+  drawParkedBike(ctx, pcx, groundY, scale, o.t || 0);                   // in front
+  setBikeSkin(savedSkin);
+  ctx.restore();
+  ctx.restore();
+
+  // ----- RIGHT/middle: the selected slot's items -----
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#f9c623';
+  fitFont(ctx, o.slotLabel.toUpperCase(), L.rightW - 8, 16, 'bold', 11);
+  ctx.fillText(o.slotLabel.toUpperCase(), L.rightX + 2, L.itemsHeaderY);
+
+  if (!o.items.length) {
+    // an empty gear slot — wired but not yet stocked
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(240,232,218,0.55)';
+    fitFont(ctx, 'No ' + o.slotLabel.toLowerCase() + ' yet', L.items.w - 12, 16, 'bold', 11);
+    ctx.fillText('No ' + o.slotLabel.toLowerCase() + ' yet', L.items.x + L.items.w / 2, L.items.y + L.items.h * 0.4);
+    ctx.fillStyle = 'rgba(240,232,218,0.4)';
+    fitFont(ctx, 'Coming soon', L.items.w - 12, 13, '', 9);
+    ctx.fillText('Coming soon', L.items.x + L.items.w / 2, L.items.y + L.items.h * 0.4 + 20);
+  } else {
+    const itemRects = equipItemRects(W, H, o.items.length);
+    itemRects.forEach((r, i) => {
+      const it = o.items[i];
+      const focused = o.focus === 'items';
+      const hot = i === hoverItem || (i === o.sel && focused);
+      ctx.save();
+      ctx.globalAlpha = alpha * (it.owned ? 1 : 0.6);
+      ctx.fillStyle = hot ? 'rgba(70,34,10,0.92)' : (i === o.sel ? 'rgba(40,22,8,0.85)' : 'rgba(20,12,6,0.7)');
+      roundRectPath(ctx, r.x, r.y, r.w, r.h, 8);
+      ctx.fill();
+      ctx.lineWidth = it.equipped ? 2.5 : 1.5;
+      ctx.strokeStyle = it.equipped ? '#9be08a' : (hot ? '#f9c623' : 'rgba(249,198,35,0.3)');
+      ctx.stroke();
+      const badge = !it.owned ? 'LOCKED' : it.equipped ? 'EQUIPPED' : 'OWNED';
+      const badgeCol = !it.owned ? 'rgba(255,150,120,0.9)'
+        : it.equipped ? '#9be08a' : 'rgba(240,232,218,0.55)';
+      ctx.textBaseline = 'middle';
+      if (r.w > 220) {
+        // wide tile (desktop single column): name left, state right — a list row
+        const cy = r.y + r.h / 2;
+        ctx.textAlign = 'left';
+        ctx.fillStyle = hot ? '#ffe27a' : '#f0e8da';
+        ctx.font = 'bold ' + Math.min(16, r.h * 0.46) + 'px "Consolas","Courier New",monospace';
+        ctx.fillText(ellipsize(ctx, it.name, r.w * 0.6), r.x + 12, cy);
+        ctx.textAlign = 'right';
+        if (!it.owned) drawPadlock(ctx, r.x + r.w - 18, cy, r.h * 0.3, badgeCol);
+        ctx.fillStyle = badgeCol;
+        ctx.font = 'bold ' + Math.min(12, r.h * 0.32) + 'px "Consolas","Courier New",monospace';
+        ctx.fillText(badge, r.x + r.w - (it.owned ? 12 : 30), cy);
+      } else {
+        // chunky tile (phone grid): name over state, centred — bigger and easier
+        // to tap than a thin full-width row
+        const cx = r.x + r.w / 2;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = hot ? '#ffe27a' : '#f0e8da';
+        fitFont(ctx, it.name, r.w - 12, Math.min(16, r.h * 0.42), 'bold', 9);
+        ctx.fillText(it.name, cx, r.y + r.h * 0.36);
+        ctx.fillStyle = badgeCol;
+        fitFont(ctx, badge, r.w - 12, Math.min(12, r.h * 0.3), 'bold', 8);
+        ctx.fillText(badge, cx, r.y + r.h * 0.72);
+      }
+      ctx.restore();
+    });
+  }
+  ctx.restore();
+  setBikeSkin(savedSkin);
+
+  // ----- RIGHT/bottom: the detail line (highlighted item, else slot blurb) -----
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  const d = L.detail;
+  ctx.fillStyle = 'rgba(12,7,3,0.78)';
+  roundRectPath(ctx, d.x, d.y, d.w, d.h, 10);
+  ctx.fill();
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = 'rgba(249,198,35,0.35)';
+  ctx.stroke();
+  const di = hoverItem >= 0 ? hoverItem : o.sel;
+  const it = o.items[di];
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  // fonts scale with the panel height so a short landscape can't run the three
+  // lines off the bottom
+  const bodyPx = Math.min(13, d.h * 0.26);
+  if (it) {
+    ctx.fillStyle = '#f9c623';
+    fitFont(ctx, it.name, d.w - 24, Math.min(16, d.h * 0.34), 'bold', 10);
+    ctx.fillText(it.name, d.x + 12, d.y + d.h * 0.25);
+    ctx.fillStyle = 'rgba(240,232,218,0.82)';
+    ctx.font = bodyPx + 'px "Consolas","Courier New",monospace';
+    ctx.fillText(ellipsize(ctx, it.desc, d.w - 24), d.x + 12, d.y + d.h * 0.54);
+    let status, scol;
+    if (!it.owned) { status = 'Locked · ' + it.requirement; scol = '#ff9b78'; }
+    else if (it.equipped) { status = 'Currently equipped'; scol = '#9be08a'; }
+    else { status = o.touch ? 'Tap to equip' : 'Press Enter to equip'; scol = '#ffe27a'; }
+    ctx.fillStyle = scol;
+    ctx.font = 'bold ' + bodyPx + 'px "Consolas","Courier New",monospace';
+    ctx.fillText(ellipsize(ctx, status, d.w - 24), d.x + 12, d.y + d.h * 0.81);
+  } else {
+    ctx.fillStyle = 'rgba(240,232,218,0.7)';
+    ctx.font = bodyPx + 'px "Consolas","Courier New",monospace';
+    ctx.fillText(ellipsize(ctx, o.slotBlurb || '', d.w - 24), d.x + 12, d.y + d.h * 0.5);
+  }
+  ctx.restore();
+
+  drawMenuBack(ctx, W, H, alpha, o.backHot);
+}
+
 // the rider slumped over his bike, head hanging low — shown on the
 // Continue? screen. (x, y) is where the wheels meet the ground.
 function drawDejectedBiker(ctx, x, y, scale, t) {
@@ -6618,6 +6903,64 @@ function drawParkedBike(ctx, x, y, scale, t) {
     };
     lick(0.10, -0.42, 0.24); lick(-0.10, -0.44, 0.20);
   }
+  ctx.restore();
+}
+
+// the rider standing at ease, facing right — shown behind his parked bike in
+// the Skins shop so the chosen livery reads on the leathers, not just the bike.
+// (x, y) is the ground under his feet. He wears bikePalette(BIKE_SKIN), so the
+// colours match the machine beside him, and drawHead adds the Master helmet.
+// Drawn back-to-front: far limbs, torso, near limbs, head on top.
+function drawStandingBiker(ctx, x, y, scale, t) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(scale, scale);
+  const sk = bikePalette(BIKE_SKIN);
+  const br = Math.sin((t || 0) * 1.6) * 0.012;     // a gentle breathing bob
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  // soft ground shadow under his boots
+  ctx.fillStyle = 'rgba(40,20,8,0.18)';
+  ctx.beginPath(); ctx.ellipse(0, -0.02, 0.40, 0.07, 0, 0, Math.PI * 2); ctx.fill();
+
+  const hip = { x: 0.0, y: -0.80 + br };
+  const shoulder = { x: 0.02, y: -1.44 + br };
+
+  // FAR (back) leg + arm first, so the torso and near limbs overlap them. The
+  // far sleeve uses the jacket's shade colour so it reads a step behind.
+  const bKnee = { x: -0.13, y: -0.42 }, bFoot = { x: -0.20, y: 0 };
+  riderLimb(ctx, hip, bKnee, 0.135, sk.pants);
+  riderLimb(ctx, bKnee, bFoot, 0.115, sk.pants);
+  riderLimb(ctx, bFoot, { x: bFoot.x + 0.17, y: 0 }, 0.10, sk.boot);
+  const bElbow = { x: -0.16, y: -1.10 + br }, bHand = { x: -0.18, y: -0.82 + br };
+  riderLimb(ctx, shoulder, bElbow, 0.10, sk.shade);
+  riderLimb(ctx, bElbow, bHand, 0.09, sk.shade);
+  riderDisc(ctx, bHand, 0.07, sk.glove);
+
+  // torso (jacket) with the trim stripe up the spine (WARMED UP and up)
+  riderLimb(ctx, hip, shoulder, 0.20, sk.jacket);
+  if (sk.stripe) strokeSeg(ctx, hip, shoulder, 0.05, sk.stripe);
+  ctx.fillStyle = sk.hi;                            // a chest sheen
+  ctx.beginPath(); ctx.arc(shoulder.x - 0.02, shoulder.y + 0.22, 0.07, 0, Math.PI * 2); ctx.fill();
+
+  // NEAR (front) leg
+  const fKnee = { x: 0.16, y: -0.44 }, fFoot = { x: 0.20, y: 0 };
+  riderLimb(ctx, hip, fKnee, 0.15, sk.pants);
+  riderLimb(ctx, fKnee, fFoot, 0.125, sk.pants);
+  riderLimb(ctx, fFoot, { x: fFoot.x + 0.20, y: 0 }, 0.11, sk.boot);
+  riderDisc(ctx, fKnee, 0.09, sk.pad);              // knee pad
+
+  // NEAR arm, hanging easy with a slight bend down to the glove
+  const fElbow = { x: 0.21, y: -1.10 + br }, fHand = { x: 0.25, y: -0.80 + br };
+  riderLimb(ctx, shoulder, fElbow, 0.115, sk.jacket);
+  if (sk.stripe) strokeSeg(ctx, shoulder, fElbow, 0.035, sk.stripe);
+  riderLimb(ctx, fElbow, fHand, 0.10, sk.jacket);
+  riderDisc(ctx, shoulder, 0.12, sk.pad);           // shoulder pad
+  riderDisc(ctx, fHand, 0.075, sk.glove);           // gloved hand
+
+  // head on top (drawHead overlays the Master helmet itself when earned)
+  drawHead(ctx, 0.06, -1.74 + br, 1, 0);
   ctx.restore();
 }
 

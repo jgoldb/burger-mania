@@ -15,7 +15,7 @@
 <script src="../js/render.js"></script>
 <script>
   // statically renders one UI screen
-  // (?ui=menu|difficulty|continue|loaderror|pause|audio|audio-pause|skip|skip-game|victory|biker|...)
+  // (?ui=menu|difficulty|equipment|continue|loaderror|pause|audio|audio-pause|skip|skip-game|victory|biker|...)
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
   const params = new URLSearchParams(location.search);
@@ -69,7 +69,7 @@
     const t = params.get('t') ? parseFloat(params.get('t')) : 35.7;
     drawMenuBackdrop(ctx, W, H, t, menuPat, true);
     drawTitleLetters(ctx, W, H, 10);
-    drawMainMenu(ctx, W, H, 1, ['Play', 'Records', 'Replays', 'Map Editor', 'Audio'], 0, -1,
+    drawMainMenu(ctx, W, H, 1, ['Play', 'Records', 'Replays', 'Map Editor', 'Equipment', 'Audio'], 0, -1,
       { show: true, hot: false });           // show the dev Skip chip too
     drawCornerTag(ctx, W, H, 'v12');
   } else if (ui === 'difficulty') {
@@ -129,6 +129,46 @@
       time: 0, got: 0, total: 6, best: null, state: 'ready', lives: 3,
       mapLabel: 'Beginner 2/10 - Cheddar Canyon',
     });
+  } else if (ui === 'equipment') {
+    // ?ui=equipment — the equipment character sheet. ?slot=<id> picks the slot
+    // (skin|bike|helmet|jacket|gloves|pants|boots, default skin); ?sel=<item>
+    // highlights an item; ?own=<n> marks the first n skins owned (default 2).
+    drawMenuBackdrop(ctx, W, H, 2.0, menuPat);
+    const own = params.get('own') !== null ? parseInt(params.get('own'), 10) : 2;
+    const skins = [
+      ['Stock Blue', 0, 'The factory machine. Honest blue paint, nothing to prove.', ''],
+      ['Warmed Up', 1, 'An orange race stripe and twin pipes — the engine is starting to run hot.', ''],
+      ['Red Hot', 2, 'Crimson frame, flame decals and real fire spitting from a fat pipe.', 'Clear the Advanced track'],
+      ['Afterburner', 3, 'Blacked-out frame, blue plasma burners and glowing rims.', 'Clear the Expert track'],
+    ];
+    const skinItems = skins.map(([name, tier, desc, req], i) => ({
+      name, tier, desc, owned: i < own, equipped: i === own - 1,
+      requirement: i < own ? '' : req,
+    }));
+    const SLOTS = [
+      ['skin', 'Skins', 'Matching livery for your bike and rider.', skinItems],
+      ['bike', 'Bikes', 'The machine you ride.',
+        [{ name: 'Standard', tier: own - 1, owned: true, equipped: true, requirement: '',
+           desc: 'The classic two-wheeled racer.' }]],
+      ['helmet', 'Helmet', 'Head protection.', []],
+      ['jacket', 'Jacket', 'Riding jacket.', []],
+      ['gloves', 'Gloves', 'Grip and brake feel.', []],
+      ['pants', 'Pants', 'Riding trousers.', []],
+      ['boots', 'Boots', 'Footwear.', []],
+    ];
+    const slotId = params.get('slot') || 'skin';
+    const si = Math.max(0, SLOTS.findIndex(s => s[0] === slotId));
+    const slots = SLOTS.map(([id, label, , items], i) => ({
+      label, selected: i === si,
+      equipped: items.length ? (items.find(it => it.equipped) || items[0]).name : '—',
+    }));
+    const items = SLOTS[si][3];
+    const sel = params.get('sel') !== null ? parseInt(params.get('sel'), 10) : Math.min(2, items.length - 1);
+    drawEquipment(ctx, W, H, 1, {
+      slots, slotLabel: SLOTS[si][1], slotBlurb: SLOTS[si][2], slotKind: slotId === 'skin' ? 'skin' : slotId === 'bike' ? 'bike' : 'gear',
+      items, sel: Math.max(0, sel), hover: -1, focus: 'items', previewTier: own - 1,
+      t: 2.0, touch: false, backHot: false });
+    drawCornerTag(ctx, W, H, 'v12');
   } else if (ui === 'audio') {
     drawMenuBackdrop(ctx, W, H, 2.0, menuPat);
     drawAudio(ctx, W, H, 1, {

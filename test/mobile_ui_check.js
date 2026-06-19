@@ -89,8 +89,8 @@ const code = ['js/assets.js', 'js/physics.js', 'js/render.js', 'js/touch.js']
   .map(f => fs.readFileSync(path.join(root, f), 'utf8')).join('\n')
   + '\nglobal.__R = { drawLoading, drawMainMenu, drawDifficulty, drawReady, drawPause,'
   + ' drawAudio, drawContinue, drawLevelLoadError, drawReplays, drawLevelSelect, drawVictory, drawHUD,'
-  + ' drawRecords, drawTitleLetters, makePatterns, TOUCH, setSafeInsets, saveButtonRect,'
-  + ' menuRects, audioRects, replayRects, recordsRects, minimapRect,'
+  + ' drawRecords, drawEquipment, drawTitleLetters, makePatterns, TOUCH, setSafeInsets, saveButtonRect,'
+  + ' menuRects, audioRects, replayRects, recordsRects, equipSlotRects, equipItemRects, minimapRect,'
   + ' victoryRects, victoryCardBox, victoryLandscape };';
 eval(code);
 
@@ -114,13 +114,51 @@ const SCENES = {
   loading: (c, W, H) => R.drawLoading(c, W, H, 0.4, 0, false, true),
   'loading-ready': (c, W, H) => R.drawLoading(c, W, H, 1, 0, true, true),
   menu: (c, W, H) => { R.drawTitleLetters(c, W, H, 3);
-    R.drawMainMenu(c, W, H, 1, ['Play', 'Records', 'Replays', 'Map Editor', 'Audio'], 0, -1,
+    R.drawMainMenu(c, W, H, 1, ['Play', 'Records', 'Replays', 'Map Editor', 'Equipment', 'Audio'], 0, -1,
       { show: true, hot: true }); },
   difficulty: (c, W, H) => R.drawDifficulty(c, W, H, 1, TRACKS, 0, -1, true),
   records: (c, W, H) => R.drawRecords(c, W, H, 1, { label: 'Beginner', color: '#9be08a',
     names: NAMES, results, hover: -1, canPrev: false, canNext: true, touch: true }),
   'records-empty': (c, W, H) => R.drawRecords(c, W, H, 1, { label: 'Advanced', color: '#f9c623',
     names: [], results: [], hover: -1, canPrev: true, canNext: false, touch: true }),
+  // equipment character sheet: the Skins slot selected, item column focused on a
+  // locked item so the detail line shows the unlock requirement (worst-case
+  // longest blurb), with the full slot list and an owned/locked item mix
+  equipment: (c, W, H) => R.drawEquipment(c, W, H, 1, {
+    slots: [
+      { label: 'Skins', equipped: 'Afterburner', selected: true },
+      { label: 'Bikes', equipped: 'Standard', selected: false },
+      { label: 'Helmet', equipped: '—', selected: false },
+      { label: 'Jacket', equipped: '—', selected: false },
+      { label: 'Gloves', equipped: '—', selected: false },
+      { label: 'Pants', equipped: '—', selected: false },
+      { label: 'Boots', equipped: '—', selected: false },
+    ],
+    slotLabel: 'Skins', slotBlurb: 'Matching livery for your bike and rider.', slotKind: 'skin',
+    items: [
+      { name: 'Stock Blue', tier: 0, owned: true, equipped: false, requirement: '',
+        desc: 'The factory machine. Honest blue paint, nothing to prove.' },
+      { name: 'Warmed Up', tier: 1, owned: true, equipped: false, requirement: '',
+        desc: 'An orange race stripe and twin pipes — the engine is starting to run hot.' },
+      { name: 'Red Hot', tier: 2, owned: false, equipped: false, requirement: 'Clear the Advanced track',
+        desc: 'Crimson frame, flame decals and real fire spitting from a fat pipe.' },
+      { name: 'Afterburner', tier: 3, owned: true, equipped: true, requirement: '',
+        desc: 'Blacked-out frame, blue plasma burners and glowing rims.' },
+    ],
+    sel: 2, hover: -1, focus: 'items', previewTier: 3, t: 0, touch: true, backHot: false }),
+  // an empty gear slot selected (Helmet) — the coming-soon placeholder
+  'equipment-empty': (c, W, H) => R.drawEquipment(c, W, H, 1, {
+    slots: [
+      { label: 'Skins', equipped: 'Stock Blue', selected: false },
+      { label: 'Bikes', equipped: 'Standard', selected: false },
+      { label: 'Helmet', equipped: '—', selected: true },
+      { label: 'Jacket', equipped: '—', selected: false },
+      { label: 'Gloves', equipped: '—', selected: false },
+      { label: 'Pants', equipped: '—', selected: false },
+      { label: 'Boots', equipped: '—', selected: false },
+    ],
+    slotLabel: 'Helmet', slotBlurb: 'Head protection.', slotKind: 'gear',
+    items: [], sel: 0, hover: -1, focus: 'slots', previewTier: 0, t: 0, touch: true, backHot: false }),
   ready: (c, W, H) => R.drawReady(c, W, H, '09  Sriracha Spiral', true),
   pause: (c, W, H) => R.drawPause(c, W, H, ['Continue', 'Audio', 'Return to Menu'], 0, -1),
   audio: (c, W, H) => R.drawAudio(c, W, H, 1, { volume: { master: 0.8, music: 0.6, sfx: 1 },

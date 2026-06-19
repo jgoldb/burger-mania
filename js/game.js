@@ -190,7 +190,10 @@
   // The Map Editor needs a keyboard/mouse, so it's dropped on touch devices
   // (phones/tablets announce a coarse primary pointer). Every consumer reads
   // this array by index/length, so filtering it keeps them all in lockstep.
-  const menuItems = ['Play', 'Records', 'Replays', 'Map Editor', 'Audio']
+  // NOTE: Equipment is appended just before Audio so the headless tests that
+  // navigate by counting ArrowDowns (Records=1, Replays=2, Map Editor=3) and the
+  // "Audio stays last" assumption all still hold; don't reorder casually.
+  const menuItems = ['Play', 'Records', 'Replays', 'Map Editor', 'Equipment', 'Audio']
     .filter(it => it !== 'Map Editor' || !TOUCH.active);
   // the level-skip cheat is dev-only. Rather than a real menu item it shows as
   // a separate, dashed "dev tool" chip just above the version stamp (drawSkipChip),
@@ -214,23 +217,180 @@
   loadAssets((done, total) => { loadFrac = total ? done / total : 1; })
     .then(() => { loadDone = true; resumeAfterSwReload(); });
 
-  // ---------- cosmetic bike skin ----------
-  // Clearing a difficulty track banks a flag; the bike's skin tier is the
-  // highest cleared track's rank (Beginner→1, Advanced→2, Expert→3). Purely
-  // cosmetic — render.js owns the look (bikePalette/BIKE_SKIN); we just feed it.
-  // Re-read on every entry into the game world (loadLevel — covers playing,
-  // replays and editor test) rather than once at boot, so an unlock (or a
-  // hand-edited localStorage flag) takes effect on the next level start with no
-  // page reload.
+  // ---------- equipment ----------
+  // Equipment is a general gear system modelled like an MMO character sheet: the
+  // rider has a SLOT for each part of the loadout (Skin, Bike, plus the worn gear
+  // — Helmet, Jacket, Gloves, Pants, Boots), and each slot holds one equipped
+  // item gated behind an unlock "achievement". Today only Skins are populated
+  // (render.js's "Heat & Flames" tier ladder via bikePalette/BIKE_SKIN) and Bikes
+  // has a single Standard model; the gear slots are intentionally empty but wired
+  // so dropping items into EQUIPMENT lights them up. Cosmetic items just set a
+  // look; a future gameplay item (a faster bike model, brake-boosting gloves, a
+  // bump-proof helmet) would carry an `effects` block the sim reads. The whole
+  // loadout is persisted per slot, so we always know what to equip in-game.
   const CLEARED_KEY = (track) => 'burger-mania-cleared-' + track.id;
-  function bikeSkinTier() {
+
+  // the character-sheet slots, in display order. `kind` groups them: 'skin'
+  // (drives the cosmetic tier), 'bike' (the machine/conveyance), 'gear' (worn
+  // pieces that, for now, the skin already provides the look for). Each holds one
+  // equipped item at a time.
+  const EQUIP_SLOTS = [
+    { id: 'skin',   kind: 'skin', label: 'Skins',  blurb: 'Matching livery for your bike and rider.' },
+    { id: 'bike',   kind: 'bike', label: 'Bikes',  blurb: 'The machine you ride.' },
+    { id: 'helmet', kind: 'gear', label: 'Helmet', blurb: 'Head protection.' },
+    { id: 'jacket', kind: 'gear', label: 'Jacket', blurb: 'Riding jacket.' },
+    { id: 'gloves', kind: 'gear', label: 'Gloves', blurb: 'Grip and brake feel.' },
+    { id: 'pants',  kind: 'gear', label: 'Pants',  blurb: 'Riding trousers.' },
+    { id: 'boots',  kind: 'gear', label: 'Boots',  blurb: 'Footwear.' },
+  ];
+
+  // the catalog. `id` is the stable localStorage key; `slot` files it under a
+  // slot; `tier` (skins) maps to bikePalette. `unlock` is the achievement gate —
+  // {kind:'default'} is always owned, {kind:'clearTrack',track} needs that
+  // difficulty cleared. `secret` items stay hidden from the sheet until unlocked
+  // (the Master skin — granted by the equipMaster() backdoor or the hidden Master
+  // track). NOTE: the Master helmet is part of the Master SKIN (drawHead paints
+  // it from the skin), NOT a Helmet-slot item — the Helmet slot is empty for now.
+  // Future gameplay items add an `effects` block here.
+  const EQUIPMENT = [
+    { id: 'skin-stock', slot: 'skin', tier: 0, name: 'Stock Blue',
+      desc: 'The factory machine. Honest blue paint, nothing to prove.',
+      unlock: { kind: 'default' } },
+    { id: 'skin-warmed', slot: 'skin', tier: 1, name: 'Warmed Up',
+      desc: 'An orange race stripe and twin pipes — the engine is starting to run hot.',
+      unlock: { kind: 'clearTrack', track: 'beginner' } },
+    { id: 'skin-redhot', slot: 'skin', tier: 2, name: 'Red Hot',
+      desc: 'Crimson frame, flame decals and real fire spitting from a fat pipe.',
+      unlock: { kind: 'clearTrack', track: 'advanced' } },
+    { id: 'skin-afterburner', slot: 'skin', tier: 3, name: 'Afterburner',
+      desc: 'Blacked-out frame, blue plasma burners and glowing rims.',
+      unlock: { kind: 'clearTrack', track: 'expert' } },
+    { id: 'skin-master', slot: 'skin', tier: 4, name: 'Master', secret: true,
+      desc: 'The obsidian-and-gold champion machine. Almost no one rides this.',
+      unlock: { kind: 'clearTrack', track: 'master' } },
+    // Bikes: only the standard two-wheeler for now. Future conveyances (a
+    // hoverboard, etc.) take the same skins but carry their own `effects` for
+    // different handling.
+    { id: 'bike-standard', slot: 'bike', name: 'Standard', desc: 'The classic two-wheeled racer.',
+      unlock: { kind: 'default' } },
+  ];
+
+  const EQUIP_KEY = (slot) => 'burger-mania-equip-' + slot;
+  function trackById(id) { return TRACKS.find(t => t.id === id) || null; }
+  function equipById(id) { return EQUIPMENT.find(e => e.id === id) || null; }
+
+  // has the player earned this item's unlock?
+  function equipUnlocked(item) {
+    const u = item.unlock || { kind: 'default' };
+    if (u.kind === 'default') return true;
+    if (u.kind === 'clearTrack') return !!localStorage.getItem('burger-mania-cleared-' + u.track);
+    return false;
+  }
+
+  // one-line requirement shown on a locked item
+  function equipRequirement(item) {
+    const u = item.unlock || { kind: 'default' };
+    if (u.kind === 'clearTrack') {
+      const t = trackById(u.track);
+      return 'Clear the ' + (t ? t.label : u.track) + ' track';
+    }
+    return 'Locked';
+  }
+
+  // which item id the player has explicitly equipped in a slot (null = none yet)
+  function equippedId(slot) {
+    try { return localStorage.getItem(EQUIP_KEY(slot)) || null; } catch (e) { return null; }
+  }
+  function setEquipped(slot, id) {
+    try { localStorage.setItem(EQUIP_KEY(slot), id); } catch (e) { /* storage may be off */ }
+  }
+
+  // the items a slot shows on the sheet: everything filed under it, minus secret
+  // items the player hasn't unlocked yet (those stay hidden entirely)
+  function slotItems(slot) {
+    return EQUIPMENT.filter(it => it.slot === slot && (!it.secret || equipUnlocked(it)));
+  }
+
+  // the item id actually in effect for a slot right now. Skins honor the
+  // default-to-best fallback (see bikeSkinTier) so the worn skin is marked even
+  // if never picked; other slots fall back to an explicit pick, else the first
+  // owned item (so Bikes defaults to Standard), else null (empty gear slots).
+  function currentEquipped(slot) {
+    if (slot === 'skin') {
+      const it = EQUIPMENT.find(e => e.slot === 'skin' && e.tier === bikeSkinTier());
+      return it ? it.id : null;
+    }
+    const id = equippedId(slot);
+    if (id) { const it = equipById(id); if (it && it.slot === slot && equipUnlocked(it)) return id; }
+    const first = EQUIPMENT.find(e => e.slot === slot && equipUnlocked(e));
+    return first ? first.id : null;
+  }
+
+  // the display name of whatever's worn in a slot ('—' when the slot is empty)
+  function equippedName(slot) {
+    const it = equipById(currentEquipped(slot));
+    return it ? it.name : '—';
+  }
+
+  // the full loadout (slot id -> equipped item id), refreshed into equipState on
+  // every world entry so the sim/renderer always know what the rider is wearing.
+  // Only Skins drive anything today (the cosmetic tier); bike model + gear are
+  // tracked here and ready for when they carry gameplay effects.
+  let equipState = {};
+  function refreshEquipment() {
+    equipState = {};
+    for (const s of EQUIP_SLOTS) equipState[s.id] = currentEquipped(s.id);
+    setBikeSkin(bikeSkinTier()); // the skin is the only piece with a look today
+  }
+
+  // ---------- cosmetic bike skin ----------
+  // The bike's skin tier is whichever skin the player has EQUIPPED (and still
+  // owns); if they've never picked one, it defaults to the best skin unlocked so
+  // far — so a player who ignores the sheet still auto-upgrades on a track clear,
+  // exactly as before, while anyone who picks a skin keeps their choice through
+  // later unlocks. Purely cosmetic — render.js owns the look (bikePalette/
+  // BIKE_SKIN); we just feed it. Re-read on every entry into the game world
+  // (loadLevel — covers playing, replays and editor test) rather than once at
+  // boot, so a switch (or a hand-edited flag) takes effect on the next level
+  // start with no page reload.
+  function bestUnlockedSkinTier() {
     let tier = 0;
     TRACKS.forEach((t, i) => {
       if (localStorage.getItem(CLEARED_KEY(t))) tier = Math.max(tier, i + 1);
     });
     return tier;
   }
-  function refreshBikeSkin() { setBikeSkin(bikeSkinTier()); }
+  function bikeSkinTier() {
+    const id = equippedId('skin');
+    if (id) {
+      const item = equipById(id);
+      if (item && item.slot === 'skin' && equipUnlocked(item)) return item.tier; // honor the pick
+    }
+    return bestUnlockedSkinTier(); // never picked one -> wear the best earned
+  }
+  // refreshing the whole loadout also sets the live skin tier, so this stays the
+  // single call the world-entry points use.
+  function refreshBikeSkin() { refreshEquipment(); }
+
+  // Secret console backdoor: grant + wear the hidden Master skin. Sets the Master
+  // unlock and equips it, so it then appears on the sheet and the bike wears it on
+  // the next level entry. equipSkin(id) forces any owned skin from the console.
+  try {
+    window.equipMaster = function () {
+      localStorage.setItem('burger-mania-cleared-master', '1');
+      setEquipped('skin', 'skin-master');
+      refreshEquipment();
+      return 'Master skin equipped — ride to see it.';
+    };
+    window.equipSkin = function (id) {
+      const item = EQUIPMENT.find(e => e.id === id && e.slot === 'skin');
+      if (!item) return 'no such skin: ' + id;
+      if (!equipUnlocked(item)) return 'locked: ' + equipRequirement(item);
+      setEquipped('skin', id);
+      refreshEquipment();
+      return id + ' equipped.';
+    };
+  } catch (e) { /* no window (headless) */ }
 
   function reset() {
     bike = new Bike(level.start.x, level.start.y);
@@ -430,7 +590,7 @@
   function updateMusic() {
     let want = null;
     if (state === 'menu' || state === 'difficulty' || state === 'replays' ||
-        state === 'records') want = 'menu';
+        state === 'records' || state === 'equipment') want = 'menu';
     else if (state === 'continue') want = 'continue';
     // the picker keeps the summoning screen's song: the frozen world's
     // theme mid-game, the menu theme otherwise
@@ -842,9 +1002,7 @@
   // ---------- screen flow ----------
   // Maps load lazily. A track's `levels` is a sparse cache filled on demand;
   // `files` is the full ordered list, so `files.length` is the track's real
-  // size whether or not its maps are loaded. `loadingWhat` labels the
-  // 'levelLoading' overlay (see drawLevelLoading).
-  let loadingWhat = 'level';
+  // size whether or not its maps are loaded.
 
   // fetch + parse one map into the track's cache (idempotent; dedupes parallel
   // fetches via track._fetching). Resolves to the level, or null if it couldn't
@@ -858,27 +1016,34 @@
     const url = 'levels/tracks/' + track.id + '/' + track.files[i];
     const p = fetch(url)
       .then(res => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.text(); })
-      .then(text => (track.levels[i] = EDITOR.parse(text)))
+      .then(text => {
+        const lvl = track.levels[i] = EDITOR.parse(text);
+        rememberName(track, i, lvl.name); // so Records can match its records later
+        return lvl;
+      })
       .catch(err => { console.error('Could not load level ' + url, err); return null; })
       .then(lvl => { delete track._fetching[i]; return lvl; });
     track._fetching[i] = p;
     return p;
   }
 
-  // load every map of a track — for the screens that list them all (the skip
-  // picker, Records, the victory scorecard, which need names/results for maps
-  // the player may not have reached)
-  function ensureTrackLoaded(track) {
-    return Promise.all((track ? track.files : []).map((_, i) => ensureLevel(track, i)));
+  // localStorage hint of a map's real (in-file) name, written the first time it
+  // loads. Per-map best-time/style records are keyed by that name, so the
+  // screens that list a whole track (Records, the skip picker, the victory
+  // scorecard) can match the records without re-fetching every .bmm just to read
+  // its name. Keyed by filename so it survives a track reordering its `files`.
+  function nameKey(track, i) { return 'burger-mania-name-' + track.id + '-' + track.files[i]; }
+  function rememberName(track, i, name) {
+    try { localStorage.setItem(nameKey(track, i), name); } catch (e) { /* ignore */ }
   }
-  function trackFullyLoaded(track) {
-    return !!track && track.files.every((_, i) => track.levels[i]);
-  }
-  // a map's display name without forcing a load: the cached name, else a
-  // title-cased fallback off the filename ("03-onion-underpass.bmm" -> "Onion
-  // Underpass") so a list can render before (or despite) a failed fetch
+  // a map's display name without forcing a load: the loaded name, else the name
+  // cached above the last time it loaded, else a title-cased fallback off the
+  // filename ("03-onion-underpass.bmm" -> "Onion Underpass") so a list can render
+  // before (or despite) a failed fetch. This is also the name records were saved
+  // under, so it doubles as the key for reading a map's stored bests.
   function levelName(track, i) {
     if (track.levels[i]) return track.levels[i].name;
+    try { const n = localStorage.getItem(nameKey(track, i)); if (n) return n; } catch (e) { /* ignore */ }
     return (track.files[i] || '').replace(/\.bmm$/i, '').replace(/^\d+[-_]?/, '')
       .replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) || ('Map ' + (i + 1));
   }
@@ -889,7 +1054,6 @@
   async function enterLevel(i) {
     levelIndex = i;
     if (!currentTrack.levels[i]) {
-      loadingWhat = 'level';
       state = 'levelLoading';
       const raw = await ensureLevel(currentTrack, i);
       // couldn't load — show a recoverable error rather than hang or silently
@@ -970,6 +1134,53 @@
     hoverIdx = -1;
   }
 
+  // ---------- equipment (character sheet) ----------
+  // An MMO-style loadout: the LEFT column lists every slot with what's worn; the
+  // RIGHT column shows a (de-emphasised) preview of the rider in the current
+  // loadout plus the items available for the SELECTED slot, which can be swapped.
+  // equipSlot = highlighted slot row, equipSel = highlighted item in that slot,
+  // equipFocus = which column the keyboard drives, equipT = the fade-in timer.
+  let equipSlot = 0, equipSel = 0, equipT = 0, equipFocus = 'slots';
+
+  function currentSlotId() { return EQUIP_SLOTS[equipSlot].id; }
+  function currentSlotItems() { return slotItems(currentSlotId()); }
+
+  // point the item cursor at whatever's worn in the current slot (else the top)
+  function syncEquipSel() {
+    const items = currentSlotItems();
+    const worn = currentEquipped(currentSlotId());
+    const i = items.findIndex(it => it.id === worn);
+    equipSel = i < 0 ? 0 : i;
+  }
+
+  function goEquipment() {
+    state = 'equipment';
+    equipT = 0;
+    equipSlot = 0;
+    equipFocus = 'slots';
+    hoverIdx = -1;
+    syncEquipSel();
+  }
+
+  // highlight slot row i (clamped) and re-point the item cursor at its worn item
+  function selectEquipSlot(i) {
+    equipSlot = Math.max(0, Math.min(EQUIP_SLOTS.length - 1, i));
+    syncEquipSel();
+  }
+
+  // equip item i in the current slot: owned items get worn, a locked one buzzes,
+  // an already-worn one ticks. refreshEquipment re-reads the whole loadout so the
+  // live skin tier (and the preview/parked bike) match immediately.
+  function activateEquipment(i) {
+    const slot = currentSlotId();
+    const item = currentSlotItems()[i];
+    if (!item || !equipUnlocked(item)) { blip(180, 0.12); return; }   // none / locked
+    if (item.id === currentEquipped(slot)) { blip(520, 0.05); return; } // already on
+    setEquipped(slot, item.id);
+    refreshEquipment();
+    blip(880, 0.08);
+  }
+
   // ---------- best records ----------
   // 'records' shows one track's all-time best time and style per map in the
   // victory-style scorecard, with a ◀/▶ selector to switch tracks (no separate
@@ -1004,18 +1215,17 @@
   }
 
   // switch the records screen to track `i` (an index into recordsTracks),
-  // remember the choice, and show its scorecard, loading its maps if needed.
+  // remember the choice, and show its scorecard.
   function selectRecordsTrack(i) {
     const list = recordsTracks();
     if (i < 0 || i >= list.length) return; // off the ends — nothing to select
     recSel = i;
     const track = list[i];
     try { localStorage.setItem(RECORDS_TRACK_KEY, track.id); } catch (e) { /* ignore */ }
-    // the scorecard lists every map's best, so the whole track must be loaded
-    if (trackFullyLoaded(track)) { showRecords(track); return; }
-    loadingWhat = 'records';
-    state = 'levelLoading';
-    ensureTrackLoaded(track).then(() => { if (state === 'levelLoading') showRecords(track); });
+    // No fetch: the scorecard only needs each map's name (to read its stored
+    // bests) and display title, both resolved by levelName from the loaded map,
+    // the persisted name cache, or the filename — never the full .bmm.
+    showRecords(track);
   }
 
   // step the selector one track left/right. It does NOT wrap: at either end the
@@ -1041,11 +1251,12 @@
     recTrack = track;
     recNames = track.files.map((_, i) => levelName(track, i));
     recResults = track.files.map((_, i) => {
-      const raw = track.levels[i];
-      if (!raw) return null; // map failed to load -> shown as dashes
-      const t = parseFloat(localStorage.getItem('burger-mania-best-' + raw.name) || '');
+      // levelName is the name a map's records were saved under; a map that was
+      // never played simply reads back nothing here and draws as dashes.
+      const name = levelName(track, i);
+      const t = parseFloat(localStorage.getItem('burger-mania-best-' + name) || '');
       if (!isFinite(t)) return null;
-      const s = parseInt(localStorage.getItem('burger-mania-style-' + raw.name) || '', 10);
+      const s = parseInt(localStorage.getItem('burger-mania-style-' + name) || '', 10);
       return { time: t, style: isFinite(s) ? s : 0 };
     });
     state = 'records';
@@ -1540,6 +1751,9 @@
     } else if (menuItems[i] === 'Records') {
       blip(880, 0.08);
       goRecords();
+    } else if (menuItems[i] === 'Equipment') {
+      blip(880, 0.08);
+      goEquipment();
     } else if (menuItems[i] === 'Audio') {
       blip(880, 0.08);
       goAudio();
@@ -1586,6 +1800,13 @@
     if (state === 'records') {
       return recordsRects(W, H); // the ◀ / ▶ track-selector arrows
     }
+    if (state === 'equipment' && equipT > 0.15) {
+      // slot rows first, then the selected slot's item rows; activateHover /
+      // updateHover split the index on EQUIP_SLOTS.length
+      return [].concat(
+        equipSlotRects(W, H, EQUIP_SLOTS.length),
+        equipItemRects(W, H, currentSlotItems().length));
+    }
     if (state === 'continue' && contT > 0.15) {
       return menuRects(W, H, 2, H * 0.62);
     }
@@ -1620,7 +1841,8 @@
   function skipChipHit(x, y) {
     if (!devSkip) return false;
     if (!(state === 'menu' || state === 'difficulty' || state === 'records' ||
-          state === 'replays' || (state === 'audio' && audioFrom !== 'paused'))) {
+          state === 'equipment' || state === 'replays' ||
+          (state === 'audio' && audioFrom !== 'paused'))) {
       return false;
     }
     const r = skipChipRect(W, H);
@@ -1631,7 +1853,7 @@
   // so the menu sub-screens that draw it hit-test it on its own
   function backChipActive() {
     return state === 'difficulty' || state === 'records' ||
-           state === 'replays' || state === 'audio';
+           state === 'equipment' || state === 'replays' || state === 'audio';
   }
   function backChipHit(x, y) {
     if (!backChipActive()) return false;
@@ -1729,6 +1951,35 @@
           goMenu();
         }
         return;
+      case 'equipment': {
+        if (e.key === 'Escape') { goMenu(); return; }
+        // ←/→ move focus between the slot column and the item column; ↑/↓ move
+        // within the focused column; Enter opens a slot's items or equips one
+        if (e.key === 'ArrowLeft') { equipFocus = 'slots'; blip(520, 0.05); return; }
+        if (e.key === 'ArrowRight') {
+          if (currentSlotItems().length) { equipFocus = 'items'; blip(520, 0.05); }
+          else blip(180, 0.12);
+          return;
+        }
+        if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+          const d = e.key === 'ArrowUp' ? -1 : 1;
+          if (equipFocus === 'slots') {
+            const n = EQUIP_SLOTS.length;
+            selectEquipSlot((equipSlot + d + n) % n);
+            blip(520, 0.05);
+          } else {
+            const n = currentSlotItems().length;
+            if (n) { equipSel = (equipSel + d + n) % n; blip(520, 0.05); }
+          }
+          return;
+        }
+        if (e.key === 'Enter' || e.key === ' ') {
+          if (equipFocus === 'items') activateEquipment(equipSel);
+          else if (currentSlotItems().length) { equipFocus = 'items'; blip(520, 0.05); }
+          else blip(180, 0.12);
+        }
+        return;
+      }
       case 'paused':
         if (e.key === 'Escape') { state = pausedFrom; return; }
         if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
@@ -1893,6 +2144,17 @@
       // the two ◀ / ▶ selector arrows (the corner Back is hit-tested apart)
       if (hoverIdx === 0) cycleRecordsTrack(-1);
       else if (hoverIdx === 1) cycleRecordsTrack(1);
+    } else if (state === 'equipment') {
+      const nSlots = EQUIP_SLOTS.length;
+      if (hoverIdx < nSlots) {            // a slot row: select it (switch items)
+        equipFocus = 'slots';
+        selectEquipSlot(hoverIdx);
+        blip(520, 0.05);
+      } else {                            // an item row: equip it
+        equipFocus = 'items';
+        equipSel = hoverIdx - nSlots;
+        activateEquipment(equipSel);
+      }
     } else if (state === 'continue') {
       contSel = hoverIdx;
       activateContinue(hoverIdx);
@@ -2017,6 +2279,10 @@
       case 'records':
         if (TOUCH.hit(k.back, x, y)) { blip(880, 0.08); goMenu(); return; }
         activateHover(); // the ◀ / ▶ track-selector arrows
+        return;
+      case 'equipment':
+        if (TOUCH.hit(k.back, x, y)) { blip(880, 0.08); goMenu(); return; }
+        activateHover(); // tap a card to equip it (locked cards just buzz)
         return;
       case 'replays': {
         if (TOUCH.hit(k.back, x, y)) { blip(880, 0.08); goMenu(); return; }
@@ -2981,6 +3247,8 @@
         diffT += FDT;
       } else if (state === 'records') {
         recT += FDT;
+      } else if (state === 'equipment') {
+        equipT += FDT;
       } else if (state === 'continue') {
         contT += FDT;
       } else if (state === 'replays') {
@@ -3052,9 +3320,9 @@
     requestAnimationFrame(frame);
   }
 
-  // the brief overlay shown while a map is fetched (entering a track, or
-  // opening Records / the skip picker). Maps are tiny, so on a warm connection
-  // this barely flashes; it earns its keep on a cold first visit or a slow link.
+  // the brief overlay shown while a map is fetched on the way into it. Maps are
+  // tiny, so on a warm connection this barely flashes; it earns its keep on a
+  // cold first visit or a slow link.
   function drawLevelLoading(rt) {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = '#1a0f06';
@@ -3070,7 +3338,7 @@
     ctx.arc(0, 0, r, 0, Math.PI * 1.45);
     ctx.stroke();
     ctx.restore();
-    const label = loadingWhat === 'records' ? 'Loading records…' : 'Loading course…';
+    const label = 'Loading course…';
     ctx.fillStyle = '#f0e8da';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -3139,6 +3407,32 @@
         names: recNames, results: recResults, hover: hoverIdx,
         canPrev: recCanCycle(-1), canNext: recCanCycle(1),
         touch: TOUCH.active, backHot: backHover,
+      });
+      return;
+    }
+    if (state === 'equipment') {
+      menuScene();
+      const slot = EQUIP_SLOTS[equipSlot];
+      const worn = currentEquipped(slot.id);
+      const slots = EQUIP_SLOTS.map((s, i) => ({
+        label: s.label, equipped: equippedName(s.id), selected: i === equipSlot,
+      }));
+      const items = currentSlotItems().map(it => ({
+        name: it.name, tier: it.tier, desc: it.desc,
+        owned: equipUnlocked(it),
+        equipped: it.id === worn,
+        requirement: equipUnlocked(it) ? '' : equipRequirement(it),
+      }));
+      // the preview wears the current loadout; while browsing Skins it
+      // live-previews the highlighted owned skin
+      let previewTier = bikeSkinTier();
+      if (slot.id === 'skin' && items[equipSel] && items[equipSel].owned) {
+        previewTier = items[equipSel].tier;
+      }
+      drawEquipment(ctx, W, H, Math.min(1, equipT / 0.4), {
+        slots, slotLabel: slot.label, slotBlurb: slot.blurb, slotKind: slot.kind,
+        items, sel: equipSel, hover: hoverIdx, focus: equipFocus,
+        previewTier, t: rt, touch: TOUCH.active, backHot: backHover,
       });
       return;
     }
