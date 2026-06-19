@@ -15,7 +15,11 @@
 // an older version" failure instead of a silent, wrong-looking playback.
 const REPLAY = (() => {
   const FORMAT = 'burger-mania-replay';
-  const VERSION = 12; // bumped 2026-06-18: no new engine changes — the prior commit
+  const VERSION = 13; // bumped 2026-06-18: object pickup now ignores the body/belly —
+                     // only the head + wheels lap a burger/defib/goal — so a gravity
+                     // burger flips and a run finishes a few frames later than before,
+                     // desyncing older tapes.
+                     // ---- below: bumped 2026-06-18: no new engine changes — the prior commit
                      // (Elasto brake rework + infinite rock grip) shipped the physics
                      // below without bumping the number, so old tapes were silently
                      // mis-playing against the new sim. This bump retires them cleanly.

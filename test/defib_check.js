@@ -148,7 +148,11 @@ drawHUD = (ctx, W, H, o) => {
   const lvl0 = TRACKS[0].levels[0];
   if (!lvl0) { bad('Beginner map 1 did not load from disk'); }
   else {
-    lvl0.defibs = [[lvl0.start.x, lvl0.start.y]];
+    // sit it on the rear wheel's spawn rest spot (the body has no collider — only
+    // the head + wheels lap a pickup — so a defib at the bare body centre would
+    // sit ~0.85 m from each wheel, just past the wheelR+OBJ_R reach, and never be
+    // grabbed). On the wheel it's collected at spawn and re-collected on respawn.
+    lvl0.defibs = [[lvl0.start.x - PHYS.anchorX, lvl0.start.y + PHYS.anchorY]];
     // a lethal nut a few metres ahead on the spawn-flat (the floor runs flat at
     // y=8 from x=0 to x=8) so the test can force a crash + respawn and prove the
     // grabbed defib does NOT come back — it's once per track, not once per map

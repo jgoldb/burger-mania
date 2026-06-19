@@ -2657,8 +2657,11 @@
 
   function checkPickups() {
     const h = bike.headPos();
+    // Only the head and the two wheels can touch an object — the body/belly has
+    // NO collider of any kind (matching the terrain model: see Bike.step). A
+    // burger, defib or the goal is reached the instant a wheel or the head laps
+    // it, never by the frame brushing past.
     const pts = [
-      { p: bike.pos, r: 0.6 },
       { p: h, r: PHYS.headR },
       { p: bike.wheels[0].pos, r: PHYS.wheelR },
       { p: bike.wheels[1].pos, r: PHYS.wheelR },

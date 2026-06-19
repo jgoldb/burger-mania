@@ -135,11 +135,25 @@ const PHYS = {
   // (no maxStretch: there is deliberately NO hard cap on suspension travel — a wheel
   // stretches exactly as far as the springs allow. The progressive extension spring
   // below, force ∝ overshoot², is what halts a violent fling, by physics, not a wall.)
-  stretchSoft: 1.8, // wheel distance from the frame CENTRE (m) where the
+  stretchSoft: 3.3, // wheel distance from the frame CENTRE (m) where the
                     // progressive extension spring starts to bite. Set beyond the
                     // wheel's normal fling reach so ordinary riding and landings
                     // (the wheel sits closer to the centre under compression)
-                    // never feel it — only a fast spin flings a wheel out this far
+                    // never feel it — only a fast spin flings a wheel out this far.
+                    // RAISED 1.8->3.6 for levels/test/fall.bmm: there the bike
+                    // straddles two diverging "chopstick" walls hands-off and the
+                    // suspension must telescope to ~3.66 m to ride them to the tips
+                    // and just drop out the bottom; at 1.8 the progressive rein built
+                    // up too fast (force ∝ overshoot², so ~207 N by 3.66 m), and the
+                    // near-vertical walls turned that inward pull into enough lift to
+                    // halt the descent and bounce the bike back up (it stalled ~2.7 m).
+                    // Past 1.8 m only a violent air spin reaches at all, and only out
+                    // to ~2.26 m, so moving the onset to 3.6 leaves EVERY normal-play
+                    // contact below it: the lone visible effect is a max-spin fling now
+                    // slings ~0.33 m further (2.26->2.59 m), reined by the linear
+                    // extension spring instead. Beyond 3.6 m the progressive spring is
+                    // still full-stiffness (stretchK), so the hard backstop on a truly
+                    // pathological fling is intact — the onset just moved out
   stretchK: 60,    // stiffness of the progressive extension spring — the EMERGENT
                     // replacement for the old `maxStretch` hard cap: instead of a wall
                     // that teleported an over-flung wheel back, a force that grows with
@@ -147,15 +161,15 @@ const PHYS = {
                     // energy and slinging the wheel back when the spin drops. Higher =
                     // wheels fling less far and snap back harder; lower = they stretch
                     // further. It is purely radial (adds no torque, so the free air spin
-                    // is untouched) and only engages past stretchSoft (1.8 m from centre,
-                    // far beyond the ~1.04 m rest reach), so at rest and through normal
-                    // travel it is exactly zero — springK alone sets rest sag and recoil.
+                    // is untouched) and only engages past stretchSoft (now 3.6 m from
+                    // centre, far beyond both the ~1.04 m rest reach and the ~2.26 m
+                    // max-spin fling), so at rest and through normal travel it is exactly
+                    // zero — springK alone sets rest sag and recoil.
                     // Only a fast frame spin flings a wheel out this far (the wheel
                     // co-rotating with the spinning frame), so in gentle play it never
                     // engages and changing it does nothing visible
-  frameR: 0.45,    // frame body radius — used ONLY as the body's lethal contact
-                   // radius against nut mounds now (see Bike.step). The body has
-                   // no terrain collider, so this never touches rock
+  // (frameR removed: the body has no collider of any kind — not against terrain,
+  // objects, or nut mounds — so only the head and wheels ever touch anything.)
   engineT: 1.1,    // torque applied to the driven (rear) wheel. LEFT at 1.1 despite the
                    // lighter wheelI above: steady ground accel ∝ engineT*wheelR/(M*wheelR^2
                    // + wheelI) where M is the WHOLE bike (the contact drags the frame in
@@ -381,7 +395,7 @@ const PHYS = {
 
   nutR: 0.4,       // lethal radius of a nut mound — this world's "killer", the
                    // Elasto Mania spinning-spike equivalent. Touching one with
-                   // ANY bike part (head, either wheel, or the frame body) is
+                   // the head or either wheel (the body/belly has no collider) is
                    // instantly fatal. 0.4 = the Elma object radius (apple/killer/
                    // flower all share it, = the wheel radius), so a converted .lev
                    // kills at the same distance a spike did. Burger pickup and the
@@ -896,13 +910,13 @@ class Bike {
       }
     }
 
-    // nut mounds — the level's "killers". Unlike terrain, the whole rider is
-    // lethal against them: head, either wheel, or the frame body within
-    // partR + nutR of a mound's centre kills instantly. Inert on maps with no
-    // nuts (kills empty/undefined), so existing tracks and replays are untouched
+    // nut mounds — the level's "killers". Like every other contact on the bike,
+    // only the head and the two wheels touch them — the body/belly has no
+    // collider of any kind, so a mound within partR + nutR of the head or a
+    // wheel kills instantly, but the frame can pass through. Inert on maps with
+    // no nuts (kills empty/undefined), so existing tracks are untouched
     if (!this.dead && kills) {
       const parts = [
-        [this.pos.x, this.pos.y, P.frameR],
         [h.x, h.y, P.headR],
         [this.wheels[0].pos.x, this.wheels[0].pos.y, P.wheelR],
         [this.wheels[1].pos.x, this.wheels[1].pos.y, P.wheelR],

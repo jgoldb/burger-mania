@@ -104,13 +104,17 @@ let playedNow = null;
 const origPlay = MUSIC.play;
 MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(name); };
 
-// a map the spawn pose immediately finishes: no burgers, goal on the pad
+// a map the spawn pose immediately finishes: no burgers, goal under a wheel.
+// The body/belly has no collider — only the head + wheels lap an object — so the
+// goal sits on the rear wheel's spawn rest spot (a goal at the bare body centre
+// would be ~0.85 m from each wheel, just past the wheelR+OBJ_R reach, and never
+// finish).
 const tiny = name => ({
   name, theme: 'meadow',
   polygons: [[[-5, 0], [40, 0], [40, 9.2], [-5, 9.2]]],
   start: { x: 4, y: 8.3 },
   burgers: [],
-  goal: [4, 8.6],
+  goal: [4 - PHYS.anchorX, 8.3 + PHYS.anchorY],
 });
 // override the Beginner track with a 2-map course. files is the size the game
 // reads (maps load lazily by filename); pre-seeding levels with the two tiny
