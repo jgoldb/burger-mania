@@ -6384,14 +6384,21 @@ function drawDifficulty(ctx, W, H, alpha, tracks, sel, hover, touch, title, back
   ctx.fillText(title, W / 2, H * 0.20);
   ctx.restore();
 
-  const items = tracks.map(t => ({
-    label: t.label,
-    // a track's maps load lazily, so availability/size come from its file list
-    // (`files`), not the loaded-so-far `levels` cache
-    sub: (t.files ? t.files.length : t.levels.length) ? t.length + ' maps' : 'Coming soon',
-    color: t.color,
-    disabled: !(t.files ? t.files.length : t.levels.length),
-  }));
+  // a track's maps load lazily, so availability/size come from its file list
+  // (`files`), not the loaded-so-far `levels` cache. Three display states:
+  //   no maps yet           -> "Coming soon" (disabled)
+  //   maps but `locked`     -> the requirement line, e.g. "Clear Beginner to
+  //                            unlock" (disabled; the caller sets locked/lockSub
+  //                            from the cleared-track flag — see difficultyTracks)
+  //   maps and unlocked     -> "N maps" (enabled)
+  const items = tracks.map(t => {
+    const hasMaps = (t.files ? t.files.length : t.levels.length);
+    let sub, disabled;
+    if (!hasMaps) { sub = 'Coming soon'; disabled = true; }
+    else if (t.locked) { sub = t.lockSub || 'Locked'; disabled = true; }
+    else { sub = t.length + ' maps'; disabled = false; }
+    return { label: t.label, sub, color: t.color, disabled };
+  });
   const rects = menuRects(W, H, tracks.length, H * 0.34);
   drawButtons(ctx, rects, items, sel, hover, alpha);
 

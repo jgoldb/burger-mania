@@ -167,7 +167,10 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
       fn({ clientX: c.x + c.w / 2, clientY: c.y + c.h / 2, preventDefault() {} });
   }
   pumpFrames(3, 1 / 60);
-  key('ArrowUp');                            // wrap up to the last Beginner map (volcano)
+  // the picker now spans every track with maps (Beginner's 10 then Advanced's
+  // 20) and opens on the current map (Beginner #1, index 0), so step down to the
+  // last Beginner map (index 9, Reaper Rim, volcano) rather than wrapping.
+  for (let i = 0; i < 9; i++) key('ArrowDown');
   key('Enter');                              // jump to the picked map
   pumpFrames(3, 1 / 60);
   if (playedNow !== 'volcano') bad('last Beginner map should play volcano, got ' + playedNow);

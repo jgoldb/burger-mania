@@ -279,6 +279,32 @@
   function trackById(id) { return TRACKS.find(t => t.id === id) || null; }
   function equipById(id) { return EQUIPMENT.find(e => e.id === id) || null; }
 
+  // ---------- track unlocking ----------
+  // A track may be gated behind clearing another via its `requires` id (see
+  // levels.js). Clearing a track banks 'burger-mania-cleared-<id>' — the very
+  // same flag the skin tiers read — so beating Beginner both upgrades the bike
+  // skin AND unlocks Advanced with no extra bookkeeping. A track with maps but an
+  // un-cleared prerequisite reads as locked; one with no maps yet stays "Coming
+  // soon" regardless (handled in the renderer).
+  function trackCleared(id) {
+    try { return !!localStorage.getItem('burger-mania-cleared-' + id); } catch (e) { return false; }
+  }
+  function trackUnlocked(t) { return !t.requires || trackCleared(t.requires); }
+  // playable = has maps AND its prerequisite (if any) is cleared
+  function trackPlayable(t) { return !!(t.files && t.files.length) && trackUnlocked(t); }
+  // the one-line "Clear X to unlock" shown under a locked-but-stocked track
+  function trackLockLabel(t) {
+    const req = trackById(t.requires);
+    return 'Clear ' + (req ? req.label : t.requires) + ' to unlock';
+  }
+  // visibleTracks enriched for the difficulty screen: a locked track carries a
+  // `locked` flag + its lock sub-label so the renderer can show the requirement
+  // without reaching into localStorage itself (unlocked tracks pass through as-is).
+  function difficultyTracks() {
+    return visibleTracks().map(t =>
+      trackUnlocked(t) ? t : Object.assign({}, t, { locked: true, lockSub: trackLockLabel(t) }));
+  }
+
   // has the player earned this item's unlock?
   function equipUnlocked(item) {
     const u = item.unlock || { kind: 'default' };
@@ -1191,10 +1217,11 @@
   let recSel = 0, recT = 0;
   let recTrack = null, recNames = [], recResults = [];
 
-  // only tracks that actually HAVE maps can hold records, so the selector skips
-  // the "coming soon" ones (Advanced/Expert today) entirely. recSel indexes
-  // into THIS list, not visibleTracks.
-  function recordsTracks() { return visibleTracks().filter(t => t.files.length); }
+  // only tracks the player can actually PLAY can hold records, so the selector
+  // skips both the "coming soon" ones and any still locked behind clearing a
+  // prior track (Advanced until Beginner is cleared, Expert today). recSel
+  // indexes into THIS list, not visibleTracks.
+  function recordsTracks() { return visibleTracks().filter(trackPlayable); }
 
   function goRecords() {
     recT = 0;
@@ -1556,7 +1583,7 @@
   // dev cheat: a level-select overlay that jumps to any map in the track.
   // It's opened from the dev-only Skip chip on the menu (drawn only when
   // devSkip/cheatsEnabled), so only a local dev host can ever reach it.
-  let skipTrack = null, skipItems = [];
+  let skipTrack = null, skipItems = [], skipEntries = [];
   let skipSel = 0, skipScroll = 0, skipT = 0, skipFrom = 'menu';
 
   // the overlay floats over a frozen level when summoned mid-game, or over
@@ -1567,19 +1594,35 @@
   }
 
   function openSkip() {
-    const track = currentTrack || TRACKS.find(t => t.files.length);
-    if (!track) return false;
-    skipTrack = track;
+    // a dev tool that bypasses the unlock gates, so it spans EVERY track that
+    // has maps (not just the playable ones) — Beginner + Advanced today, Expert
+    // when it gets files. skipEntries is the flat cross-track list: each entry
+    // pairs a track with the map index within it, so activateSkip can drop
+    // straight into the right campaign.
+    const tracks = TRACKS.filter(t => t.files && t.files.length);
+    if (!tracks.length) return false;
     skipFrom = state;
+    skipEntries = [];
+    for (const t of tracks) {
+      for (let i = 0; i < t.files.length; i++) skipEntries.push({ track: t, index: i });
+    }
     // the picker only needs display names — levelName falls back to the
     // filename — so it fetches nothing. A map is loaded only when one is
     // actually chosen (activateSkip -> enterLevel), exactly like picking a
-    // track from Play.
-    skipItems = track.files.map((_, i) => ({
-      label: levelName(track, i), sub: 'Map ' + (i + 1) + '/' + track.length,
+    // track from Play. Each row is tagged with its track so the cross-track
+    // list is unambiguous (e.g. "Advanced 3/20").
+    skipItems = skipEntries.map(e => ({
+      label: levelName(e.track, e.index),
+      sub: e.track.label + ' ' + (e.index + 1) + '/' + e.track.length,
     }));
-    // land on the current map when skipping from inside its own track
-    skipSel = currentTrack ? levelIndex : 0;
+    // land on the current map (its combined index) when summoned mid-game, else
+    // the very first map
+    skipSel = 0;
+    if (currentTrack) {
+      const at = skipEntries.findIndex(e => e.track === currentTrack && e.index === levelIndex);
+      if (at >= 0) skipSel = at;
+    }
+    skipTrack = skipEntries[skipSel].track; // drives the header subtitle
     const maxScroll = Math.max(0, skipItems.length - SKIP_VIS);
     skipScroll = Math.max(0, Math.min(skipSel - SKIP_VIS + 1, maxScroll));
     state = 'skip';
@@ -1597,18 +1640,25 @@
   }
 
   function activateSkip(i) {
-    if (!currentTrack) {
-      currentTrack = skipTrack;
+    const entry = skipEntries[i];
+    if (!entry) return;
+    const target = entry.track, idx = entry.index;
+    // entering a different track than we're riding (or entering cold from the
+    // menu) starts that track's campaign fresh; skipping within the current
+    // track keeps the run going, exactly as before
+    if (currentTrack !== target) {
+      currentTrack = target;
       lives = 3;
       continues = MAX_CONTINUES;
       runResults = []; // a fresh campaign, even if entered sideways
       runPerfect = true;
+      consumedDefibs.clear(); // re-float every defib for the new campaign
     }
     // skipping counts as having beaten everything before the target, so a
     // continue restarts from the checkpoint the player would hold having
     // ridden there: the map right after the last cleared 5th map
-    checkpointIndex = Math.floor(i / 5) * 5;
-    enterLevel(i); // sets state ('levelLoading' then 'ready'); track is loaded
+    checkpointIndex = Math.floor(idx / 5) * 5;
+    enterLevel(idx); // sets state ('levelLoading' then 'ready'); track is loaded
     blip(1320, 0.15);
   }
 
@@ -1762,8 +1812,8 @@
 
   function activateDifficulty(i) {
     const track = visibleTracks()[i];
-    if (!track.files.length) {
-      blip(180, 0.12); // not available yet
+    if (!trackPlayable(track)) {
+      blip(180, 0.12); // coming soon, or locked behind clearing a prior track
       return;
     }
     blip(880, 0.08);
@@ -1929,13 +1979,14 @@
         if (e.key === 'Escape') { goMenu(); return; }
         if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
           const d = e.key === 'ArrowUp' ? -1 : 1;
-          // step to the next enabled track, skipping any that are disabled;
-          // if Beginner is the only one unlocked, this stays put on it
+          // step to the next enabled track, skipping any that are disabled
+          // (coming-soon or still locked); if Beginner is the only one playable,
+          // this stays put on it
           const vt = visibleTracks();
           let next = diffSel;
           for (let k = 0; k < vt.length; k++) {
             next = (next + d + vt.length) % vt.length;
-            if (vt[next].files.length) break;
+            if (trackPlayable(vt[next])) break;
           }
           if (next !== diffSel) { diffSel = next; blip(520, 0.05); }
         } else if (e.key === 'Enter' || e.key === ' ') {
@@ -2026,6 +2077,7 @@
           if (skipItems.length) {
             const d = e.key === 'ArrowUp' ? -1 : 1;
             skipSel = (skipSel + d + skipItems.length) % skipItems.length;
+            skipTrack = skipEntries[skipSel].track; // header follows the selection
             // keep the selection inside the visible window
             if (skipSel < skipScroll) skipScroll = skipSel;
             if (skipSel >= skipScroll + SKIP_VIS) skipScroll = skipSel - SKIP_VIS + 1;
@@ -2138,7 +2190,7 @@
       menuSel = hoverIdx;
       activateMenu(hoverIdx);
     } else if (state === 'difficulty') {
-      if (visibleTracks()[hoverIdx].files.length) diffSel = hoverIdx;
+      if (trackPlayable(visibleTracks()[hoverIdx])) diffSel = hoverIdx;
       activateDifficulty(hoverIdx);
     } else if (state === 'records') {
       // the two ◀ / ▶ selector arrows (the corner Back is hit-tested apart)
@@ -3395,7 +3447,7 @@
     }
     if (state === 'difficulty') {
       menuScene();
-      drawDifficulty(ctx, W, H, Math.min(1, diffT / 0.4), visibleTracks(), diffSel, hoverIdx,
+      drawDifficulty(ctx, W, H, Math.min(1, diffT / 0.4), difficultyTracks(), diffSel, hoverIdx,
         TOUCH.active, undefined, backHover);
       return;
     }

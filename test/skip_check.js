@@ -118,13 +118,22 @@ MUSIC.play = name => { playedNow = MUSIC.songs[name] ? name : null; origPlay(nam
   if (!texts.includes('SKIP TO MAP')) bad('skip overlay heading missing after opening from menu');
   if (playedNow !== 'menu') bad('skip from menu should play menu song, got ' + playedNow);
 
-  // navigate down past the visible window (10 maps, 6 visible -> scrolls),
-  // then back up; must not throw and overlay stays up
+  // navigate down past the visible window (the list now spans every track with
+  // maps, so it's well past one screen -> scrolls), then back up; must not throw
+  // and overlay stays up
   for (let i = 0; i < 7; i++) key('ArrowDown');
   for (let i = 0; i < 2; i++) key('ArrowUp');
   texts = frameTexts(3);
   if (!texts.includes('SKIP TO MAP')) bad('overlay should stay up while navigating');
-  if (!texts.includes('- more -')) bad('a 10-map list scrolled down should show a -more- marker');
+  if (!texts.includes('- more -')) bad('a scrolled multi-screen list should show a -more- marker');
+
+  // the picker spans EVERY track with maps now (Beginner's 10 then Advanced's
+  // 20), so the Advanced maps are reachable: arrow to index 10 — the first
+  // Advanced entry — and confirm the header subtitle and row follow the track.
+  for (let i = 0; i < 5; i++) key('ArrowDown'); // index 5 -> 10 (first Advanced map)
+  texts = frameTexts(3);
+  if (!texts.includes('Advanced track')) bad('header should follow into the Advanced track, got: ' + texts.join('|'));
+  if (!texts.includes('Sesame Flats')) bad('Advanced map 1 (Sesame Flats) should be listed in the skip picker');
 
   // Escape dismisses the overlay back to the menu it came from
   key('Escape');

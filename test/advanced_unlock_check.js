@@ -1,10 +1,10 @@
-// Best Records flow test: seeds a couple of per-map best-time/best-style
-// localStorage keys, then drives menu -> Records straight to the scorecard
-// (no track-picker step), asserting it reads those stored bests (formatted
-// time, style, dashes for unplayed maps), shows no total/stars on a partly-
-// cleared track, that the ◀/▶ selector excludes coming-soon tracks (arrows
-// clamp, no wrap) and caches the choice, and that Escape returns to the menu.
-// Run with: node test/records_check.js
+// Advanced-track unlock gate: drives menu -> Choose Difficulty and asserts the
+// Advanced track reads as LOCKED (a "Clear Beginner to unlock" line, NOT "Coming
+// soon") while Beginner is uncleared, then — after banking Beginner's cleared
+// flag (the same flag a track win sets) — re-enters the screen and asserts
+// Advanced is now playable ("20 maps", no lock line). Expert stays "Coming soon"
+// throughout (no maps yet, even though it's gated behind Advanced).
+// Run with: node test/advanced_unlock_check.js
 const fs = require('fs');
 const path = require('path');
 const root = path.join(__dirname, '..');
@@ -63,68 +63,51 @@ function pumpFrames(n, dt) {
 }
 function key(k) { for (const fn of windowHandlers.keydown || []) fn({ key: k, preventDefault() {}, repeat: false }); }
 function frameTexts(n) { textLog.length = 0; pumpFrames(n || 3, 1 / 60); return textLog.slice(); }
+function count(arr, s) { return arr.filter(t => t === s).length; }
 
 const code = ['js/assets.js', 'js/levels.js', 'js/physics.js', 'js/render.js',
   'js/music.js', 'js/replay.js', 'js/touch.js', 'js/editor.js', 'js/game.js']
   .map(f => fs.readFileSync(path.join(root, f), 'utf8')).join('\n') + `
 (async () => {
   await new Promise(r => setImmediate(r));
-  // seed bests for the first two Beginner maps; leave the rest blank
-  const beginner = TRACKS[0].levels;
-  store['burger-mania-best-' + beginner[0].name] = '83.45';
-  store['burger-mania-style-' + beginner[0].name] = '1200';
-  store['burger-mania-best-' + beginner[1].name] = '90.10'; // no style key: should read 0
-
   pumpFrames(5, 1 / 60);
   key('Enter');            // loading -> intro
   pumpFrames(3, 1 / 60);
   key('Enter');            // intro -> menu
   pumpFrames(3, 1 / 60);
-  let texts = frameTexts(3);
-  if (!texts.includes('Records')) bad('menu missing the Records option: ' + texts.join('|'));
 
-  key('ArrowDown');        // Play -> Records (the first grid item after the hero)
-  key('Enter');            // -> records scorecard directly (no picker step)
-  pumpFrames(6, 1 / 60);
-  texts = frameTexts(3);
-  if (!texts.includes('BEST RECORDS')) bad('scorecard missing heading: ' + texts.join('|'));
-  if (!texts.includes('Beginner')) bad('selector should default to the Beginner track');
-  if (!texts.some(t => t.includes(beginner[0].name))) bad('scorecard should list map 1: ' + beginner[0].name);
-  if (!texts.includes('Back')) bad('scorecard should offer a Back button');
-  if (!texts.includes('01:23,45')) bad('map 1 best time not shown, got: ' + texts.join('|'));
-  if (!texts.includes('1200')) bad('map 1 best style not shown');
-  if (!texts.includes('01:30,10')) bad('map 2 best time not shown');
-  if (!texts.includes('--:--,--')) bad('unplayed maps should show time dashes');
-  if (!texts.includes('---')) bad('unplayed maps should show style dashes');
-  if (texts.includes('total')) bad('a partly-cleared track should not show a total row');
-  if (texts.some(t => t.includes('\\u2605'))) bad('records screen should never star anything');
-  if (store['burger-mania-records-track'] !== 'beginner') {
-    bad('opening Records should cache the Beginner track, got ' + store['burger-mania-records-track']);
+  // --- Beginner NOT cleared: Advanced is locked, not coming-soon ---
+  key('Enter');            // Play (the hero, menuSel 0) -> Choose Difficulty
+  pumpFrames(4, 1 / 60);
+  let texts = frameTexts(1);
+  if (!texts.includes('CHOOSE DIFFICULTY')) bad('difficulty screen missing title: ' + texts.join('|'));
+  if (!texts.includes('Beginner')) bad('Beginner track missing from the difficulty screen');
+  if (!texts.includes('10 maps')) bad('Beginner should read "10 maps"');
+  if (!texts.includes('Advanced')) bad('Advanced track missing from the difficulty screen');
+  if (!texts.includes('Clear Beginner to unlock')) {
+    bad('locked Advanced should prompt to clear Beginner, got: ' + texts.join('|'));
+  }
+  if (texts.includes('20 maps')) bad('a LOCKED Advanced must not advertise its map count');
+  if (!texts.includes('Expert')) bad('Expert track missing from the difficulty screen');
+  // exactly one "Coming soon" — Expert. Advanced must NOT be coming-soon.
+  if (count(texts, 'Coming soon') !== 1) {
+    bad('expected exactly one "Coming soon" (Expert), got ' + count(texts, 'Coming soon') + ': ' + texts.join('|'));
   }
 
-  // Advanced is locked (Beginner isn't cleared in this test) and Expert has no
-  // maps, so both are EXCLUDED from the selector: the arrows don't wrap and never
-  // reach them — the screen stays on Beginner.
-  key('ArrowRight');
+  key('Escape');           // back to the menu
   pumpFrames(3, 1 / 60);
-  texts = frameTexts(3);
-  if (texts.includes('Advanced') || texts.includes('Expert')) {
-    bad('the selector must not reach a track with no maps');
-  }
-  if (!texts.includes('Beginner')) bad('a dead arrow should leave the screen on Beginner');
-  if (store['burger-mania-records-track'] !== 'beginner') {
-    bad('a dead arrow should not change the cached track, got ' + store['burger-mania-records-track']);
-  }
-  key('ArrowLeft');
-  pumpFrames(3, 1 / 60);
-  texts = frameTexts(3);
-  if (!texts.includes('Beginner')) bad('the selector should still be on Beginner');
-  if (!texts.some(t => t.includes(beginner[0].name))) bad('Beginner scorecard should remain');
 
-  key('Escape');           // straight back to the menu (no picker in between)
-  pumpFrames(3, 1 / 60);
-  texts = frameTexts(3);
-  if (!texts.includes('PLAY')) bad('Escape from records should return to the menu');
+  // --- bank Beginner's cleared flag (what a track win sets) and re-enter ---
+  store['burger-mania-cleared-beginner'] = '1';
+  key('Enter');            // Play -> Choose Difficulty again
+  pumpFrames(4, 1 / 60);
+  texts = frameTexts(1);
+  if (!texts.includes('Advanced')) bad('Advanced track vanished after the unlock');
+  if (!texts.includes('20 maps')) bad('cleared-Beginner should unlock Advanced as "20 maps", got: ' + texts.join('|'));
+  if (texts.includes('Clear Beginner to unlock')) bad('unlocked Advanced should drop the lock prompt');
+  // Expert is still mapless, so it stays coming-soon even though Advanced unlocked
+  if (!texts.includes('Coming soon')) bad('Expert should still read "Coming soon"');
+  if (texts.includes('Clear Advanced to unlock')) bad('mapless Expert should show "Coming soon", not its lock line');
 
   console.log(fail ? 'FAILED (' + fail + ')' : 'OK');
   process.exit(fail ? 1 : 0);
