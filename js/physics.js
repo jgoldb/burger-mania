@@ -271,10 +271,33 @@ const PHYS = {
                     // torque punch and falls back in the gap, so the arm visibly
                     // punches per pump (render.js reads bike.voltReach). Cosmetic
 
-  // ROCK has INFINITE tyre friction (Elasto Mania's model — the tyre never slides or
-  // wheelspins; see wheelContacts), so there is no rock friction COEFFICIENT to set: the
-  // old `mu` const and the `gripSlip`/`gripBite`/`gripGasResist` landing-slip-bite bandaids
-  // are all gone. Glass is the one slippery surface that remains:
+  // ROCK has effectively INFINITE STATIC tyre friction (Elasto Mania's model — the tyre
+  // never wheelspins under drive and climbs steep grades on pure grip; see wheelContacts),
+  // so there is no rock friction COEFFICIENT to set: the old `mu` const and the
+  // `gripSlip`/`gripBite`/`gripGasResist` landing-slip-bite bandaids are all gone. What is
+  // bounded is the RATE the tyre resyncs SLIP, not the force:
+  gripUp: 120,     // max contact SLIP (m/s) the tyre sheds per second — a slip-killing
+                   // acceleration, so it's substep-rate-independent (the per-step cap is
+                   // gripUp*dt). The grip FORCE is still unbounded at the tiny per-step
+                   // slips of real rolling/climbing, so static grip stays effectively
+                   // infinite (a vertical wall, where the normal force →0, still holds —
+                   // a Coulomb mu*N cap could not), and the engine never wheelspins (launch
+                   // injects slip at ~46 m/s², well under this). The cap ONLY bites on a
+                   // large slip MISMATCH — a wheel that spun up free in the air, or a
+                   // forward-rolling wheel whose TOP meets a ceiling (slip ~2x forward
+                   // speed). Those used to resolve in ONE step: the uncapped impulse
+                   // dumped the whole mismatch as an instant velocity jolt (~25% of the
+                   // slip → forward wheel velocity), which the stiff suspension relayed as
+                   // a harsh SNAP on the floor and a backward CLIP off a ceiling. Now that
+                   // mismatch bleeds over ~0.1–0.2 s, so the wheel grips up SMOOTHLY /
+                   // slides along instead of slamming. SIDE EFFECTS, both minor + arguably
+                   // truer: a hard-spun wheel skates ~0.1 s on landing instead of syncing
+                   // instantly (this REVERSES the old "instant sync, no skate" goal); and a
+                   // braked wheel's spin bleeds down over a beat (a brief skid) rather than
+                   // snapping to a stop. Lower = a longer, slidier grip-up (more skate);
+                   // raise toward instant for the old snappy sync (too high reintroduces
+                   // the slam). Must stay above the ~46 m/s² launch slip rate or the engine
+                   // wheelspins off the line. Glass keeps its own Coulomb cap (muGlass):
   muGlass: 0.06,   // tire friction on obsidian glass: the engine can barely push, so
                    // glass is crossed on momentum alone. The brake doesn't pin on glass
                    // either (the pin is rock-only, see brakeSpringK / w.onRock) — a braked
@@ -1097,18 +1120,27 @@ class Bike {
         grindTX = sg * tx; grindTY = sg * ty;
       }
       const meff = 1 / (1 / P.wheelM + P.wheelR * P.wheelR / P.wheelI);
-      // tyre friction drives the contact-point slip (vt) to zero. ROCK has INFINITE grip
-      // (Elasto Mania's model): apply the full slip-killing impulse, UNCAPPED, so the tyre
-      // never slides or wheelspins — engine torque always hooks up, steep grades climb on
-      // pure grip, and a spun-up wheel syncs to the ground the instant it lands (no skate,
-      // no landing-bite bandaid). GLASS is the one slippery surface kept from Elasto: there
-      // the impulse is capped at the Coulomb limit muGlass*jn, so the tyre skates across it
-      // and glass is crossed on momentum alone.
+      // tyre friction drives the contact-point slip (vt) toward zero. ROCK has effectively
+      // INFINITE STATIC grip (Elasto Mania's model) — engine torque always hooks up and
+      // steep grades climb on pure grip — but the slip is resynced at a BOUNDED RATE, not
+      // all in one step. The full impulse -vt*meff would zero any slip this step; that is
+      // kept while |vt| is within what the tyre can shed this step (gripUp*dt), which covers
+      // all real rolling/climbing (tiny per-step slip) so grip there is unchanged and the
+      // engine never wheelspins. But a LARGE slip mismatch — a wheel that spun up free in
+      // the air, or a forward-rolling wheel whose top meets a ceiling (~2x slip) — is capped
+      // to gripUp*dt of slip per step, so instead of dumping the whole mismatch as a
+      // one-step velocity jolt (the floor-snap / ceiling-clip slam) the wheel grips up
+      // smoothly over a beat. The grip FORCE is never capped (only the rate), so a vertical
+      // wall where the normal force →0 still holds — unlike a Coulomb mu*N cap. GLASS keeps
+      // that Coulomb cap (muGlass*jn): it stays slippery and is crossed on momentum alone.
       let jt = -vt * meff;
       if (seg.glass) {
         const maxF = P.muGlass * jn;
         if (jt > maxF) jt = maxF;
         if (jt < -maxF) jt = -maxF;
+      } else {
+        const maxDvt = P.gripUp * dt;            // slip the tyre can shed this step
+        if (Math.abs(vt) > maxDvt) jt = -Math.sign(vt) * maxDvt * meff; // bleed, don't slam
       }
       w.vel.x += tx * jt / P.wheelM;
       w.vel.y += ty * jt / P.wheelM;

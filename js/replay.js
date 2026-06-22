@@ -15,7 +15,11 @@
 // an older version" failure instead of a silent, wrong-looking playback.
 const REPLAY = (() => {
   const FORMAT = 'burger-mania-replay';
-  const VERSION = 14; // bumped 2026-06-19: deploys the one-shot localStorage reset,
+  const VERSION = 15; // bumped 2026-06-22: tyre friction now resyncs a large wheel-slip
+                     // mismatch at a BOUNDED RATE (PHYS.gripUp) instead of all in one step,
+                     // so a free-spun wheel grips up smoothly instead of snapping — a
+                     // sim-desyncing physics change, so older tapes retire cleanly.
+                     // ---- below: bumped 2026-06-19: deploys the one-shot localStorage reset,
                      // which now also clears the per-track cleared flags alongside the
                      // best-/style- records (the reset only fires on a VERSION change).
                      // Old tapes retire cleanly with the bump.
